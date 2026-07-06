@@ -1,0 +1,80 @@
+appId: network.smarthealth.kit
+productName: SHN Kit
+directories: { output: release }
+files: [ "dist/**", "package.json" ]
+
+# Packaging: the packaging job assembles a `resources/` staging dir
+# (gitignored) BEFORE calling electron-builder, laid out exactly as it lands
+# under Resources/ at runtime:
+#   resources/shnkitd            — the built shnkitd binary (mac: lipo universal)
+#   resources/shn-gateway        — the built gateway binary (mac: lipo universal)
+#   resources/ui/**              — ui/kit's built renderer (served by shnkitd at /ui)
+#   resources/kit.config.json    — packaged config: discoveryUrl/accountsUrl/
+#                                   releasesUrl + a javaAssets relative marker
+#                                   only — NO absolute paths (those vary per
+#                                   install location and are resolved at
+#                                   runtime from process.resourcesPath by
+#                                   desktop/src/config.ts's packagedDefaults(),
+#                                   exactly the way kitdBin already worked)
+#   resources/versions.json      — tools/kitassets/manifest.sh's output
+#   resources/java/**            — the Java trio assets (validator + seeded
+#                                   HAPI data server + br-provider) PLUS both
+#                                   per-arch JREs: jre-darwin-arm64/, jre-darwin-amd64/
+#                                   (Go GOOS/GOARCH naming, jre-{GOOS}-{GOARCH} —
+#                                   mac universal ships BOTH, since the JRE cannot be
+#                                   lipo-merged; shnkitd picks by runtime.GOARCH
+#                                   at child-spawn time)
+# `asar: true` (the default) keeps dist/** packed; every binary above is an
+# extraResource, which electron-builder always places OUTSIDE app.asar, so
+# nothing here needs an asarUnpack carve-out.
+asar: true
+extraResources:
+  - from: resources
+    to: .
+    filter: [ "**/*" ]
+  # Third-party license notices (Go/npm/Java/JRE component licenses) — rides
+  # both the monorepo checkout and the shn-kit snapshot at this same
+  # desktop/-relative path, so `from` resolves identically either way.
+  - from: THIRD_PARTY_NOTICES.md
+    to: .
+
+mac:
+  category: public.app-category.healthcare-fitness
+  # Go binaries are built for both arches and lipo-merged, then
+  # electron-builder produces one universal .app/.dmg — `arch`
+  # lives under `target` (electron-builder's TargetConfiguration shape), not
+  # at the mac root. The JRE dirs are NOT universal binaries (thousands of
+  # per-arch dylibs) — they ride along verbatim in both the arm64 and x64
+  # intermediate builds (identical bytes either way, since `resources/java/**`
+  # isn't itself arch-conditional). @electron/universal's makeUniversalApp
+  # walks the ENTIRE bundle, and any Mach-O file that's byte-identical between
+  # the two intermediate builds MUST match this glob or the merge throws —
+  # there is no arm64ArchFiles knob, so BOTH per-arch JRE trees have to be
+  # covered by the one x64ArchFiles pattern, not just jre-darwin-amd64/.
+  target:
+    target: dmg
+    arch: universal
+  x64ArchFiles: "**/jre-darwin-*/**"
+  # Hardened runtime + entitlements are signing-ready stubs — inert on an
+  # unsigned build (build/entitlements.mac.plist explains each entry: JIT +
+  # unsigned executable memory + disabled library validation, all needed to
+  # spawn/run the bundled JVM under a hardened runtime once actually signed).
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # electron-builder's own built-in notarization step stays off; build/afterSign.js
+  # is the one conditional (env-keyed) path that notarizes when Apple credentials
+  # are present at CI, so the identical build comes out notarized when the
+  # secrets land and is skipped (logged, not thrown) otherwise.
+  notarize: false
+afterSign: build/afterSign.js
+
+# Windows ships NSIS .exe only (".msi/NSIS .exe" read as either/or) — one
+# artifact per OS keeps the smoke matrix honest; an .msi is additive later
+# if an enterprise partner asks.
+win:
+  target: nsis
+
+# NO release-attach anywhere in this config or the packaging pipeline it
+# feeds (a structural rule): every artifact this produces — signed or not —
+# uploads as a CI workflow artifact only. That step doesn't exist here.

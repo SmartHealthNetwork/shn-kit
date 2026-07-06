@@ -1,0 +1,1429 @@
+[
+ {
+  "seq": 339,
+  "time": "2026-07-03T23:20:28.705117-04:00",
+  "type": "run.started",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03"
+ },
+ {
+  "seq": 340,
+  "time": "2026-07-03T23:20:28.71062-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 153,
+   "time": "2026-07-03T23:20:28.710452-04:00",
+   "kind": "ingress.received",
+   "legType": "crd-ingress",
+   "direction": "ingress",
+   "payload": {
+    "context": {
+     "draftOrders": {
+      "entry": [
+       {
+        "fullUrl": "urn:uuid:sr1",
+        "resource": {
+         "code": {
+          "coding": [
+           {
+            "code": "72148",
+            "display": "MRI lumbar spine",
+            "system": "http://www.ama-assn.org/go/cpt"
+           }
+          ]
+         },
+         "id": "sr1",
+         "insurance": [
+          {
+           "reference": "Coverage/c1"
+          }
+         ],
+         "intent": "order",
+         "resourceType": "ServiceRequest",
+         "status": "draft",
+         "subject": {
+          "reference": "Patient/MBR-COVERED"
+         }
+        }
+       }
+      ],
+      "resourceType": "Bundle",
+      "type": "collection"
+     },
+     "patientId": "MBR-COVERED",
+     "userId": "Practitioner/p1"
+    },
+    "fhirServer": "https://provider.example/fhir",
+    "hook": "order-sign",
+    "hookInstance": "shn-scenariodriver",
+    "prefetch": {
+     "coverage": {
+      "beneficiary": {
+       "reference": "Patient/MBR-COVERED"
+      },
+      "contained": [
+       {
+        "id": "cms-payer",
+        "identifier": [
+         {
+          "system": "urn:oid:2.16.840.1.113883.6.300",
+          "value": "00001"
+         }
+        ],
+        "name": "Centers for Medicare and Medicaid Services",
+        "resourceType": "Organization"
+       }
+      ],
+      "id": "c1",
+      "payor": [
+       {
+        "reference": "#cms-payer"
+       }
+      ],
+      "resourceType": "Coverage",
+      "status": "active"
+     },
+     "patient": {
+      "id": "MBR-COVERED",
+      "resourceType": "Patient"
+     }
+    }
+   }
+  }
+ },
+ {
+  "seq": 341,
+  "time": "2026-07-03T23:20:28.71101-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 154,
+   "time": "2026-07-03T23:20:28.710883-04:00",
+   "kind": "leg.originated",
+   "legType": "crd-order-select",
+   "direction": "originate",
+   "correlationId": "d49d2cc0134ef010efe4605a970ec41e",
+   "counterpart": "payer",
+   "authorityFrame": "provider-tpo",
+   "op": "crd-order-select",
+   "payload": {
+    "context": {
+     "draftOrders": {
+      "entry": [
+       {
+        "fullUrl": "urn:uuid:sr1",
+        "resource": {
+         "code": {
+          "coding": [
+           {
+            "code": "72148",
+            "display": "MRI lumbar spine",
+            "system": "http://www.ama-assn.org/go/cpt"
+           }
+          ]
+         },
+         "id": "sr1",
+         "insurance": [
+          {
+           "reference": "Coverage/c1"
+          }
+         ],
+         "intent": "order",
+         "resourceType": "ServiceRequest",
+         "status": "draft",
+         "subject": {
+          "reference": "Patient/MBR-COVERED"
+         }
+        }
+       }
+      ],
+      "resourceType": "Bundle",
+      "type": "collection"
+     },
+     "patientId": "MBR-COVERED",
+     "userId": "Practitioner/p1"
+    },
+    "hook": "order-sign",
+    "hookInstance": "shn-scenariodriver",
+    "prefetch": {
+     "coverage": {
+      "beneficiary": {
+       "reference": "Patient/MBR-COVERED"
+      },
+      "contained": [
+       {
+        "id": "cms-payer",
+        "identifier": [
+         {
+          "system": "urn:oid:2.16.840.1.113883.6.300",
+          "value": "00001"
+         }
+        ],
+        "name": "Centers for Medicare and Medicaid Services",
+        "resourceType": "Organization"
+       }
+      ],
+      "id": "c1",
+      "payor": [
+       {
+        "reference": "#cms-payer"
+       }
+      ],
+      "resourceType": "Coverage",
+      "status": "active"
+     },
+     "deviceHistory": {
+      "resourceType": "Bundle",
+      "type": "searchset",
+      "entry": []
+     },
+     "medicationHistory": {
+      "resourceType": "Bundle",
+      "type": "searchset",
+      "entry": []
+     },
+     "patient": {
+      "id": "MBR-COVERED",
+      "resourceType": "Patient"
+     },
+     "questionnaireResponses": {
+      "resourceType": "Bundle",
+      "type": "searchset",
+      "entry": []
+     },
+     "serviceHistory": {
+      "resourceType": "Bundle",
+      "type": "searchset",
+      "entry": []
+     }
+    }
+   }
+  }
+ },
+ {
+  "seq": 342,
+  "time": "2026-07-03T23:20:28.71757-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 155,
+   "time": "2026-07-03T23:20:28.717488-04:00",
+   "kind": "leg.response",
+   "legType": "crd-order-select",
+   "direction": "originate",
+   "correlationId": "d49d2cc0134ef010efe4605a970ec41e",
+   "counterpart": "payer",
+   "authorityFrame": "payer-coverage",
+   "op": "crd-cards",
+   "payload": {
+    "cards": [
+     {
+      "summary": "Prior authorization required",
+      "indicator": "warning",
+      "extension": {
+       "covered": "covered",
+       "paNeeded": "auth-needed",
+       "questionnaires": [
+        "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri"
+       ]
+      }
+     }
+    ]
+   }
+  }
+ },
+ {
+  "seq": 343,
+  "time": "2026-07-03T23:20:28.717593-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 156,
+   "time": "2026-07-03T23:20:28.717526-04:00",
+   "kind": "ingress.responded",
+   "legType": "crd-ingress",
+   "direction": "ingress",
+   "payload": {
+    "cards": [
+     {
+      "summary": "Prior authorization required",
+      "indicator": "warning",
+      "extension": {
+       "covered": "covered",
+       "paNeeded": "auth-needed",
+       "questionnaires": [
+        "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri"
+       ]
+      }
+     }
+    ]
+   },
+   "detail": "200"
+  }
+ },
+ {
+  "seq": 344,
+  "time": "2026-07-03T23:20:28.719945-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 157,
+   "time": "2026-07-03T23:20:28.719737-04:00",
+   "kind": "ingress.received",
+   "legType": "dtr-ingress",
+   "direction": "ingress",
+   "payload": {
+    "meta": {
+     "profile": [
+      "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/dtr-qpackage-input-parameters"
+     ]
+    },
+    "parameter": [
+     {
+      "name": "coverage",
+      "resource": {
+       "beneficiary": {
+        "reference": "Patient/MBR-COVERED"
+       },
+       "contained": [
+        {
+         "active": true,
+         "id": "payor-org",
+         "identifier": [
+          {
+           "system": "urn:oid:2.16.840.1.113883.6.300",
+           "value": "00001"
+          }
+         ],
+         "name": "Centers for Medicare and Medicaid Services",
+         "resourceType": "Organization"
+        }
+       ],
+       "id": "coverage-1",
+       "payor": [
+        {
+         "reference": "#payor-org"
+        }
+       ],
+       "resourceType": "Coverage",
+       "status": "active"
+      }
+     },
+     {
+      "name": "questionnaire",
+      "valueCanonical": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri"
+     }
+    ],
+    "resourceType": "Parameters"
+   }
+  }
+ },
+ {
+  "seq": 345,
+  "time": "2026-07-03T23:20:28.720092-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 158,
+   "time": "2026-07-03T23:20:28.719972-04:00",
+   "kind": "leg.originated",
+   "legType": "dtr-questionnaire-fetch",
+   "direction": "originate",
+   "correlationId": "d0591afe7039771843773296956c3175",
+   "counterpart": "payer",
+   "authorityFrame": "provider-tpo",
+   "op": "dtr-questionnaire-fetch",
+   "payload": {
+    "canonical": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
+    "coverage": {
+     "beneficiary": {
+      "reference": "Patient/MBR-COVERED"
+     },
+     "contained": [
+      {
+       "active": true,
+       "id": "payor-org",
+       "identifier": [
+        {
+         "system": "urn:oid:2.16.840.1.113883.6.300",
+         "value": "00001"
+        }
+       ],
+       "name": "Centers for Medicare and Medicaid Services",
+       "resourceType": "Organization"
+      }
+     ],
+     "id": "coverage-1",
+     "payor": [
+      {
+       "reference": "#payor-org"
+      }
+     ],
+     "resourceType": "Coverage",
+     "status": "active"
+    }
+   }
+  }
+ },
+ {
+  "seq": 346,
+  "time": "2026-07-03T23:20:28.72499-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 159,
+   "time": "2026-07-03T23:20:28.724884-04:00",
+   "kind": "leg.response",
+   "legType": "dtr-questionnaire-fetch",
+   "direction": "originate",
+   "correlationId": "d0591afe7039771843773296956c3175",
+   "counterpart": "payer",
+   "authorityFrame": "payer-coverage",
+   "op": "dtr-questionnaire",
+   "payload": {
+    "entry": [
+     {
+      "fullUrl": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
+      "resource": {
+       "id": "pa-lumbar-mri",
+       "extension": [
+        {
+         "url": "http://hl7.org/fhir/StructureDefinition/cqf-library",
+         "valueCanonical": "http://smarthealth.network/fhir/Library/LumbarMRICQL"
+        }
+       ],
+       "url": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
+       "version": "1.0.0",
+       "status": "active",
+       "item": [
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "ConservativeTherapyWeeks"
+           }
+          }
+         ],
+         "linkId": "conservative-therapy-weeks",
+         "text": "Weeks of conservative therapy completed",
+         "type": "integer"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "NeuroDeficit"
+           }
+          }
+         ],
+         "linkId": "neuro-deficit",
+         "text": "Progressive neurological deficit present?",
+         "type": "boolean"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "PriorImaging"
+           }
+          }
+         ],
+         "linkId": "prior-imaging",
+         "text": "Prior imaging performed?",
+         "type": "boolean"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "PriorSurgery"
+           }
+          }
+         ],
+         "linkId": "prior-surgery",
+         "text": "Prior lumbar surgery?",
+         "type": "boolean"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "HighDisability"
+           }
+          }
+         ],
+         "linkId": "high-disability",
+         "text": "High disability index flag?",
+         "type": "boolean"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "PatientReportedRequired"
+           }
+          }
+         ],
+         "linkId": "patient-reported-required",
+         "text": "Patient-reported functional status required?",
+         "type": "boolean"
+        },
+        {
+         "linkId": "functional-status-oswestry",
+         "text": "Oswestry disability index (clinician-attested)",
+         "type": "text"
+        }
+       ],
+       "resourceType": "Questionnaire"
+      }
+     }
+    ],
+    "resourceType": "Bundle",
+    "type": "collection"
+   }
+  }
+ },
+ {
+  "seq": 347,
+  "time": "2026-07-03T23:20:28.725022-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 160,
+   "time": "2026-07-03T23:20:28.724929-04:00",
+   "kind": "ingress.responded",
+   "legType": "dtr-ingress",
+   "direction": "ingress",
+   "payload": {
+    "entry": [
+     {
+      "fullUrl": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
+      "resource": {
+       "id": "pa-lumbar-mri",
+       "extension": [
+        {
+         "url": "http://hl7.org/fhir/StructureDefinition/cqf-library",
+         "valueCanonical": "http://smarthealth.network/fhir/Library/LumbarMRICQL"
+        }
+       ],
+       "url": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
+       "version": "1.0.0",
+       "status": "active",
+       "item": [
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "ConservativeTherapyWeeks"
+           }
+          }
+         ],
+         "linkId": "conservative-therapy-weeks",
+         "text": "Weeks of conservative therapy completed",
+         "type": "integer"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "NeuroDeficit"
+           }
+          }
+         ],
+         "linkId": "neuro-deficit",
+         "text": "Progressive neurological deficit present?",
+         "type": "boolean"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "PriorImaging"
+           }
+          }
+         ],
+         "linkId": "prior-imaging",
+         "text": "Prior imaging performed?",
+         "type": "boolean"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "PriorSurgery"
+           }
+          }
+         ],
+         "linkId": "prior-surgery",
+         "text": "Prior lumbar surgery?",
+         "type": "boolean"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "HighDisability"
+           }
+          }
+         ],
+         "linkId": "high-disability",
+         "text": "High disability index flag?",
+         "type": "boolean"
+        },
+        {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+           "valueExpression": {
+            "language": "text/cql",
+            "expression": "PatientReportedRequired"
+           }
+          }
+         ],
+         "linkId": "patient-reported-required",
+         "text": "Patient-reported functional status required?",
+         "type": "boolean"
+        },
+        {
+         "linkId": "functional-status-oswestry",
+         "text": "Oswestry disability index (clinician-attested)",
+         "type": "text"
+        }
+       ],
+       "resourceType": "Questionnaire"
+      }
+     }
+    ],
+    "resourceType": "Bundle",
+    "type": "collection"
+   },
+   "detail": "200"
+  }
+ },
+ {
+  "seq": 348,
+  "time": "2026-07-03T23:20:28.727347-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 161,
+   "time": "2026-07-03T23:20:28.727241-04:00",
+   "kind": "ingress.received",
+   "legType": "pas-ingress",
+   "direction": "ingress",
+   "payload": {
+    "entry": [
+     {
+      "resource": {
+       "id": "MBR-COVERED",
+       "resourceType": "Patient"
+      }
+     },
+     {
+      "resource": {
+       "beneficiary": {
+        "reference": "Patient/MBR-COVERED"
+       },
+       "id": "cov1",
+       "payor": [
+        {
+         "identifier": {
+          "system": "urn:oid:2.16.840.1.113883.6.300",
+          "value": "00001"
+         }
+        }
+       ],
+       "resourceType": "Coverage",
+       "status": "active"
+      }
+     },
+     {
+      "resource": {
+       "meta": {
+        "profile": [
+         "http://hl7.org/fhir/us/core/StructureDefinition/us-core-servicerequest"
+        ]
+       },
+       "status": "draft",
+       "intent": "order",
+       "code": {
+        "coding": [
+         {
+          "system": "http://www.ama-assn.org/go/cpt",
+          "code": "72148",
+          "display": "MRI lumbar spine w/o contrast"
+         }
+        ]
+       },
+       "subject": {
+        "reference": "Patient/MBR-COVERED"
+       },
+       "reasonCode": [
+        {
+         "coding": [
+          {
+           "system": "http://hl7.org/fhir/sid/icd-10-cm",
+           "code": "M51.16"
+          }
+         ]
+        }
+       ],
+       "resourceType": "ServiceRequest"
+      }
+     },
+     {
+      "resource": {
+       "patient": {
+        "reference": "Patient/MBR-COVERED"
+       },
+       "resourceType": "Claim"
+      }
+     },
+     {
+      "resource": {
+       "extension": [
+        {
+         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+         "valueReference": {
+          "reference": "Coverage/MBR-COVERED"
+         }
+        },
+        {
+         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+         "valueReference": {
+          "reference": "ServiceRequest/sr1"
+         }
+        },
+        {
+         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
+         "valueCodeableConcept": {
+          "coding": [
+           {
+            "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/temp",
+            "code": "withpa",
+            "display": "Information needed for a prior authorization"
+           }
+          ]
+         }
+        }
+       ],
+       "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
+       "status": "completed",
+       "subject": {
+        "reference": "Patient/MBR-COVERED"
+       },
+       "authored": "2026-07-04T03:20:28Z",
+       "item": [
+        {
+         "linkId": "conservative-therapy-weeks",
+         "answer": [
+          {
+           "extension": [
+            {
+             "extension": [
+              {
+               "url": "source",
+               "valueCode": "auto"
+              }
+             ],
+             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+            }
+           ],
+           "valueInteger": 6
+          }
+         ]
+        },
+        {
+         "linkId": "neuro-deficit",
+         "answer": [
+          {
+           "extension": [
+            {
+             "extension": [
+              {
+               "url": "source",
+               "valueCode": "auto"
+              }
+             ],
+             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+            }
+           ],
+           "valueBoolean": false
+          }
+         ]
+        },
+        {
+         "linkId": "prior-imaging",
+         "answer": [
+          {
+           "extension": [
+            {
+             "extension": [
+              {
+               "url": "source",
+               "valueCode": "auto"
+              }
+             ],
+             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+            }
+           ],
+           "valueBoolean": true
+          }
+         ]
+        }
+       ],
+       "resourceType": "QuestionnaireResponse"
+      }
+     }
+    ],
+    "resourceType": "Bundle",
+    "type": "collection"
+   }
+  }
+ },
+ {
+  "seq": 349,
+  "time": "2026-07-03T23:20:28.727779-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 162,
+   "time": "2026-07-03T23:20:28.727688-04:00",
+   "kind": "leg.originated",
+   "legType": "pas-claim",
+   "direction": "originate",
+   "correlationId": "b0e4f08a16b4d39bccacddba450f84e8",
+   "counterpart": "payer",
+   "authorityFrame": "provider-tpo",
+   "op": "pas-submit",
+   "payload": {
+    "entry": [
+     {
+      "resource": {
+       "id": "MBR-COVERED",
+       "resourceType": "Patient"
+      }
+     },
+     {
+      "resource": {
+       "beneficiary": {
+        "reference": "Patient/MBR-COVERED"
+       },
+       "id": "cov1",
+       "payor": [
+        {
+         "identifier": {
+          "system": "urn:oid:2.16.840.1.113883.6.300",
+          "value": "00001"
+         }
+        }
+       ],
+       "resourceType": "Coverage",
+       "status": "active"
+      }
+     },
+     {
+      "resource": {
+       "meta": {
+        "profile": [
+         "http://hl7.org/fhir/us/core/StructureDefinition/us-core-servicerequest"
+        ]
+       },
+       "status": "draft",
+       "intent": "order",
+       "code": {
+        "coding": [
+         {
+          "system": "http://www.ama-assn.org/go/cpt",
+          "code": "72148",
+          "display": "MRI lumbar spine w/o contrast"
+         }
+        ]
+       },
+       "subject": {
+        "reference": "Patient/MBR-COVERED"
+       },
+       "reasonCode": [
+        {
+         "coding": [
+          {
+           "system": "http://hl7.org/fhir/sid/icd-10-cm",
+           "code": "M51.16"
+          }
+         ]
+        }
+       ],
+       "resourceType": "ServiceRequest"
+      }
+     },
+     {
+      "resource": {
+       "patient": {
+        "reference": "Patient/MBR-COVERED"
+       },
+       "resourceType": "Claim"
+      }
+     },
+     {
+      "resource": {
+       "extension": [
+        {
+         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+         "valueReference": {
+          "reference": "Coverage/MBR-COVERED"
+         }
+        },
+        {
+         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+         "valueReference": {
+          "reference": "ServiceRequest/sr1"
+         }
+        },
+        {
+         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
+         "valueCodeableConcept": {
+          "coding": [
+           {
+            "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/temp",
+            "code": "withpa",
+            "display": "Information needed for a prior authorization"
+           }
+          ]
+         }
+        }
+       ],
+       "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
+       "status": "completed",
+       "subject": {
+        "reference": "Patient/MBR-COVERED"
+       },
+       "authored": "2026-07-04T03:20:28Z",
+       "item": [
+        {
+         "linkId": "conservative-therapy-weeks",
+         "answer": [
+          {
+           "extension": [
+            {
+             "extension": [
+              {
+               "url": "source",
+               "valueCode": "auto"
+              }
+             ],
+             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+            }
+           ],
+           "valueInteger": 6
+          }
+         ]
+        },
+        {
+         "linkId": "neuro-deficit",
+         "answer": [
+          {
+           "extension": [
+            {
+             "extension": [
+              {
+               "url": "source",
+               "valueCode": "auto"
+              }
+             ],
+             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+            }
+           ],
+           "valueBoolean": false
+          }
+         ]
+        },
+        {
+         "linkId": "prior-imaging",
+         "answer": [
+          {
+           "extension": [
+            {
+             "extension": [
+              {
+               "url": "source",
+               "valueCode": "auto"
+              }
+             ],
+             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+            }
+           ],
+           "valueBoolean": true
+          }
+         ]
+        }
+       ],
+       "resourceType": "QuestionnaireResponse"
+      }
+     }
+    ],
+    "resourceType": "Bundle",
+    "type": "collection"
+   }
+  }
+ },
+ {
+  "seq": 350,
+  "time": "2026-07-03T23:20:28.731957-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 163,
+   "time": "2026-07-03T23:20:28.731776-04:00",
+   "kind": "leg.response",
+   "legType": "pas-claim",
+   "direction": "originate",
+   "correlationId": "b0e4f08a16b4d39bccacddba450f84e8",
+   "counterpart": "payer",
+   "authorityFrame": "payer-coverage",
+   "op": "pas-response",
+   "payload": {
+    "resourceType": "ClaimResponse",
+    "meta": {
+     "profile": [
+      "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/profile-claimresponse"
+     ]
+    },
+    "status": "active",
+    "type": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/claim-type",
+       "code": "professional"
+      }
+     ]
+    },
+    "use": "preauthorization",
+    "patient": {
+     "reference": "Patient/MBR-COVERED"
+    },
+    "created": "2026-07-04T03:20:28Z",
+    "insurer": {
+     "reference": "Organization/payer"
+    },
+    "outcome": "complete",
+    "identifier": [
+     {
+      "system": "urn:shn:correlation",
+      "value": "b0e4f08a16b4d39bccacddba450f84e8"
+     }
+    ],
+    "preAuthRef": "PA-5c4cc20a31d0",
+    "preAuthPeriod": {
+     "end": "2026-10-01"
+    },
+    "item": [
+     {
+      "itemSequence": 1,
+      "adjudication": [
+       {
+        "category": {
+         "coding": [
+          {
+           "system": "http://terminology.hl7.org/CodeSystem/adjudication",
+           "code": "submitted"
+          }
+         ]
+        },
+        "extension": [
+         {
+          "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewAction",
+          "extension": [
+           {
+            "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewActionCode",
+            "valueCodeableConcept": {
+             "coding": [
+              {
+               "system": "https://codesystem.x12.org/005010/306",
+               "code": "A1",
+               "display": "Certified in Total"
+              }
+             ]
+            }
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ },
+ {
+  "seq": 351,
+  "time": "2026-07-03T23:20:28.732052-04:00",
+  "type": "observer",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "observer": {
+   "seq": 164,
+   "time": "2026-07-03T23:20:28.731833-04:00",
+   "kind": "ingress.responded",
+   "legType": "pas-ingress",
+   "direction": "ingress",
+   "payload": {
+    "resourceType": "ClaimResponse",
+    "meta": {
+     "profile": [
+      "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/profile-claimresponse"
+     ]
+    },
+    "status": "active",
+    "type": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/claim-type",
+       "code": "professional"
+      }
+     ]
+    },
+    "use": "preauthorization",
+    "patient": {
+     "reference": "Patient/MBR-COVERED"
+    },
+    "created": "2026-07-04T03:20:28Z",
+    "insurer": {
+     "reference": "Organization/payer"
+    },
+    "outcome": "complete",
+    "identifier": [
+     {
+      "system": "urn:shn:correlation",
+      "value": "b0e4f08a16b4d39bccacddba450f84e8"
+     }
+    ],
+    "preAuthRef": "PA-5c4cc20a31d0",
+    "preAuthPeriod": {
+     "end": "2026-10-01"
+    },
+    "item": [
+     {
+      "itemSequence": 1,
+      "adjudication": [
+       {
+        "category": {
+         "coding": [
+          {
+           "system": "http://terminology.hl7.org/CodeSystem/adjudication",
+           "code": "submitted"
+          }
+         ]
+        },
+        "extension": [
+         {
+          "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewAction",
+          "extension": [
+           {
+            "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewActionCode",
+            "valueCodeableConcept": {
+             "coding": [
+              {
+               "system": "https://codesystem.x12.org/005010/306",
+               "code": "A1",
+               "display": "Certified in Total"
+              }
+             ]
+            }
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "detail": "200"
+  }
+ },
+ {
+  "seq": 352,
+  "time": "2026-07-03T23:20:28.73404-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 153,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "kit-provider",
+   "recipient": "authz",
+   "transactionType": "authz-decision:crd-order-select",
+   "authorityFrame": "provider-tpo",
+   "scope": "crd-context",
+   "outcome": "allowed",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 353,
+  "time": "2026-07-03T23:20:28.734048-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 154,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "kit-provider",
+   "recipient": "payer",
+   "transactionType": "crd-order-select",
+   "authorityFrame": "provider-tpo",
+   "scope": "crd-context",
+   "outcome": "routed",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 354,
+  "time": "2026-07-03T23:20:28.734052-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 155,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "payer",
+   "recipient": "authz",
+   "transactionType": "authz-decision:crd-cards",
+   "authorityFrame": "payer-coverage",
+   "scope": "crd-context",
+   "outcome": "allowed",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 355,
+  "time": "2026-07-03T23:20:28.734055-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 156,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "payer",
+   "recipient": "kit-provider",
+   "transactionType": "crd-order-select",
+   "authorityFrame": "payer-coverage",
+   "scope": "crd-context",
+   "outcome": "answered",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 356,
+  "time": "2026-07-03T23:20:28.734058-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 157,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "kit-provider",
+   "recipient": "authz",
+   "transactionType": "authz-decision:dtr-questionnaire-fetch",
+   "authorityFrame": "provider-tpo",
+   "scope": "questionnaire-only",
+   "outcome": "allowed",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 357,
+  "time": "2026-07-03T23:20:28.734062-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 158,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "kit-provider",
+   "recipient": "payer",
+   "transactionType": "dtr-questionnaire-fetch",
+   "authorityFrame": "provider-tpo",
+   "scope": "questionnaire-only",
+   "outcome": "routed",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 358,
+  "time": "2026-07-03T23:20:28.734064-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 159,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "payer",
+   "recipient": "authz",
+   "transactionType": "authz-decision:dtr-questionnaire",
+   "authorityFrame": "payer-coverage",
+   "scope": "questionnaire-only",
+   "outcome": "allowed",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 359,
+  "time": "2026-07-03T23:20:28.734067-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 160,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "payer",
+   "recipient": "kit-provider",
+   "transactionType": "dtr-questionnaire-fetch",
+   "authorityFrame": "payer-coverage",
+   "scope": "questionnaire-only",
+   "outcome": "answered",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 360,
+  "time": "2026-07-03T23:20:28.73407-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 161,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "kit-provider",
+   "recipient": "authz",
+   "transactionType": "authz-decision:pas-submit",
+   "authorityFrame": "provider-tpo",
+   "scope": "pas-bundle",
+   "outcome": "allowed",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 361,
+  "time": "2026-07-03T23:20:28.734073-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 162,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "kit-provider",
+   "recipient": "payer",
+   "transactionType": "pas-claim",
+   "authorityFrame": "provider-tpo",
+   "scope": "pas-bundle",
+   "outcome": "routed",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 362,
+  "time": "2026-07-03T23:20:28.734076-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 163,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "payer",
+   "recipient": "authz",
+   "transactionType": "authz-decision:pas-response",
+   "authorityFrame": "payer-coverage",
+   "scope": "pas-bundle",
+   "outcome": "allowed",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 363,
+  "time": "2026-07-03T23:20:28.734079-04:00",
+  "type": "audit",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "audit": {
+   "seq": 164,
+   "timestamp": "2026-07-03T23:20:28-04:00",
+   "sender": "payer",
+   "recipient": "kit-provider",
+   "transactionType": "pas-claim",
+   "authorityFrame": "payer-coverage",
+   "scope": "pas-bundle",
+   "outcome": "answered",
+   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+  }
+ },
+ {
+  "seq": 364,
+  "time": "2026-07-03T23:20:28.734081-04:00",
+  "type": "run.finished",
+  "runId": "run-1783135228705-15",
+  "lane": "conformant",
+  "uc": "uc03",
+  "detail": "CRD card + DTR package + PAS submit approved via direct-mint ingress, auth PA-5c4cc20a31d0"
+ }
+]

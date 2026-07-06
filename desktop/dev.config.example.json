@@ -1,0 +1,15 @@
+{
+  "gatewayBin": "/tmp/shn-gateway",
+  "kitdBin": "/tmp/shnkitd",
+  "discoveryUrl": "http://127.0.0.1:9001/discovery",
+  "accountsUrl": "http://127.0.0.1:9002",
+  "secretsDir": "",
+  "auditUrl": "",
+  "phgUrl": "",
+  "consentUrl": "",
+  "fhirDataUrl": "",
+  "patientAppUrl": "",
+  "uiDir": "/absolute/path/to/your-checkout/ui/kit/dist",
+  "stateDir": "",
+  "apiAddr": "127.0.0.1:0"
+}
