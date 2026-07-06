@@ -9,9 +9,12 @@
 //     and holds the file lock the moment it starts, so copying afterward
 //     would either silently no-op (a naive "skip if the dir exists" check) or
 //     collide with a live lock (a non-skipping copy). Gated on a marker FILE
-//     written last, never on destination-directory existence — see the
-//     regression pin in seed_test.go for why directory existence alone can't
-//     be the gate.
+//     written last, whose BODY must equal the current asset identity (the
+//     kit version) to skip — never on destination-directory existence, and
+//     never on the marker's mere presence: a present marker with a stale or
+//     mismatched body (including a legacy timestamp body from before this
+//     gate existed) triggers a re-key instead of a skip. See the regression
+//     pin in seed_test.go for why directory existence alone can't be the gate.
 //
 //   - FreshenPersonas is POST-READY: it runs after the data server child
 //     passes its ReadyURLs probe, before the daemon's SetRunner. Unlike the
@@ -33,14 +36,17 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/SmartHealthNetwork/shn-gateway/fhirseed"
 )
 
 // prewarmMarkerName is CopyPrewarmedH2's copy-complete marker file, written
-// into stateDir LAST — only once both H2 stores have been fully copied. Its
-// presence (never destination-directory existence) is the sole skip gate.
+// into stateDir LAST — only once both H2 stores have been fully copied. The
+// skip gate is its BODY matching the current asset identity (the kit
+// version), never destination-directory existence and never the marker's
+// mere presence: a present marker with a different body (including a legacy
+// timestamp body) triggers a re-key rather than a skip.
 const prewarmMarkerName = ".prewarm-copied"
 
 // seedTenant is the FHIR partition CopyPrewarmedH2/FreshenPersonas seed —
@@ -48,27 +54,87 @@ const prewarmMarkerName = ".prewarm-copied"
 // provider-data posture).
 const seedTenant = "provider"
 
+// assetIdentityMatches reports whether stateDir's prewarm marker body equals
+// identity. A missing marker → false (fresh install or a wipe). ANY differing
+// body — including a legacy RFC3339 timestamp written by pre-identity builds —
+// → false, which is exactly what makes an update (or a leftover state dir
+// carried over from a prior install) re-key.
+func assetIdentityMatches(stateDir, identity string) (bool, error) {
+	b, err := os.ReadFile(filepath.Join(stateDir, prewarmMarkerName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("kitd: read prewarm marker: %w", err)
+	}
+	return strings.TrimSpace(string(b)) == identity, nil
+}
+
+// ClearStaleAssets removes this install's prewarmed H2 stores AND the per-child
+// main.war copies when the on-disk asset identity does not match identity (a
+// version change, or a first boot after this gate landed — where the marker
+// body is a legacy timestamp). It MUST run BEFORE BuildStack: BuildStack's
+// ensureWarLink is idempotent (it leaves an existing main.war link/copy alone),
+// so a stale Windows WAR byte-copy is only refreshed if it is cleared first.
+// On mac/linux the WAR is an absolute symlink into the app bundle and already
+// self-heals, but clearing it is harmless — os.RemoveAll on a symlink removes
+// the link, never the bundle target. A no-op when assetsDir == "" (no trio) or
+// when the identity already matches. CopyPrewarmedH2 (post-BuildStack) then
+// re-copies the H2 and rewrites the marker with the new identity.
+func ClearStaleAssets(assetsDir, stateDir, identity string, logf func(string, ...any)) error {
+	if assetsDir == "" {
+		return nil
+	}
+	match, err := assetIdentityMatches(stateDir, identity)
+	if err != nil {
+		return err
+	}
+	if match {
+		return nil
+	}
+	if logf != nil {
+		logf("kitd: asset identity changed (want %q) — clearing stale prewarmed H2 + WAR copies", identity)
+	}
+	stale := []string{
+		filepath.Join(stateDir, validatorChildName, "h2"),
+		filepath.Join(stateDir, dataServerChildName, "h2"),
+		filepath.Join(stateDir, validatorChildName, "main.war"),
+		filepath.Join(stateDir, dataServerChildName, "main.war"),
+		filepath.Join(stateDir, brProviderChildName, "main.war"),
+		filepath.Join(stateDir, prewarmMarkerName),
+	}
+	for _, p := range stale {
+		if err := os.RemoveAll(p); err != nil {
+			return fmt.Errorf("kitd: clear stale asset %s: %w", p, err)
+		}
+	}
+	return nil
+}
+
 // CopyPrewarmedH2 copies the package-time-prewarmed validator/data-server H2
 // stores from assetsDir/prewarm/{validator,data}-h2 into
 // stateDir/{validator,data-server}/h2 — the exact H2 dirs
 // BuildValidatorChildSpec/BuildDataServerChildSpec point their datasource at.
-// A no-op (nil, no I/O) when assetsDir is "" (no trio configured). Idempotent
-// across restarts of the SAME install: once stateDir/.prewarm-copied exists,
-// the copy is skipped entirely — a fresh install (or a state dir that was
-// wiped by a reset) always has neither the marker nor the H2 dirs, so the
-// copy always runs there.
-func CopyPrewarmedH2(assetsDir, stateDir string, logf func(string, ...any)) error {
+// A no-op (nil, no I/O) when assetsDir is "" (no trio configured). Gated on
+// asset identity, not mere marker presence: once stateDir/.prewarm-copied
+// carries a body equal to identity, the copy is skipped entirely; any other
+// body (missing marker, a stale prior identity, or a legacy timestamp)
+// re-copies and re-stamps the marker with identity. ClearStaleAssets (called
+// before BuildStack) is what actually removes the stale H2/WAR bytes on a
+// mismatch — this func only re-populates and re-stamps.
+func CopyPrewarmedH2(assetsDir, stateDir, identity string, logf func(string, ...any)) error {
 	if assetsDir == "" {
 		return nil
 	}
-	marker := filepath.Join(stateDir, prewarmMarkerName)
-	if _, err := os.Stat(marker); err == nil {
+	match, err := assetIdentityMatches(stateDir, identity)
+	if err != nil {
+		return err
+	}
+	if match {
 		if logf != nil {
-			logf("kitd: prewarmed H2 already copied (%s present) — skipping", marker)
+			logf("kitd: prewarmed H2 already current for identity %q — skipping", identity)
 		}
 		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("kitd: stat prewarm marker %s: %w", marker, err)
 	}
 
 	pairs := []struct{ src, dst string }{
@@ -83,7 +149,8 @@ func CopyPrewarmedH2(assetsDir, stateDir string, logf func(string, ...any)) erro
 			return fmt.Errorf("kitd: copy prewarmed H2 %s -> %s: %w", p.src, p.dst, err)
 		}
 	}
-	if err := os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0600); err != nil {
+	marker := filepath.Join(stateDir, prewarmMarkerName)
+	if err := os.WriteFile(marker, []byte(identity+"\n"), 0600); err != nil {
 		return fmt.Errorf("kitd: write prewarm marker %s: %w", marker, err)
 	}
 	return nil

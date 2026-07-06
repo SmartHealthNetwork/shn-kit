@@ -40,7 +40,7 @@ func mustReadFile(t *testing.T, path string) string {
 
 func TestCopyPrewarmedH2_NoAssetsDir_NoOp(t *testing.T) {
 	stateDir := t.TempDir()
-	if err := CopyPrewarmedH2("", stateDir, nil); err != nil {
+	if err := CopyPrewarmedH2("", stateDir, "0.9.0", nil); err != nil {
 		t.Fatalf("CopyPrewarmedH2(\"\", ...): %v, want nil (no-op when no trio configured)", err)
 	}
 	if _, err := os.Stat(filepath.Join(stateDir, prewarmMarkerName)); err == nil {
@@ -54,7 +54,7 @@ func TestCopyPrewarmedH2_FreshCopy_MarkerWrittenLast(t *testing.T) {
 	mustWriteFile(t, filepath.Join(assetsDir, "prewarm", "validator-h2", "db.mv.db"), "validator-h2-bytes")
 	mustWriteFile(t, filepath.Join(assetsDir, "prewarm", "data-h2", "db.mv.db"), "data-h2-bytes")
 
-	if err := CopyPrewarmedH2(assetsDir, stateDir, nil); err != nil {
+	if err := CopyPrewarmedH2(assetsDir, stateDir, "0.9.0", nil); err != nil {
 		t.Fatalf("CopyPrewarmedH2: %v", err)
 	}
 
@@ -69,27 +69,28 @@ func TestCopyPrewarmedH2_FreshCopy_MarkerWrittenLast(t *testing.T) {
 	}
 }
 
-// TestCopyPrewarmedH2_MarkerPresent_NoRecopy pins the marker-gated skip: a
+// TestCopyPrewarmedH2_MarkerPresent_NoRecopy pins the identity-gated skip: a
 // sentinel written into the destination after the first (real) copy must
-// survive a second call, since the marker's presence alone must skip it.
+// survive a second call, since both calls pass the same identity and the
+// marker body written by the first call already matches it.
 func TestCopyPrewarmedH2_MarkerPresent_NoRecopy(t *testing.T) {
 	assetsDir := t.TempDir()
 	stateDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(assetsDir, "prewarm", "validator-h2", "db.mv.db"), "orig-validator")
 	mustWriteFile(t, filepath.Join(assetsDir, "prewarm", "data-h2", "db.mv.db"), "orig-data")
 
-	if err := CopyPrewarmedH2(assetsDir, stateDir, nil); err != nil {
+	if err := CopyPrewarmedH2(assetsDir, stateDir, "0.9.0", nil); err != nil {
 		t.Fatalf("CopyPrewarmedH2 (1st): %v", err)
 	}
 
 	sentinelPath := filepath.Join(stateDir, "validator", "h2", "db.mv.db")
 	mustWriteFile(t, sentinelPath, "SENTINEL-must-survive")
 
-	if err := CopyPrewarmedH2(assetsDir, stateDir, nil); err != nil {
+	if err := CopyPrewarmedH2(assetsDir, stateDir, "0.9.0", nil); err != nil {
 		t.Fatalf("CopyPrewarmedH2 (2nd): %v", err)
 	}
 	if got := mustReadFile(t, sentinelPath); got != "SENTINEL-must-survive" {
-		t.Errorf("2nd call re-copied over the sentinel (got %q) — marker presence should have skipped it entirely", got)
+		t.Errorf("2nd call re-copied over the sentinel (got %q) — the matching marker body should have skipped it entirely", got)
 	}
 }
 
@@ -110,7 +111,7 @@ func TestCopyPrewarmedH2_DirExistsNoMarker_StillCopies(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CopyPrewarmedH2(assetsDir, stateDir, nil); err != nil {
+	if err := CopyPrewarmedH2(assetsDir, stateDir, "0.9.0", nil); err != nil {
 		t.Fatalf("CopyPrewarmedH2: %v", err)
 	}
 	if got := mustReadFile(t, filepath.Join(stateDir, "validator", "h2", "db.mv.db")); got != "real-validator-bytes" {
@@ -121,12 +122,137 @@ func TestCopyPrewarmedH2_DirExistsNoMarker_StillCopies(t *testing.T) {
 func TestCopyPrewarmedH2_MissingSource_NamedError(t *testing.T) {
 	assetsDir := t.TempDir() // no prewarm/ subdirs at all
 	stateDir := t.TempDir()
-	err := CopyPrewarmedH2(assetsDir, stateDir, nil)
+	err := CopyPrewarmedH2(assetsDir, stateDir, "0.9.0", nil)
 	if err == nil {
 		t.Fatal("want an error when the assets dir carries no prewarm/validator-h2")
 	}
 	if !strings.Contains(err.Error(), "validator-h2") {
 		t.Errorf("error = %q, want it to name the missing source", err.Error())
+	}
+}
+
+// ---- ClearStaleAssets + identity re-key ------------------------------------
+
+func TestClearStaleAssets_NoAssetsDir_NoOp(t *testing.T) {
+	stateDir := t.TempDir()
+	sentinel := filepath.Join(stateDir, "validator", "h2", "db.mv.db")
+	mustWriteFile(t, sentinel, "keep-me")
+	if err := ClearStaleAssets("", stateDir, "0.9.0", nil); err != nil {
+		t.Fatalf("ClearStaleAssets(\"\", ...): %v, want nil", err)
+	}
+	if got := mustReadFile(t, sentinel); got != "keep-me" {
+		t.Errorf("no-trio run cleared state (got %q)", got)
+	}
+}
+
+func TestClearStaleAssets_IdentityMatch_Keeps(t *testing.T) {
+	assetsDir := t.TempDir()
+	stateDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(stateDir, prewarmMarkerName), "0.9.0\n")
+	sentinel := filepath.Join(stateDir, "validator", "h2", "db.mv.db")
+	mustWriteFile(t, sentinel, "current-bytes")
+	if err := ClearStaleAssets(assetsDir, stateDir, "0.9.0", nil); err != nil {
+		t.Fatalf("ClearStaleAssets: %v", err)
+	}
+	if got := mustReadFile(t, sentinel); got != "current-bytes" {
+		t.Errorf("matching identity cleared state (got %q)", got)
+	}
+}
+
+func TestClearStaleAssets_IdentityMismatch_ClearsH2AndAllWars(t *testing.T) {
+	assetsDir := t.TempDir()
+	stateDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(stateDir, prewarmMarkerName), "0.8.0\n")
+	stale := []string{
+		filepath.Join(stateDir, "validator", "h2", "db.mv.db"),
+		filepath.Join(stateDir, "data-server", "h2", "db.mv.db"),
+		filepath.Join(stateDir, "validator", "main.war"),
+		filepath.Join(stateDir, "data-server", "main.war"),
+		filepath.Join(stateDir, "br-provider", "main.war"),
+	}
+	for _, p := range stale {
+		mustWriteFile(t, p, "stale")
+	}
+	if err := ClearStaleAssets(assetsDir, stateDir, "0.9.0", nil); err != nil {
+		t.Fatalf("ClearStaleAssets: %v", err)
+	}
+	for _, p := range stale {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("stale asset not cleared: %s (err=%v)", p, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, prewarmMarkerName)); !os.IsNotExist(err) {
+		t.Errorf("stale marker not cleared")
+	}
+}
+
+func TestClearStaleAssets_LegacyTimestampMarker_Migrates(t *testing.T) {
+	assetsDir := t.TempDir()
+	stateDir := t.TempDir()
+	// pre-fix builds wrote an RFC3339 timestamp as the marker body
+	mustWriteFile(t, filepath.Join(stateDir, prewarmMarkerName), time.Now().UTC().Format(time.RFC3339)+"\n")
+	sentinel := filepath.Join(stateDir, "validator", "h2", "db.mv.db")
+	mustWriteFile(t, sentinel, "stale-legacy")
+	if err := ClearStaleAssets(assetsDir, stateDir, "0.9.0", nil); err != nil {
+		t.Fatalf("ClearStaleAssets: %v", err)
+	}
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Errorf("legacy timestamp marker did not trigger a re-key")
+	}
+}
+
+// End-to-end: ClearStaleAssets + CopyPrewarmedH2 re-copy on an identity change,
+// and the marker body carries the new identity.
+func TestReKey_ClearThenCopy_RefreshesAndStampsIdentity(t *testing.T) {
+	assetsDir := t.TempDir()
+	stateDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(assetsDir, "prewarm", "validator-h2", "db.mv.db"), "v2-validator")
+	mustWriteFile(t, filepath.Join(assetsDir, "prewarm", "data-h2", "db.mv.db"), "v2-data")
+
+	// first install at v1
+	if err := CopyPrewarmedH2(assetsDir, stateDir, "0.8.0", nil); err != nil {
+		t.Fatalf("CopyPrewarmedH2 v1: %v", err)
+	}
+	valPath := filepath.Join(stateDir, "validator", "h2", "db.mv.db")
+	mustWriteFile(t, valPath, "SENTINEL-v1")
+
+	// update to v2
+	if err := ClearStaleAssets(assetsDir, stateDir, "0.9.0", nil); err != nil {
+		t.Fatalf("ClearStaleAssets v2: %v", err)
+	}
+	if err := CopyPrewarmedH2(assetsDir, stateDir, "0.9.0", nil); err != nil {
+		t.Fatalf("CopyPrewarmedH2 v2: %v", err)
+	}
+	if got := mustReadFile(t, valPath); got != "v2-validator" {
+		t.Errorf("re-key did not refresh the H2 (got %q, want v2 bytes)", got)
+	}
+	if got := strings.TrimSpace(mustReadFile(t, filepath.Join(stateDir, prewarmMarkerName))); got != "0.9.0" {
+		t.Errorf("marker body = %q, want the new identity 0.9.0", got)
+	}
+}
+
+// Composition proof: clear the stale WAR, then ensureWarLink (the
+// same call BuildValidatorChildSpec makes inside BuildStack) must recreate it
+// from the CURRENT bundle. On the symlink path (mac/linux test host) the
+// recreated main.war resolves to the fresh bundle bytes. ensureWarLink is
+// same-package/unexported, so this closes the clear->recreate->fresh gap for
+// free. (The Windows copy-fallback path stays logic-only — see the Task note.)
+func TestReKey_ClearThenEnsureWarLink_FreshWar(t *testing.T) {
+	assetsDir := t.TempDir()
+	stateDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(assetsDir, "hapi", "main.war"), "FRESH-WAR-v2")
+	// a stale prior-version WAR copy + old-identity marker
+	mustWriteFile(t, filepath.Join(stateDir, validatorChildName, "main.war"), "STALE-WAR-v1")
+	mustWriteFile(t, filepath.Join(stateDir, prewarmMarkerName), "0.8.0\n")
+
+	if err := ClearStaleAssets(assetsDir, stateDir, "0.9.0", nil); err != nil {
+		t.Fatalf("ClearStaleAssets: %v", err)
+	}
+	if _, err := ensureWarLink(filepath.Join(stateDir, validatorChildName), filepath.Join(assetsDir, "hapi", "main.war")); err != nil {
+		t.Fatalf("ensureWarLink: %v", err)
+	}
+	if got := mustReadFile(t, filepath.Join(stateDir, validatorChildName, "main.war")); got != "FRESH-WAR-v2" {
+		t.Errorf("WAR not refreshed after clear+ensureWarLink: got %q, want FRESH-WAR-v2 (symlink path)", got)
 	}
 }
 

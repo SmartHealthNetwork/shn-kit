@@ -378,6 +378,22 @@ func main() {
 			scfg.ExtraIngressClients = append(scfg.ExtraIngressClients, kitd.IngressClient{ClientID: dv.ClientID, Alg: dv.Alg, PublicKeyPEM: dv.PublicKeyPEM})
 		}
 
+		// Re-key stale prewarmed assets on a version change BEFORE BuildStack:
+		// BuildStack's ensureWarLink is idempotent, so a stale WAR copy must be
+		// cleared before the child specs are built. A no-op when no trio is
+		// configured or the identity already matches. (CopyPrewarmedH2 below
+		// re-copies the H2 and rewrites the marker.)
+		if err := kitd.ClearStaleAssets(*javaAssets, *stateDir, kitVersion, log.Printf); err != nil {
+			if ctx.Err() != nil {
+				bus.Emit(event.Event{Type: event.TypeChild, Detail: "boot aborted by shutdown"})
+				return
+			}
+			bus.Emit(event.Event{Type: event.TypeChild, Detail: "clear stale assets: " + err.Error()})
+			close(bootFailed)
+			cancel()
+			return
+		}
+
 		stack, err := kitd.BuildStack(scfg)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -407,7 +423,7 @@ func main() {
 		// it spawns, so copying the package-time-prewarmed store any later
 		// would either silently no-op or collide with that live lock. A
 		// no-op when *javaAssets == "" (CopyPrewarmedH2's own guard).
-		if err := kitd.CopyPrewarmedH2(*javaAssets, *stateDir, log.Printf); err != nil {
+		if err := kitd.CopyPrewarmedH2(*javaAssets, *stateDir, kitVersion, log.Printf); err != nil {
 			if ctx.Err() != nil {
 				bus.Emit(event.Event{Type: event.TypeChild, Detail: "boot aborted by shutdown"})
 				return
