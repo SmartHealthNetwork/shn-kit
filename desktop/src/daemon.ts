@@ -83,9 +83,12 @@ export async function waitForSession(
 
 /** ChildLike is the injectable process handle DaemonManager spawns and
  * supervises — a thin seam over node's ChildProcess so daemon.ts stays
- * electron/node-child_process-free for testing. */
+ * electron/node-child_process-free for testing. `pid` mirrors Node's own
+ * `ChildProcess.pid` (possibly `undefined` if the spawn itself never
+ * surfaced one) — killGeneration's Windows tree-kill path needs it to target
+ * `taskkill`. */
 export interface ChildLike {
-  pid: number;
+  pid: number | undefined;
   kill(sig: 'SIGTERM' | 'SIGKILL'): boolean;
   /** Registers this generation's exit callback — one registration per spawned
    * child, not a constructor-level singleton, so a stale generation's
@@ -95,6 +98,11 @@ export interface ChildLike {
 
 export interface DaemonIO {
   spawn(cmd: string, args: string[]): ChildLike;
+  /** Runs a command to completion (stdout/stderr ignored) without supervising
+   * it as a generation — the seam killGeneration's Windows path uses to run
+   * `taskkill /T /F` (see below), kept injectable so tests never spawn a real
+   * subprocess. */
+  run(cmd: string, args: string[]): Promise<void>;
   readFile(p: string): string;
   rm(p: string): void;
   delay(ms: number): Promise<void>;
@@ -104,8 +112,16 @@ export interface DaemonIO {
 // because it bounds shnkitd's own boot (BuildStack + every child's ready
 // probe), not just its process spawn.
 const SESSION_WAIT_DEADLINE_MS = 30_000;
-// SIGTERM grace period before escalating to SIGKILL (stop()).
-const STOP_GRACE_MS = 5_000;
+// SIGTERM grace period before escalating to SIGKILL (stop()), macOS/Linux
+// only (killGeneration's Windows path doesn't wait on this — see below). Must
+// cover, in series, kitd.Serve's own bounded srv.Shutdown (up to ~5s) THEN
+// sup.StopAll()'s sequential reap of the gateway + 3 Java children (each
+// individually bounded, kit/supervisor/supervisor.go's Stop, up to ~3s
+// apiece before it force-kills that one child and moves on). 10s left thin
+// margin against that combined worst case; 15s is comfortable. This is only
+// the MAX wait — a fast, cooperative quit still resolves as soon as
+// shnkitd's own exit fires, never after the full grace.
+const STOP_GRACE_MS = 15_000;
 
 /** One spawned shnkitd generation: its ChildLike handle, a promise that
  * resolves once it has actually exited, and whether that exit is expected
@@ -200,9 +216,18 @@ export class DaemonManager {
     }
   }
 
-  /** Shared SIGTERM-then-bounded-SIGKILL escalation, used by both stop() and
-   * start()'s failure path (finding 3) so the two don't drift. */
+  /** Shared shutdown path for both stop() and start()'s failure path
+   * (finding 3) so the two don't drift — platform-aware since Windows has no
+   * POSIX signal delivery to shnkitd. */
   private async killGeneration(generation: Generation): Promise<void> {
+    if (process.platform === 'win32') {
+      await this.killGenerationWindows(generation);
+      return;
+    }
+
+    // macOS/Linux: a real SIGTERM reaches shnkitd's own signal.Notify handler,
+    // which runs sup.StopAll() to reap the gateway + Java trio before it
+    // exits — bounded-wait, then escalate to SIGKILL only if it doesn't.
     generation.child.kill('SIGTERM');
 
     const timedOut = Symbol('timeout');
@@ -214,6 +239,37 @@ export class DaemonManager {
       generation.child.kill('SIGKILL');
       await generation.exited;
     }
+  }
+
+  /** Windows has no POSIX signal delivery: `child.kill('SIGTERM')` maps to
+   * `TerminateProcess`, which hard-kills shnkitd WITHOUT running its
+   * signal.Notify handler — sup.StopAll() never runs, so the Java trio + the
+   * gateway are orphaned and keep the validator's H2 file locked (the next
+   * boot's validator then can't open it). There is also no process-group/Job
+   * Object in this codebase to make a plain kill cascade to children.
+   *
+   * Instead, kill the whole shnkitd process TREE directly:
+   * `taskkill /PID <pid> /T /F` (`/T` = terminate the tree, taking the Java
+   * trio + gateway down with it; `/F` = force) — this releases the H2 lock
+   * the same way a graceful SIGTERM-driven StopAll() does on macOS/Linux,
+   * without ever needing shnkitd to run its own reap logic. */
+  private async killGenerationWindows(generation: Generation): Promise<void> {
+    const pid = generation.child.pid;
+    if (typeof pid === 'number') {
+      try {
+        await this.io.run('taskkill', ['/PID', String(pid), '/T', '/F']);
+      } catch {
+        // taskkill itself failed to even run (e.g. missing from PATH) —
+        // fall back to a direct hard-kill of shnkitd; it won't reap the
+        // tree, but it's the best available fallback.
+        generation.child.kill('SIGKILL');
+      }
+    } else {
+      // No pid to target (shouldn't happen — the real adapter always
+      // surfaces Node's ChildProcess.pid) — fall back to a direct hard-kill.
+      generation.child.kill('SIGKILL');
+    }
+    await generation.exited;
   }
 
   async stop(): Promise<void> {
@@ -347,4 +403,37 @@ export function wireUnexpectedExit(manager: DaemonManager, deps: UnexpectedExitD
       }
     })();
   });
+}
+
+/** Minimal structural shape of Electron's 'before-quit' event — kept
+ * electron-free (like the rest of this file) so wireGracefulQuit stays
+ * unit-testable with a fake, no real Electron.Event needed. */
+export interface QuitEvent {
+  preventDefault(): void;
+}
+
+/**
+ * Returns a 'before-quit' handler that stops the daemon on EVERY quit path
+ * (Cmd+Q, dock quit, the crash-dialog Quit, window-all-closed, OS
+ * SIGTERM/SIGINT — main.ts routes all of them through app.quit(), which
+ * fires 'before-quit') BEFORE Electron actually exits. Without this,
+ * shnkitd and its Java trio are orphaned on quit and keep the validator's H2
+ * file locked, so the next launch's validator can't open it and the daemon
+ * exits 1.
+ *
+ * Guarded against infinite recursion: the first call prevents the default
+ * quit, stops the daemon, then calls deps.quit() again once stop() resolves
+ * — which re-fires 'before-quit'. That second call sees `stopping` already
+ * true and returns immediately (no preventDefault this time), so Electron's
+ * quit actually proceeds. With no daemon running (e.g. an early quit before
+ * the daemon ever started), manager.stop() is a safe no-op.
+ */
+export function wireGracefulQuit(manager: DaemonManager, deps: { quit(): void }): (event: QuitEvent) => void {
+  let stopping = false;
+  return (event) => {
+    if (stopping) return; // second pass, after stop() resolved — let it quit
+    stopping = true;
+    event.preventDefault();
+    void manager.stop().finally(() => deps.quit());
+  };
 }

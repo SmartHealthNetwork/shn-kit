@@ -12,6 +12,7 @@ import {
   DaemonManager,
   SessionStore,
   handleRestartRequest,
+  wireGracefulQuit,
   wireUnexpectedExit,
   type ChildLike,
   type Session,
@@ -78,13 +79,13 @@ function resolveJavaAssets(cfg: KitConfig): string | undefined {
   return cfg.javaAssets; // dev: an explicit absolute path a developer points at locally
 }
 
-// realSpawn/realDelay are the only place this module touches a real OS
-// process/timer — everything else routes through DaemonManager's injectable
-// io seam, exactly as daemon.test.ts fakes it.
+// realSpawn/realRun/realDelay are the only place this module touches a real
+// OS process/timer — everything else routes through DaemonManager's
+// injectable io seam, exactly as daemon.test.ts fakes it.
 function realSpawn(cmd: string, args: string[]): ChildLike {
   const child: ChildProcess = nodeSpawn(cmd, args, { stdio: 'ignore' });
   return {
-    pid: child.pid ?? -1,
+    pid: child.pid,
     kill(sig: 'SIGTERM' | 'SIGKILL'): boolean {
       return child.kill(sig);
     },
@@ -92,6 +93,19 @@ function realSpawn(cmd: string, args: string[]): ChildLike {
       child.once('exit', (code) => cb(code));
     },
   };
+}
+
+// Runs a command to completion without supervising it as a generation — used
+// only for killGeneration's Windows tree-kill (`taskkill /T /F`). Resolves
+// once the subprocess itself exits (regardless of its exit code — the caller
+// only cares that it ran); rejects only if the subprocess never started at
+// all (e.g. `taskkill` missing from PATH).
+function realRun(cmd: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = nodeSpawn(cmd, args, { stdio: 'ignore' });
+    child.once('error', reject);
+    child.once('exit', () => resolve());
+  });
 }
 
 function realDelay(ms: number): Promise<void> {
@@ -108,6 +122,7 @@ function rmIfExists(p: string): void {
 
 const manager = new DaemonManager({
   spawn: realSpawn,
+  run: realRun,
   readFile: (p: string) => fs.readFileSync(p, 'utf8'),
   rm: rmIfExists,
   delay: realDelay,
@@ -282,10 +297,20 @@ async function main(): Promise<void> {
   wireIPC(cfg, stateDir);
   wireCrashDialog(cfg, stateDir);
 
-  // --- Step 7 ---
-  app.on('window-all-closed', () => {
-    void manager.stop().then(() => app.quit());
-  });
+  // --- Step 7: stop the daemon on EVERY quit path (Cmd+Q, dock quit, the
+  // crash-dialog Quit, window close, OS SIGTERM/SIGINT) BEFORE Electron
+  // exits — see wireGracefulQuit's own comment for why this can't be
+  // window-all-closed-only (that left every other quit path orphaning
+  // shnkitd and its Java trio, which then held the validator's H2 file lock
+  // and broke the next launch). ---
+  app.on('before-quit', wireGracefulQuit(manager, { quit: () => app.quit() }));
+  // An OS SIGTERM/SIGINT (system shutdown, `kill`) must shut down through
+  // the same graceful path, not terminate Electron directly and orphan the
+  // daemon.
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(sig, () => app.quit());
+  }
+  app.on('window-all-closed', () => app.quit());
 }
 
 void main();

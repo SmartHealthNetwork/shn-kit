@@ -60,16 +60,33 @@ cd ui/kit && KITD_URL=http://127.0.0.1:8471 npm run dev
 # open http://localhost:5173/?token=dev-token
 ```
 
-### v1 limitation — orphaned gateway child on a hard SIGKILL
+### Daemon shutdown on quit
 
-If `stop()`'s 5-second SIGTERM grace period expires and the shell escalates to
-SIGKILL on `shnkitd`, `shnkitd`'s own supervised gateway child is orphaned — there is
-no longer any supervisor left to reap it. A subsequent Kit restart doesn't collide with
-it (gateway ports are allocated `:0`), but the orphaned process lingers on disk/in the
-process table until killed by hand (`kill <pid>`) or the machine reboots. This is a
-known lifecycle gap (real signal handling + the Windows equivalent); it's
-called out here because a developer force-quitting the Electron app mid-shutdown is
-exactly when it's hit.
+Every deliberate quit path (Cmd+Q, dock quit, the crash-dialog Quit, window-all-closed,
+an OS `SIGTERM`/`SIGINT`) routes through `app.quit()`, which fires `before-quit` —
+`wireGracefulQuit` (`src/daemon.ts`) stops the daemon there, before Electron actually
+exits:
+
+- **macOS/Linux:** `stop()` sends a real `SIGTERM`, which reaches `shnkitd`'s own
+  `signal.Notify` handler; it runs `sup.StopAll()` to reap the gateway and Java trio
+  before exiting itself. `stop()` waits up to a 15-second grace period for that to
+  finish before escalating to `SIGKILL`.
+- **Windows:** Node maps `child.kill('SIGTERM')` to `TerminateProcess`, which never
+  reaches `shnkitd`'s signal handler — `sup.StopAll()` would never run. Instead,
+  `stop()` runs `taskkill /PID <pid> /T /F` (`/T` kills the whole process tree, taking
+  the gateway and Java trio down with `shnkitd`; `/F` forces it), which releases the
+  same H2 file lock a graceful mac/Linux shutdown does, without ever needing
+  `shnkitd`'s own reap logic.
+
+**Residual:** the 15-second grace period is sized generously for `shnkitd`'s own
+bounded shutdown (its HTTP server, then reaping four supervised children in series),
+but if `shnkitd` still hasn't exited once it elapses, `stop()`'s mac/Linux path
+escalates to a bare `SIGKILL` on `shnkitd` itself — with no process-group kill on that
+path, its already-orphaned children linger on disk/in the process table until killed
+by hand (`kill <pid>`) or the machine reboots. A subsequent Kit restart doesn't collide
+with them (gateway ports are allocated `:0`). Likewise, a non-graceful force-quit that
+bypasses `app.quit()`/`before-quit` entirely (e.g. killing the Electron process itself
+from outside, or a system crash) is outside any shell-driven shutdown path.
 
 ## Packaging (full `electron-builder.yml`)
 

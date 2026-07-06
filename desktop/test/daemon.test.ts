@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KitConfig } from '../src/config';
 import {
   DaemonManager,
@@ -6,6 +6,7 @@ import {
   buildArgs,
   handleRestartRequest,
   waitForSession,
+  wireGracefulQuit,
   wireUnexpectedExit,
   type ChildLike,
   type Session,
@@ -134,7 +135,7 @@ describe('waitForSession', () => {
 // control whether kill() synchronously fires the registered exit callback —
 // how each test row models a cooperative vs. a stubborn child.
 class FakeChild implements ChildLike {
-  pid: number;
+  pid: number | undefined;
   killed: Array<'SIGTERM' | 'SIGKILL'> = [];
   private cb: ((code: number | null) => void) | null = null;
   exitOnSigterm = false;
@@ -166,6 +167,7 @@ interface Harness {
   children: FakeChild[];
   sessionFiles: Record<string, string>;
   removed: string[];
+  runCalls: Array<{ cmd: string; args: string[] }>;
 }
 
 function makeHarness(): Harness {
@@ -173,6 +175,7 @@ function makeHarness(): Harness {
   const children: FakeChild[] = [];
   const sessionFiles: Record<string, string> = {};
   const removed: string[] = [];
+  const runCalls: Array<{ cmd: string; args: string[] }> = [];
   let pidCounter = 100;
 
   const manager = new DaemonManager({
@@ -202,9 +205,16 @@ function makeHarness(): Harness {
       delete sessionFiles[p];
     },
     delay: instantDelay,
+    // Not exercised by any non-Windows harness test (killGeneration's
+    // Windows tree-kill path is the only caller) — recorded anyway so a
+    // stray call would be visible rather than silently swallowed.
+    run: (cmd: string, args: string[]): Promise<void> => {
+      runCalls.push({ cmd, args });
+      return Promise.resolve();
+    },
   });
 
-  return { manager, calls, children, sessionFiles, removed };
+  return { manager, calls, children, sessionFiles, removed, runCalls };
 }
 
 const sessionPath = (stateDir: string) => `${stateDir}/session.json`;
@@ -237,6 +247,7 @@ describe('DaemonManager', () => {
         delete h.sessionFiles[p];
       },
       delay: instantDelay,
+      run: () => Promise.resolve(),
     });
 
     const session = await manager.start(cfgBase, stateDir);
@@ -261,6 +272,7 @@ describe('DaemonManager', () => {
       },
       rm: () => {},
       delay: instantDelay,
+      run: () => Promise.resolve(),
     });
 
     await expect(manager.start(cfgBase, stateDir)).rejects.toThrow(/session\.json/);
@@ -297,6 +309,126 @@ describe('DaemonManager', () => {
 
     expect(child.killed).toEqual(['SIGTERM', 'SIGKILL']);
     expect(h.manager.running).toBe(false);
+  });
+
+  it('stop(): the SIGTERM grace period handed to delay is 15s — generous enough for shnkitd to reap its Java trio before escalating to SIGKILL', async () => {
+    const stateDir = '/state';
+    const sessionFiles: Record<string, string> = { [sessionPath(stateDir)]: JSON.stringify({ api: 'http://a', token: 't' }) };
+    let child: FakeChild | undefined;
+    const delays: number[] = [];
+    const manager = new DaemonManager({
+      spawn: (_cmd, _args) => {
+        child = new FakeChild(900);
+        child.exitOnSigterm = false; // stubborn — forces stop() to actually await the grace period
+        return child;
+      },
+      readFile: (p) => {
+        if (!(p in sessionFiles)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        return sessionFiles[p];
+      },
+      rm: () => {},
+      delay: (ms: number) => {
+        delays.push(ms);
+        return Promise.resolve(); // still hermetic/instant — only the recorded ms matters
+      },
+      run: () => Promise.resolve(),
+    });
+
+    await manager.start(cfgBase, stateDir);
+    await manager.stop();
+
+    expect(delays).toContain(15_000);
+    expect(child!.killed).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+
+  describe('stop() on win32 (no POSIX signal delivery — tree-kill via taskkill)', () => {
+    const realPlatform = process.platform;
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: realPlatform });
+    });
+
+    it('kills the whole process tree via `taskkill /PID <pid> /T /F` and never relies on child.kill(SIGTERM) reaping', async () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+
+      const stateDir = '/state';
+      const sessionFiles: Record<string, string> = {
+        [sessionPath(stateDir)]: JSON.stringify({ api: 'http://a', token: 't' }),
+      };
+      let child: FakeChild | undefined;
+      const runCalls: Array<{ cmd: string; args: string[] }> = [];
+      const manager = new DaemonManager({
+        spawn: (_cmd, _args) => {
+          child = new FakeChild(4242);
+          // A real Windows shnkitd never reaps on SIGTERM (Node maps it to
+          // TerminateProcess, which never runs shnkitd's signal handler) and
+          // is never killed via child.kill() at all on this path — only
+          // `taskkill` (run via the io.run seam below) actually terminates
+          // it. Leaving both flags at their stubborn default proves
+          // killGeneration doesn't fall back to either.
+          child.exitOnSigterm = false;
+          child.exitOnSigkill = false;
+          return child;
+        },
+        readFile: (p) => {
+          if (!(p in sessionFiles)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+          return sessionFiles[p];
+        },
+        rm: () => {},
+        delay: instantDelay,
+        run: (cmd, args) => {
+          runCalls.push({ cmd, args });
+          // taskkill /T /F actually terminating the tree is what makes
+          // shnkitd itself exit — simulate that out-of-band exit here so
+          // killGeneration's `await generation.exited` resolves.
+          child!.simulateExit(null);
+          return Promise.resolve();
+        },
+      });
+
+      await manager.start(cfgBase, stateDir);
+      await manager.stop();
+
+      expect(runCalls).toEqual([{ cmd: 'taskkill', args: ['/PID', '4242', '/T', '/F'] }]);
+      expect(child!.killed).toEqual([]); // child.kill() was never called on this path
+      expect(manager.running).toBe(false);
+    });
+
+    it('falls back to child.kill(SIGKILL) if the child never surfaced a pid', async () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+
+      const stateDir = '/state';
+      const sessionFiles: Record<string, string> = {
+        [sessionPath(stateDir)]: JSON.stringify({ api: 'http://a', token: 't' }),
+      };
+      let child: FakeChild | undefined;
+      let runCalled = false;
+      const manager = new DaemonManager({
+        spawn: (_cmd, _args) => {
+          child = new FakeChild(4242);
+          child.pid = undefined; // shouldn't happen from the real adapter — defensive path
+          child.exitOnSigkill = true;
+          return child;
+        },
+        readFile: (p) => {
+          if (!(p in sessionFiles)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+          return sessionFiles[p];
+        },
+        rm: () => {},
+        delay: instantDelay,
+        run: () => {
+          runCalled = true;
+          return Promise.resolve();
+        },
+      });
+
+      await manager.start(cfgBase, stateDir);
+      await manager.stop();
+
+      expect(runCalled).toBe(false); // no pid to target -> taskkill is never invoked
+      expect(child!.killed).toEqual(['SIGKILL']);
+      expect(manager.running).toBe(false);
+    });
   });
 
   it('stop() on an already-exited child resolves without signaling', async () => {
@@ -338,6 +470,7 @@ describe('DaemonManager', () => {
         delete h.sessionFiles[p];
       },
       delay: instantDelay,
+      run: () => Promise.resolve(),
     });
 
     const first = await manager.start(cfgBase, stateDir);
@@ -370,6 +503,7 @@ describe('DaemonManager', () => {
       },
       rm: () => {},
       delay: instantDelay,
+      run: () => Promise.resolve(),
     });
 
     const unexpected = vi.fn();
@@ -412,6 +546,7 @@ describe('DaemonManager', () => {
       },
       rm: () => {},
       delay: instantDelay,
+      run: () => Promise.resolve(),
     });
 
     await manager.start(cfgBase, stateDir); // generation 1 (spawn #1)
@@ -479,6 +614,7 @@ describe('DaemonManager', () => {
         delete sessionFiles[p];
       },
       delay: instantDelay,
+      run: () => Promise.resolve(),
     });
 
     await manager.start(cfgBase, stateDir); // generation 1 (spawnCalls === 1)
@@ -549,6 +685,7 @@ describe('handleRestartRequest', () => {
       },
       rm: () => {},
       delay: instantDelay,
+      run: () => Promise.resolve(),
     });
     const store = new SessionStore();
     const staleSession: Session = { api: 'http://stale', token: 'stale-token' };
@@ -684,5 +821,78 @@ describe('wireUnexpectedExit', () => {
     await Promise.resolve();
 
     expect(showDialog).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Drains pending microtasks. manager.stop()'s chain here is deeper than
+// wireUnexpectedExit's (it goes through killGeneration's own internal
+// Promise.race before the outer .finally fires), so a fixed handful of bare
+// `await Promise.resolve()` calls undercounts — loop generously instead;
+// every promise involved is already resolved (instantDelay), so this stays
+// hermetic/instant, never a real timer.
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) {
+    await Promise.resolve();
+  }
+}
+
+// wireGracefulQuit: every quit path must stop the daemon BEFORE Electron
+// exits, or shnkitd (and its Java trio) are orphaned and keep the H2 file
+// locked for the next launch.
+describe('wireGracefulQuit', () => {
+  it('before-quit: prevents the default quit, stops the daemon, then quits once stop() resolves', async () => {
+    const h = makeHarness();
+    const stateDir = '/state';
+    await h.manager.start(cfgBase, stateDir);
+    h.children[0].exitOnSigterm = true; // cooperative — stop() resolves promptly
+
+    const stopSpy = vi.spyOn(h.manager, 'stop');
+    const quit = vi.fn();
+    const handler = wireGracefulQuit(h.manager, { quit });
+
+    const preventDefault = vi.fn();
+    handler({ preventDefault });
+    await flushMicrotasks(); // manager.stop() is async; let its chain (incl. .finally) settle
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(quit).toHaveBeenCalledTimes(1);
+    expect(h.manager.running).toBe(false);
+  });
+
+  it('a second before-quit call (from quit() re-firing it) does not stop the daemon again and does not prevent the default — the app actually exits', async () => {
+    const h = makeHarness();
+    const stateDir = '/state';
+    await h.manager.start(cfgBase, stateDir);
+    h.children[0].exitOnSigterm = true;
+
+    const stopSpy = vi.spyOn(h.manager, 'stop');
+    const quit = vi.fn();
+    const handler = wireGracefulQuit(h.manager, { quit });
+
+    handler({ preventDefault: vi.fn() });
+    await flushMicrotasks();
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(quit).toHaveBeenCalledTimes(1);
+
+    // Electron re-fires 'before-quit' because the finally callback above
+    // called quit() again — this second pass must be a no-op w.r.t. stop()
+    // and must NOT prevent the default this time.
+    const secondPreventDefault = vi.fn();
+    handler({ preventDefault: secondPreventDefault });
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(secondPreventDefault).not.toHaveBeenCalled();
+  });
+
+  it('with no daemon ever started, stop() is a safe no-op and quit() still fires', async () => {
+    const h = makeHarness();
+    const quit = vi.fn();
+    const handler = wireGracefulQuit(h.manager, { quit });
+
+    handler({ preventDefault: vi.fn() });
+    await flushMicrotasks();
+
+    expect(quit).toHaveBeenCalledTimes(1);
   });
 });

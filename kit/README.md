@@ -146,15 +146,25 @@ unreachable/empty value, effectively disables it. Every failure path (feed
 unreachable, malformed response) is silent-with-log — offline is a
 first-class state, never an error toast.
 
-### A known v1 limitation
+### Daemon shutdown on quit
 
-If the Electron shell has to escalate to `SIGKILL` on `shnkitd` (its
-`SIGTERM` grace period expired), the daemon's own supervised gateway child is
-orphaned — there is no longer a supervisor left to reap it. It doesn't
-collide with a later Kit restart (ports are allocated dynamically), but it
-lingers on disk/in the process table until killed by hand or the machine
-reboots. See `../desktop/README.md`'s "v1 limitation" note for the full
-detail.
+The Electron shell reaps `shnkitd` (and, transitively, its supervised gateway and Java
+trio) on every deliberate quit. On macOS/Linux this is a real `SIGTERM` that reaches
+`shnkitd`'s own `signal.Notify` handler, which runs `sup.StopAll()` to reap its
+children before it exits itself — the shell waits up to a 15-second grace period for
+that before escalating to `SIGKILL`. Windows has no POSIX signal delivery (a plain
+`kill()` there just calls `TerminateProcess`, which never runs `sup.StopAll()`), so the
+shell instead kills `shnkitd`'s whole process tree directly (`taskkill /PID <pid> /T
+/F`), taking the gateway and Java trio down with it.
+
+**Residual:** if `shnkitd` still hasn't exited once the mac/Linux grace period
+elapses, the shell escalates to a bare `SIGKILL` on `shnkitd` itself, which — with no
+process-group kill on that path — leaves its already-orphaned children lingering on
+disk/in the process table until killed by hand or the machine reboots; it doesn't
+collide with a later Kit restart (ports are allocated dynamically). A non-graceful
+force-quit that bypasses the shell's quit handling entirely (e.g. the Electron process
+killed from outside) is likewise outside this path. See `../desktop/README.md`'s
+"Daemon shutdown on quit" section for the full detail.
 
 ## Bring-your-own systems
 
