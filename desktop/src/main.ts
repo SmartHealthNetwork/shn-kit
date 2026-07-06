@@ -221,6 +221,25 @@ function wireCrashDialog(cfg: KitConfig, stateDir: string): void {
 }
 
 async function main(): Promise<void> {
+  // --- Step 0: single-instance guard. A second launch (e.g. an impatient
+  // relaunch during the ~2min first boot, which looks hung) must not spawn a
+  // second daemon — two shnkitd processes fight over the same on-disk H2
+  // database file and the second one dies. requestSingleInstanceLock() must
+  // be called before app.whenReady(); a losing second instance quits
+  // immediately, before any daemon is spawned. 'second-instance' fires on
+  // the winning (first) instance whenever a later launch is attempted —
+  // surface the existing window instead of doing nothing. ---
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
+  app.on('second-instance', () => {
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+
   await app.whenReady();
 
   // --- Step 1 ---

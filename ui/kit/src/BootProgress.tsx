@@ -87,6 +87,13 @@ export default function BootProgress({ boot, status, runsLive }: BootProgressPro
     },
   ];
 
+  // While any stage is still active, the boot isn't done — but it also
+  // hasn't failed, so this is exactly the "quiet middle" where a slow
+  // stage (the gateway's HAPI-backed servers, typically) can read as
+  // hung. Once every stage is done (Ready) or one has failed, no stage
+  // is 'active' and the hint naturally disappears.
+  const bootInProgress = stages.some((s) => s.state === 'active');
+
   return (
     <div className="phase-card boot-progress">
       <h1>Starting the Kit</h1>
@@ -95,6 +102,9 @@ export default function BootProgress({ boot, status, runsLive }: BootProgressPro
           <li key={s.key} data-testid={`stage-${s.key}`} className={`stage stage-${s.state}`}>
             <div className="stage-header">
               <span className="stage-dot" aria-hidden="true" />
+              {s.state === 'active' && (
+                <span className="stage-spinner" aria-hidden="true" data-testid="stage-spinner" />
+              )}
               <span className="stage-label">{s.label}</span>
             </div>
             <p className="stage-subtitle">{s.subtitle}</p>
@@ -102,6 +112,12 @@ export default function BootProgress({ boot, status, runsLive }: BootProgressPro
           </li>
         ))}
       </ol>
+
+      {bootInProgress && (
+        <p className="boot-hint" data-testid="boot-hint">
+          First launch starts the local servers — this can take a couple of minutes.
+        </p>
+      )}
 
       {gatewayFailed &&
         (canRestart() ? (

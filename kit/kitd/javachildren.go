@@ -98,10 +98,20 @@ func javaCommand(jreDir, goos string) string {
 }
 
 // javaArgs is the pinned launch arg shape (see package doc), identical for
-// every Java child except the heap size and the war path.
-func javaArgs(heapMB int, warPath string) []string {
+// every Java child except the heap size, tmp dir, and the war path.
+//
+// -Djava.io.tmpdir=tmpDir pins the JVM's temp directory to a writable path
+// under the child's own state dir. Without it, a Windows JVM launched with no
+// TEMP/TMP in its environment (see javaEnv's minimal env) defaults
+// java.io.tmpdir to C:\Windows — which a normal (non-admin) Windows user
+// account cannot write to, so embedded Tomcat fails to create its work dir on
+// first boot. The system property must precede the main class on the java
+// command line (system properties are JVM options, not program arguments),
+// so it's placed right after -Xmx.
+func javaArgs(heapMB int, tmpDir, warPath string) []string {
 	return []string{
 		fmt.Sprintf("-Xmx%dm", heapMB),
+		"-Djava.io.tmpdir=" + tmpDir,
 		"--class-path", warPath,
 		"-Dloader.path=main.war!/WEB-INF/classes/,main.war!/WEB-INF/,/app/extra-classes",
 		"org.springframework.boot.loader.PropertiesLauncher",
@@ -192,6 +202,10 @@ func BuildValidatorChildSpec(assetsDir, jreDir, stateDir string, port int, goos 
 	if err != nil {
 		return supervisor.ChildSpec{}, err
 	}
+	tmpDir := filepath.Join(workDir, "tmp")
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
+		return supervisor.ChildSpec{}, fmt.Errorf("kitd: create java child tmp dir %s: %w", tmpDir, err)
+	}
 	springJSON, err := hapiSpringConfig(assetsDir, h2Dir, port, validatorIGs, false)
 	if err != nil {
 		return supervisor.ChildSpec{}, fmt.Errorf("kitd: validator config: %w", err)
@@ -199,7 +213,7 @@ func BuildValidatorChildSpec(assetsDir, jreDir, stateDir string, port int, goos 
 	return supervisor.ChildSpec{
 		Name:         validatorChildName,
 		Command:      javaCommand(jreDir, goos),
-		Args:         javaArgs(validatorHeapMB, warLink),
+		Args:         javaArgs(validatorHeapMB, tmpDir, warLink),
 		Env:          javaEnv(springJSON),
 		Dir:          workDir,
 		LogPath:      filepath.Join(stateDir, "validator.log"),
@@ -226,6 +240,10 @@ func BuildDataServerChildSpec(assetsDir, jreDir, stateDir string, port int, goos
 	if err != nil {
 		return supervisor.ChildSpec{}, err
 	}
+	tmpDir := filepath.Join(workDir, "tmp")
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
+		return supervisor.ChildSpec{}, fmt.Errorf("kitd: create java child tmp dir %s: %w", tmpDir, err)
+	}
 	springJSON, err := hapiSpringConfig(assetsDir, h2Dir, port, dataIGs, true)
 	if err != nil {
 		return supervisor.ChildSpec{}, fmt.Errorf("kitd: data server config: %w", err)
@@ -233,7 +251,7 @@ func BuildDataServerChildSpec(assetsDir, jreDir, stateDir string, port int, goos
 	return supervisor.ChildSpec{
 		Name:         dataServerChildName,
 		Command:      javaCommand(jreDir, goos),
-		Args:         javaArgs(dataServerHeapMB, warLink),
+		Args:         javaArgs(dataServerHeapMB, tmpDir, warLink),
 		Env:          javaEnv(springJSON),
 		Dir:          workDir,
 		LogPath:      filepath.Join(stateDir, "data-server.log"),
@@ -255,6 +273,10 @@ func BuildBRProviderChildSpec(assetsDir, jreDir, stateDir string, port int, goos
 	if err != nil {
 		return supervisor.ChildSpec{}, err
 	}
+	tmpDir := filepath.Join(workDir, "tmp")
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
+		return supervisor.ChildSpec{}, fmt.Errorf("kitd: create java child tmp dir %s: %w", tmpDir, err)
+	}
 	env := []string{
 		"SERVER_PORT=" + strconv.Itoa(port),
 		"APP_PAYER_SERVERS_0_CDS_URL=" + gatewayURL + "/cds-services",
@@ -271,7 +293,7 @@ func BuildBRProviderChildSpec(assetsDir, jreDir, stateDir string, port int, goos
 	return supervisor.ChildSpec{
 		Name:         brProviderChildName,
 		Command:      javaCommand(jreDir, goos),
-		Args:         javaArgs(brProviderHeapMB, warLink),
+		Args:         javaArgs(brProviderHeapMB, tmpDir, warLink),
 		Env:          env,
 		Dir:          workDir,
 		LogPath:      filepath.Join(stateDir, "br-provider.log"),

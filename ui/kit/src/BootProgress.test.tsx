@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import BootProgress from './BootProgress';
 import type { BootstrapResponse, ChildStatus, StatusResponse } from './types';
 
@@ -133,6 +133,58 @@ describe('BootProgress stage rows', () => {
 
     rerender(<BootProgress boot={boot({ state: 'provisioned' })} runsLive={true} />);
     expect(screen.getByTestId('stage-ready').className).toContain('stage-done');
+  });
+
+  it('the active stage renders a spinner; done/pending stages do not', () => {
+    render(
+      <BootProgress boot={boot({ state: 'provisioned' })} status={statusWith('starting')} runsLive={false} />,
+    );
+
+    const gatewayStage = screen.getByTestId('stage-gateway');
+    expect(gatewayStage.className).toContain('stage-active');
+    expect(within(gatewayStage).queryByTestId('stage-spinner')).not.toBeNull();
+
+    const signinStage = screen.getByTestId('stage-signin');
+    expect(signinStage.className).toContain('stage-done');
+    expect(within(signinStage).queryByTestId('stage-spinner')).toBeNull();
+
+    const readyStage = screen.getByTestId('stage-ready');
+    expect(readyStage.className).toContain('stage-pending');
+    expect(within(readyStage).queryByTestId('stage-spinner')).toBeNull();
+  });
+
+  it('shows the slow-boot hint while a stage is active, and hides it once Ready', () => {
+    const { rerender } = render(
+      <BootProgress boot={boot({ state: 'provisioned' })} status={statusWith('starting')} runsLive={false} />,
+    );
+    expect(screen.getByText(/first launch starts the local servers/i)).toBeDefined();
+
+    rerender(
+      <BootProgress
+        boot={boot({
+          state: 'provisioned',
+          verify: [
+            { name: 'discovery', ok: true, detail: 'reachable' },
+            { name: 'registration', ok: true, detail: 'found in registrar feed' },
+            { name: 'hosted-payer', ok: true, detail: 'ok' },
+          ],
+        })}
+        status={statusWith('ready')}
+        runsLive={true}
+      />,
+    );
+    expect(screen.queryByText(/first launch starts the local servers/i)).toBeNull();
+  });
+
+  it('does not show the slow-boot hint on a failed boot', () => {
+    render(
+      <BootProgress
+        boot={boot({ state: 'provisioned' })}
+        status={statusWith('failed', { detail: 'crashed: exit status 1' })}
+        runsLive={false}
+      />,
+    );
+    expect(screen.queryByText(/first launch starts the local servers/i)).toBeNull();
   });
 });
 

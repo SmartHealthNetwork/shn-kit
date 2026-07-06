@@ -34,9 +34,10 @@ func TestJavaCommand_Windows(t *testing.T) {
 // ---- launch args ----------------------------------------------------------------
 
 func TestJavaArgs_Shape(t *testing.T) {
-	got := javaArgs(768, "/state/validator/main.war")
+	got := javaArgs(768, "/state/validator/tmp", "/state/validator/main.war")
 	want := []string{
 		"-Xmx768m",
+		"-Djava.io.tmpdir=/state/validator/tmp",
 		"--class-path", "/state/validator/main.war",
 		"-Dloader.path=main.war!/WEB-INF/classes/,main.war!/WEB-INF/,/app/extra-classes",
 		"org.springframework.boot.loader.PropertiesLauncher",
@@ -48,6 +49,46 @@ func TestJavaArgs_Shape(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("javaArgs[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+// assertJavaTmpDir asserts that args carries -Djava.io.tmpdir=<workDir>/tmp,
+// that the property precedes the PropertiesLauncher main class (system
+// properties must precede the main class on the java command line), and that
+// the tmp dir was actually created on disk by the ChildSpec builder — a
+// writable per-child dir, unlike the JVM's C:\Windows default when no
+// TEMP/TMP env var is set (the non-admin Windows first-boot failure this
+// guards against).
+func assertJavaTmpDir(t *testing.T, args []string, workDir string) {
+	t.Helper()
+	wantTmp := filepath.Join(workDir, "tmp")
+	wantArg := "-Djava.io.tmpdir=" + wantTmp
+
+	tmpIdx, mainIdx := -1, -1
+	for i, a := range args {
+		if a == wantArg {
+			tmpIdx = i
+		}
+		if a == "org.springframework.boot.loader.PropertiesLauncher" {
+			mainIdx = i
+		}
+	}
+	if tmpIdx == -1 {
+		t.Fatalf("Args = %q, want it to contain %q", args, wantArg)
+	}
+	if mainIdx == -1 {
+		t.Fatalf("Args = %q, want it to contain the PropertiesLauncher main class", args)
+	}
+	if tmpIdx > mainIdx {
+		t.Errorf("-Djava.io.tmpdir at Args[%d] comes after PropertiesLauncher at Args[%d], want it before (system properties precede the main class)", tmpIdx, mainIdx)
+	}
+
+	fi, err := os.Stat(wantTmp)
+	if err != nil {
+		t.Fatalf("os.Stat(%s): %v, want the builder to have created it", wantTmp, err)
+	}
+	if !fi.IsDir() {
+		t.Errorf("%s exists but is not a directory", wantTmp)
 	}
 }
 
@@ -83,9 +124,10 @@ func TestBuildValidatorChildSpec(t *testing.T) {
 	}
 	workDir := filepath.Join(stateDir, "validator")
 	wantWar := filepath.Join(workDir, "main.war")
-	if len(spec.Args) < 2 || spec.Args[2] != wantWar {
+	if len(spec.Args) < 4 || spec.Args[3] != wantWar {
 		t.Fatalf("Args = %q, want --class-path %q", spec.Args, wantWar)
 	}
+	assertJavaTmpDir(t, spec.Args, workDir)
 	if spec.Dir != workDir {
 		t.Errorf("Dir = %q, want %q (loader.path's main.war!/... entries are CWD-relative)", spec.Dir, workDir)
 	}
@@ -163,6 +205,7 @@ func TestBuildDataServerChildSpec(t *testing.T) {
 	if spec.LogPath != filepath.Join(stateDir, "data-server.log") {
 		t.Errorf("LogPath = %q", spec.LogPath)
 	}
+	assertJavaTmpDir(t, spec.Args, workDir)
 	wantReady := "http://127.0.0.1:18081/fhir/DEFAULT/metadata"
 	if len(spec.ReadyURLs) != 1 || spec.ReadyURLs[0] != wantReady {
 		t.Errorf("ReadyURLs = %q, want [%q] (tenanted DEFAULT route — bare /fhir/metadata 200s even untenanted under URL_BASED)", spec.ReadyURLs, wantReady)
@@ -217,6 +260,7 @@ func TestBuildBRProviderChildSpec(t *testing.T) {
 	if spec.LogPath != filepath.Join(stateDir, "br-provider.log") {
 		t.Errorf("LogPath = %q", spec.LogPath)
 	}
+	assertJavaTmpDir(t, spec.Args, workDir)
 	wantReady := "http://127.0.0.1:18082/fhir/metadata"
 	if len(spec.ReadyURLs) != 1 || spec.ReadyURLs[0] != wantReady {
 		t.Errorf("ReadyURLs = %q, want [%q]", spec.ReadyURLs, wantReady)

@@ -202,6 +202,20 @@
 }
 .stage.stage-done .stage-dot {
   background: var(--green);
+  position: relative;
+}
+/* Done reads as a checkmark, not just a color swap, so it's legible
+   at a glance (and for colorblind users) against active/pending. */
+.stage.stage-done .stage-dot::after {
+  content: '\2713';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 8px;
+  line-height: 1;
+  color: var(--surface);
+  font-weight: 700;
 }
 .stage.stage-done .stage-label {
   color: var(--green);
@@ -214,6 +228,26 @@
   background: var(--blue);
 }
 
+/* Visible motion on the in-progress stage so a slow boot reads as
+   working, not stuck. */
+.stage-spinner {
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--blue-border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  animation: stage-spin 0.8s linear infinite;
+}
+
+@keyframes stage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .stage.stage-failed {
   border-left-color: var(--red-border);
 }
@@ -222,6 +256,13 @@
 }
 .stage.stage-failed .stage-label {
   color: var(--red);
+}
+
+.boot-hint {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .stage-action {
