@@ -72,6 +72,14 @@ afterSign: build/afterSign.js
 # Windows ships NSIS .exe only (".msi/NSIS .exe" read as either/or) — one
 # artifact per OS keeps the smoke matrix honest; an .msi is additive later
 # if an enterprise partner asks.
+#
+# Windows signing = Azure Artifact Signing (Authenticode), done OUT-OF-BAND by
+# the packaging workflow, NOT by electron-builder. electron-builder builds the
+# NSIS installer unsigned; a follow-on Azure/artifact-signing-action step signs
+# just the installer. Native win.azureSignOptions would try to sign every bundled
+# PE incl. the vendored Temurin JRE, whose jlink'd stubs fail signtool with
+# 0x800700C1 (ERROR_BAD_EXE_FORMAT) — and electron-builder 26 has no Windows
+# signIgnore. See .github/workflows/kit-packaging.yml (package job) for the why.
 win:
   target: nsis
 

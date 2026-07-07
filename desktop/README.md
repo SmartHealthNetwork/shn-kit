@@ -129,9 +129,11 @@ time). Windows ships **NSIS `.exe`** only (no `.msi`).
 
 **Signing/notarization are conditional, never required.** mac codesigning +
 notarization key off `CSC_LINK`/`CSC_KEY_PASSWORD` and
-`APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` (win: `WIN_CSC_LINK`/
-`WIN_CSC_KEY_PASSWORD`); `build/afterSign.js` notarizes only when all three Apple
-env vars are present, otherwise logs and no-ops. `build/entitlements.mac.plist`
+`APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID`; the Windows installer is
+Authenticode-signed by a post-build `Azure/artifact-signing-action` step (Azure
+Artifact Signing) keyed off `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`
+— electron-builder builds the installer unsigned. `build/afterSign.js` notarizes
+only when all three Apple env vars are present, otherwise logs and no-ops. `build/entitlements.mac.plist`
 (hardened runtime) is inert unless the build is actually signed. The identical
 build comes out signed+notarized when the secrets land at CI and unsigned
 locally — `npm run pack` never needs any of this present.

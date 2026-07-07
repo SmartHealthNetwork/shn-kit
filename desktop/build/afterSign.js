@@ -1,9 +1,9 @@
-// desktop/build/afterSign.js — electron-builder's afterSign hook. Signing
-// itself (codesigning the .app / windows binaries) is handled entirely by
-// electron-builder's own CSC_LINK/CSC_KEY_PASSWORD (mac) and
-// WIN_CSC_LINK/WIN_CSC_KEY_PASSWORD (win) env vars — when unset,
-// electron-builder produces an unsigned build and this hook still runs but
-// every branch below no-ops. Notarization is mac-only and additionally needs
+// desktop/build/afterSign.js — electron-builder's afterSign hook. mac signing
+// (codesigning the .app) is handled by electron-builder from CSC_LINK/
+// CSC_KEY_PASSWORD; the Windows installer is signed OUT-OF-BAND by the packaging
+// workflow's Azure/artifact-signing-action step, not by electron-builder. When
+// the mac secrets are unset, electron-builder produces an unsigned build and
+// this hook still runs but every branch below no-ops. Notarization is mac-only and additionally needs
 // an Apple ID app-specific password + team id; this hook checks for those
 // explicitly and is the ONE conditional path that "overrides"
 // electron-builder.yml's own `notarize: false` default when the secrets
