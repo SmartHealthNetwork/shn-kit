@@ -13,6 +13,7 @@ import type { JSX } from 'react';
 import type { RunResult } from './types';
 import type { EventsView } from './useEvents';
 import { ApiError, deleteWatch, postWatch } from './api';
+import { StatusChip } from './StatusChip';
 
 export interface WatchPanelProps {
   events: EventsView;
@@ -89,7 +90,7 @@ export function WatchPanel({ events, onSelectRun }: WatchPanelProps): JSX.Elemen
   };
 
   return (
-    <div className="watch-panel">
+    <div className="card watch-panel">
       <h3>Watch for your system&apos;s traffic</h3>
       <p className="watch-provenance">{WATCH_PROVENANCE_LINE}</p>
 
@@ -121,7 +122,7 @@ export function WatchPanel({ events, onSelectRun }: WatchPanelProps): JSX.Elemen
           <p className="watch-narration-note">{WATCHING_NARRATION_NOTE}</p>
           <button
             type="button"
-            className="btn btn-secondary"
+            className="btn ghost"
             disabled={state.kind === 'stopping'}
             onClick={() => {
               void handleStop();
@@ -133,10 +134,10 @@ export function WatchPanel({ events, onSelectRun }: WatchPanelProps): JSX.Elemen
       )}
 
       {result && (
-        <div className={`result-badge result-${result.state}`}>
-          <span className="badge-label">{result.state === 'passed' ? 'Passed' : 'Failed'}</span>
-          <p className="result-detail">{result.detail}</p>
-          <button type="button" className="btn btn-link" onClick={() => onSelectRun(result.runId)}>
+        <div className={`watch-result watch-result-${result.state}`}>
+          <StatusChip state={result.state} />
+          <p className="watch-result-detail">{result.detail}</p>
+          <button type="button" className="link" onClick={() => onSelectRun(result.runId)}>
             View in inspector
           </button>
         </div>

@@ -1,18 +1,18 @@
-// UCCards.tsx — lanes + the eight UC cards. Presentational + dispatch
+// UCCards.tsx — lanes + the eight UC scenario rows. Presentational + dispatch
 // only: `latestByRow` and `disabledReason` are computed by App; this
 // component is fully controlled via props so it can be tested standalone.
 // Branch state is local per card and resets when the lane changes (the two
 // lanes offer different pickers per row).
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
-import type { Lane, RunResult } from './types';
+import type { KitEvent, Lane, RunResult } from './types';
 import type { EventsView } from './useEvents';
 import { postRun, ApiError } from './api';
 import { UC_METAS, LANE_LABELS, type UCMeta } from './ucmeta';
+import { StatusChip } from './StatusChip';
 
 export interface UCCardsProps {
   lane: Lane;
-  onLane(l: Lane): void;
   events: EventsView;
   latestByRow(lane: Lane, uc: string, branch: string): RunResult | undefined;
   disabledReason?: string; // (a)-(c) reasons, computed by App
@@ -20,14 +20,14 @@ export interface UCCardsProps {
   // BYO lane-surface composition. App decides these from `byo` + the
   // CURRENTLY selected lane — this component stays a dumb slot-filler so
   // its own tests need no BYO awareness.
-  // `banner`, when present, renders above the card list for the current
+  // `banner`, when present, renders above the row list for the current
   // lane (swap/coexistence copy).
   banner?: JSX.Element;
-  // `replaceCards`, when present, renders INSTEAD of the seeded card list
-  // for the current lane — the ehr lane's cards "grey out in favor of" the
+  // `replaceCards`, when present, renders INSTEAD of the seeded row list
+  // for the current lane — the ehr lane's rows "grey out in favor of" the
   // free-form panel once an EHR swap repoints their data source.
   replaceCards?: JSX.Element;
-  // `extraPanel` renders AFTER the card list, ALONGSIDE it (never in place
+  // `extraPanel` renders AFTER the row list, ALONGSIDE it (never in place
   // of it) — the conformant lane's WatchPanel under a Da Vinci swap
   // (registering an ingress client breaks nothing; seeded conformant runs
   // stay live outside watch windows).
@@ -37,18 +37,45 @@ export interface UCCardsProps {
 const IN_FLIGHT_NOTICE = 'A run is already in flight — wait for it to finish before starting another.';
 const BOOT_RACE_NOTICE = 'The stack is still starting — try again in a moment.';
 
-const LANES: Lane[] = ['conformant', 'ehr'];
+// The pass/fail result chip itself is the shared StatusChip (see its own
+// file) — the run/spinner chip just below has no shared equivalent (it's
+// not a pass/fail state) and stays local.
+const PlayIcon = (
+  <svg className="play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M6 4l14 8-14 8z" />
+  </svg>
+);
+
+// "uc01" -> "UC-01" — a DISPLAY-only reformat of the row's mono tag. Every
+// internal id (aria-label, data-testid, postRun's uc argument) keeps the
+// lowercase "ucNN" form untouched.
+function displayTag(uc: string): string {
+  return `UC-${uc.replace(/^uc/, '')}`;
+}
 
 interface UCCardProps {
   meta: UCMeta;
   lane: Lane;
   disabled: boolean;
+  // This row's run is the one currently occupying the runner's sequential
+  // lock — derived by the parent from the SAME event stream already
+  // threaded through (see UCCards' activeRunStarted below); never a new
+  // plumbing path.
+  isActiveRun: boolean;
   latestByRow(lane: Lane, uc: string, branch: string): RunResult | undefined;
   onRun(uc: string, branch: string): Promise<void>;
   onSelectRun(runId: string): void;
 }
 
-function UCCard({ meta, lane, disabled, latestByRow, onRun, onSelectRun }: UCCardProps): JSX.Element {
+function UCCard({
+  meta,
+  lane,
+  disabled,
+  isActiveRun,
+  latestByRow,
+  onRun,
+  onSelectRun,
+}: UCCardProps): JSX.Element {
   const options = meta.branches?.[lane];
   const [branch, setBranch] = useState<string>(options?.[0]?.value ?? '');
   // The double-click pre-409 window: between a click and the SSE
@@ -71,59 +98,69 @@ function UCCard({ meta, lane, disabled, latestByRow, onRun, onSelectRun }: UCCar
   };
 
   return (
-    <li className="uc-card" data-testid={`card-${meta.uc}`}>
-      <h3>{meta.title}</h3>
-      <p className="uc-description">{meta.description}</p>
-      {provenance && <span className="provenance-tag">{provenance}</span>}
+    <li className="row" data-testid={`card-${meta.uc}`}>
+      <div className="uc">
+        <div className="tag">{displayTag(meta.uc)}</div>
+        <div className="name">{meta.title}</div>
+        <p className="desc">{meta.description}</p>
+        {provenance && <span className="provenance-tag">{provenance}</span>}
+      </div>
 
-      {options && (
-        <label className="branch-picker">
-          Branch
-          <select
-            aria-label={`${meta.uc} branch`}
-            value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-          >
-            {options.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {showReadBackHint && (
-        <p className="branch-hint" data-testid={`hint-${meta.uc}`}>
-          Patient read-back included.
-        </p>
-      )}
+      <div className="right">
+        {options && (
+          <span className="branch">
+            Branch
+            <select
+              aria-label={`${meta.uc} branch`}
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+            >
+              {options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </span>
+        )}
+        {showReadBackHint && (
+          <p className="branch-hint" data-testid={`hint-${meta.uc}`}>
+            Patient read-back included.
+          </p>
+        )}
 
-      <button
-        type="button"
-        className="btn btn-primary"
-        aria-label={`Run ${meta.uc}`}
-        disabled={disabled || posting}
-        onClick={handleRunClick}
-      >
-        Run
-      </button>
+        {isActiveRun ? (
+          <span className="chip run">
+            <span className="spin" aria-hidden="true" />
+            Running…
+          </span>
+        ) : (
+          latest && <StatusChip state={latest.state} />
+        )}
 
-      {latest && (
-        <div className={`result-badge result-${latest.state}`}>
-          <span className="badge-label">{latest.state === 'passed' ? 'Passed' : 'Failed'}</span>
-          <p className="result-detail">{latest.detail}</p>
-          <button type="button" className="btn btn-link" onClick={() => onSelectRun(latest.runId)}>
+        {latest && (
+          <button type="button" className="link" onClick={() => onSelectRun(latest.runId)}>
             View in inspector
           </button>
-        </div>
-      )}
+        )}
+
+        <button
+          type="button"
+          className={latest ? 'btn ghost sm' : 'btn primary sm'}
+          aria-label={`Run ${meta.uc}`}
+          disabled={disabled || posting}
+          onClick={handleRunClick}
+        >
+          {!latest && PlayIcon}
+          {latest ? 'Run again' : 'Run'}
+        </button>
+      </div>
     </li>
   );
 }
 
 export function UCCards({
   lane,
-  onLane,
   events,
   latestByRow,
   disabledReason,
@@ -152,6 +189,15 @@ export function UCCards({
   // the effect above clears it); otherwise the catch-driven notice.
   const notice = disabledReason ?? (sseInFlight ? IN_FLIGHT_NOTICE : apiNotice);
 
+  // The in-flight run's own run.started event, read straight off the event
+  // stream App already threads through `events` — no new plumbing. Used
+  // ONLY to attribute the "Running" chip to the exact row that launched
+  // it: a run in the OTHER lane, or a non-row run (freeform/watch, uc
+  // "freeform"/"external"), must never light one of these eight rows up.
+  const activeRunStarted: KitEvent | undefined = sseInFlight
+    ? events.all.find((e) => e.type === 'run.started' && e.runId === events.activeRunId)
+    : undefined;
+
   const handleRun = (uc: string, branch: string): Promise<void> => {
     setApiNotice(undefined);
     // .then(ok, err) rather than .catch so the returned promise itself always
@@ -172,29 +218,16 @@ export function UCCards({
   };
 
   return (
-    <div className="uc-cards-surface">
-      <div className="lane-tabs" role="tablist" aria-label="lane">
-        {LANES.map((l) => (
-          <button
-            key={l}
-            type="button"
-            role="tab"
-            aria-selected={lane === l}
-            // These tabs are a SELECTION control (mutually-exclusive lane
-            // choice), not a toggle — aria-pressed is for toggle buttons.
-            // aria-current names the selected item among a set of related
-            // items/pages, the correct semantics here (paired with
-            // role="tab"'s own aria-selected above).
-            aria-current={lane === l ? 'true' : undefined}
-            onClick={() => onLane(l)}
-          >
-            {LANE_LABELS[l].title}
-          </button>
-        ))}
+    <div className="col">
+      <div className="col-head">
+        <h1>Prior-authorization scenarios</h1>
+        {/* The lane switch itself lives in TopBar's ModeSwitch — this
+            caption is the honest, fuller framing for whichever lane is
+            currently selected; the switch's own concise chip label is not
+            a substitute for it. */}
+        <p className="mode-caption">{LANE_LABELS[lane].blurb}</p>
+        {banner}
       </div>
-      <p className="lane-blurb">{LANE_LABELS[lane].blurb}</p>
-
-      {banner}
 
       {notice && (
         <div role="alert" className="run-notice">
@@ -203,13 +236,14 @@ export function UCCards({
       )}
 
       {replaceCards ?? (
-        <ul className="uc-cards">
+        <ul className="list">
           {UC_METAS.map((meta) => (
             <UCCard
               key={`${meta.uc}-${lane}`}
               meta={meta}
               lane={lane}
               disabled={disabled}
+              isActiveRun={activeRunStarted?.lane === lane && activeRunStarted?.uc === meta.uc}
               latestByRow={latestByRow}
               onRun={handleRun}
               onSelectRun={onSelectRun}

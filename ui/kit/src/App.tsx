@@ -23,11 +23,21 @@ import { UCCards } from './UCCards';
 import { useRunEvents } from './useRunEvents';
 import { RunInspector } from './RunInspector';
 import { RunHistory } from './RunHistory';
-import { StatusPanel } from './StatusPanel';
 import { BYOPanel } from './BYOPanel';
 import { FreeFormPanel } from './FreeFormPanel';
 import { WatchPanel } from './WatchPanel';
-import './App.css';
+import { TopBar } from './TopBar';
+import { NavRail } from './NavRail';
+import type { NavDest } from './NavRail';
+import { SystemsPage } from './SystemsPage';
+import './theme.css';
+import './primitives.css';
+import './shell.css';
+import './scenarios.css';
+import './inspector.css';
+import './systems.css';
+import './byo.css';
+import './boot.css';
 
 // The conformant lane's seeded cards stay LIVE under an EHR swap — "the
 // other lane keeps running seeded WHEN the swap target carries the seeded
@@ -200,6 +210,12 @@ export default function App() {
   const [results, setResults] = useState<RunResult[]>([]);
   const [lane, setLane] = useState<Lane>('conformant');
 
+  // The active workbench destination — which surface fills the working
+  // column (nav rail · working column · persistent inspector). The
+  // inspector rides alongside 'scenarios' and 'history'; 'byo' and
+  // 'systems' span full width (no inspector).
+  const [nav, setNav] = useState<NavDest>('scenarios');
+
   // Run history: fetched once main phase is reached and re-fetched
   // whenever `results.length` changes (see the fetch effect below for why
   // results.length rather than a fixed timer).
@@ -361,6 +377,11 @@ export default function App() {
       setLatestRunId(activeRunId);
       if (!manualPickRef.current) {
         setSelectedRunId(activeRunId);
+        // A brand-new live run never carries a stale comparison forward —
+        // compareRunId is scoped to whatever pairing the operator set up
+        // against the PREVIOUS selection; auto-following to a new run
+        // starts that pairing over.
+        setCompareRunId(undefined);
       }
     }
     if (activeRunId === undefined && prev !== undefined) {
@@ -386,6 +407,16 @@ export default function App() {
   // the pane; any other row replaces it.
   const handleCompare = (runId: string) => {
     setCompareRunId((prev) => (prev === runId ? undefined : runId));
+  };
+
+  // Nav switch: a comparison is destination-scoped (it's set up against
+  // whatever run the CURRENT destination has selected), so switching
+  // destinations closes it — otherwise a compare opened in Run history
+  // survives into Scenarios and gets paired against whatever run
+  // auto-follow selects there next.
+  const handleNav = (d: NavDest) => {
+    setNav(d);
+    setCompareRunId(undefined);
   };
 
   // Export: the HistoryRecord IS the export format — fetched fresh (not
@@ -482,6 +513,10 @@ export default function App() {
 
   const ready = boot.state === 'provisioned' && isGatewayReady(status) && runsLive;
 
+  // The persistent inspector rides alongside the run-oriented destinations
+  // ('scenarios' and 'history'); 'byo' and 'systems' span full width.
+  const showInspector = nav === 'scenarios' || nav === 'history';
+
   let phase: Phase;
   if (bootError) {
     phase = 'unreachable';
@@ -525,9 +560,9 @@ export default function App() {
   }, [phase]);
 
   // Update banner content — undefined when there's nothing to show (no
-  // update, or dismissed this session). Computed once here and spliced
-  // into every phase's header below, since the app-header is the one mount
-  // that survives every phase.
+  // update, or dismissed this session). Computed once here and spliced into
+  // every phase's TopBar below, since TopBar is the one mount that survives
+  // every phase.
   const updateBanner =
     status?.update?.available && !updateDismissed ? (
       <div className="update-banner" role="status">
@@ -560,14 +595,14 @@ export default function App() {
   if (resetPending) {
     return (
       <div className="app">
-        <header className="app-header">
-          <span className="app-title">SHN Kit</span>
-          <span
-            className={`connection-dot connection-${events.sseState}`}
-            aria-label={`events ${events.sseState}`}
-          />
-          {updateBanner}
-        </header>
+        <TopBar
+          lane={lane}
+          onLane={setLane}
+          sseState={events.sseState}
+          children={status?.children ?? []}
+          identity={{ email: boot.email, holderId: boot.holderId }}
+          updateBanner={updateBanner}
+        />
         <main className="phase-shell">
           <div className="phase-card restart-required-card">
             <h1>Restart required</h1>
@@ -598,10 +633,14 @@ export default function App() {
     const is401 = bootError instanceof ApiError && bootError.status === 401;
     return (
       <div className="app">
-        <header className="app-header">
-          <span className="app-title">SHN Kit</span>
-          {updateBanner}
-        </header>
+        <TopBar
+          lane={lane}
+          onLane={setLane}
+          sseState={events.sseState}
+          children={status?.children ?? []}
+          identity={{ email: boot.email, holderId: boot.holderId }}
+          updateBanner={updateBanner}
+        />
         <main className="phase-shell">
           <div className="phase-card unreachable-card">
             {is401 ? (
@@ -637,14 +676,14 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <span className="app-title">SHN Kit</span>
-        <span
-          className={`connection-dot connection-${events.sseState}`}
-          aria-label={`events ${events.sseState}`}
-        />
-        {updateBanner}
-      </header>
+      <TopBar
+        lane={lane}
+        onLane={setLane}
+        sseState={events.sseState}
+        children={status?.children ?? []}
+        identity={{ email: boot.email, holderId: boot.holderId }}
+        updateBanner={updateBanner}
+      />
 
       {phase === 'signin' && (
         <main className="phase-shell">
@@ -659,112 +698,150 @@ export default function App() {
       )}
 
       {phase === 'main' && (
-        <main className="app-main">
-          <div className="main-primary">
-            <UCCards
-              lane={lane}
-              onLane={setLane}
-              events={reconciledEvents}
-              latestByRow={latestByRow}
-              disabledReason={disabledReason}
-              onSelectRun={handleSelectRun}
-              banner={laneBanner}
-              replaceCards={laneReplaceCards}
-              extraPanel={laneExtraPanel}
-            />
-            <StatusPanel
-              boot={boot}
-              status={status}
-              sseState={events.sseState}
-              onResetComplete={() => setResetPending(true)}
-              onVerified={handleVerified}
-            />
-            {byo && (
-              <section className="byo-panel-shell">
-                <BYOPanel
-                  byo={byo}
-                  onSaved={refetchBYO}
-                  onRestart={() => setByoRestartConfirm(true)}
-                />
-              </section>
-            )}
-            {byoRestartConfirm && (
-              <div className="byo-restart-confirm phase-card">
-                <p>Restarting applies your change. Runs in progress will be reset.</p>
-                {canRestart() ? (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={() => {
-                        setByoRestartConfirm(false);
-                        void restartKit();
-                      }}
-                    >
-                      Restart
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-link"
-                      onClick={() => setByoRestartConfirm(false)}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <p>Restart shnkitd manually to apply your change.</p>
-                    <button
-                      type="button"
-                      className="btn btn-link"
-                      onClick={() => setByoRestartConfirm(false)}
-                    >
-                      Close
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-          <aside className="main-aside">
-            <div className="inspector-column">
-              <RunInspector
-                runId={selectedRunId}
-                events={runEvents.events}
-                source={runEvents.source}
-                results={results}
-                summary={history.find((h) => h.runId === selectedRunId)}
-                providerLabel={deriveProviderLabel(selectedRunId, latestRunId, runEvents.events, byo)}
-                posture={status?.validator}
+        <main className={`workbench${showInspector ? '' : ' workbench--full'}`}>
+          <NavRail nav={nav} onNav={handleNav} children={status?.children ?? []} />
+
+          <section className="workbench-col">
+            {nav === 'scenarios' && (
+              <UCCards
+                lane={lane}
+                events={reconciledEvents}
+                latestByRow={latestByRow}
+                disabledReason={disabledReason}
+                onSelectRun={handleSelectRun}
+                banner={laneBanner}
+                replaceCards={laneReplaceCards}
+                extraPanel={laneExtraPanel}
               />
-              {compareRunId !== undefined && (
-                <RunInspector
-                  runId={compareRunId}
-                  events={compareEvents.events}
-                  source={compareEvents.source}
-                  results={results}
-                  summary={history.find((h) => h.runId === compareRunId)}
-                  providerLabel={deriveProviderLabel(compareRunId, latestRunId, compareEvents.events, byo)}
-                  posture={status?.validator}
-                />
-              )}
-            </div>
-            {exportError && (
-              <p role="alert" className="export-error">
-                Export failed: {exportError}
-              </p>
             )}
-            <RunHistory
-              history={history}
-              selectedRunId={selectedRunId}
-              compareRunId={compareRunId}
-              onOpen={handleSelectRun}
-              onCompare={handleCompare}
-              onExport={(runId) => {
-                void exportRun(runId);
-              }}
-            />
-          </aside>
+
+            {nav === 'history' && (
+              <RunHistory
+                history={history}
+                selectedRunId={selectedRunId}
+                compareRunId={compareRunId}
+                onOpen={handleSelectRun}
+                onCompare={handleCompare}
+                onExport={(runId) => {
+                  void exportRun(runId);
+                }}
+              />
+            )}
+
+            {nav === 'byo' && (
+              <>
+                {byo && (
+                  <section className="byo-panel-shell">
+                    <BYOPanel
+                      byo={byo}
+                      onSaved={refetchBYO}
+                      onRestart={() => setByoRestartConfirm(true)}
+                    />
+                  </section>
+                )}
+                {byoRestartConfirm && (
+                  <div className="byo-restart-confirm phase-card">
+                    <p>Restarting applies your change. Runs in progress will be reset.</p>
+                    {canRestart() ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={() => {
+                            setByoRestartConfirm(false);
+                            void restartKit();
+                          }}
+                        >
+                          Restart
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-link"
+                          onClick={() => setByoRestartConfirm(false)}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p>Restart shnkitd manually to apply your change.</p>
+                        <button
+                          type="button"
+                          className="btn btn-link"
+                          onClick={() => setByoRestartConfirm(false)}
+                        >
+                          Close
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {nav === 'systems' && (
+              <SystemsPage
+                boot={boot}
+                status={status}
+                sseState={events.sseState}
+                onResetComplete={() => setResetPending(true)}
+                onVerified={handleVerified}
+              />
+            )}
+          </section>
+
+          {showInspector && (
+            <aside className="workbench-inspector">
+              {compareRunId !== undefined ? (
+                <div className="inspector-split">
+                  <div className="inspector-split-bar">
+                    <button
+                      type="button"
+                      className="btn btn-link"
+                      onClick={() => setCompareRunId(undefined)}
+                    >
+                      Close comparison
+                    </button>
+                  </div>
+                  <RunInspector
+                    runId={selectedRunId}
+                    events={runEvents.events}
+                    source={runEvents.source}
+                    results={results}
+                    summary={history.find((h) => h.runId === selectedRunId)}
+                    providerLabel={deriveProviderLabel(selectedRunId, latestRunId, runEvents.events, byo)}
+                    posture={status?.validator}
+                  />
+                  <RunInspector
+                    runId={compareRunId}
+                    events={compareEvents.events}
+                    source={compareEvents.source}
+                    results={results}
+                    summary={history.find((h) => h.runId === compareRunId)}
+                    providerLabel={deriveProviderLabel(compareRunId, latestRunId, compareEvents.events, byo)}
+                    posture={status?.validator}
+                  />
+                </div>
+              ) : (
+                <div className="inspector-column">
+                  <RunInspector
+                    runId={selectedRunId}
+                    events={runEvents.events}
+                    source={runEvents.source}
+                    results={results}
+                    summary={history.find((h) => h.runId === selectedRunId)}
+                    providerLabel={deriveProviderLabel(selectedRunId, latestRunId, runEvents.events, byo)}
+                    posture={status?.validator}
+                  />
+                </div>
+              )}
+              {exportError && (
+                <p role="alert" className="export-error">
+                  Export failed: {exportError}
+                </p>
+              )}
+            </aside>
+          )}
         </main>
       )}
     </div>

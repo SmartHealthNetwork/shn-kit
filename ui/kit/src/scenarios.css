@@ -1,0 +1,170 @@
+/* scenarios.css — the Scenarios column: UCCards' compact row list. Ported
+   verbatim from the design mockup's `.col`/`.col-head`/`.mode-caption`/
+   `.list`/`.row*`/`.branch` region onto theme.css's tokens (mirrors
+   shell.css's porting convention). Also re-homes the `.lane-banner`/
+   `.byo-lane-banner`/`.byo-sentinel` rules that used to live in App.css —
+   they're the BYO lane-composition banners (EhrSwapBanner/
+   ConformantUnderEhrSwapBanner/DaVinciCoexistenceBanner in App.tsx) rendered
+   into this column's banner slot, and would otherwise lose their styling
+   once App.css retires. `.run-notice`/`.provenance-tag`/`.branch-hint` are
+   NEW here — the mockup has no static state for them, but they're this
+   column's own alert/tag/caption idioms, authored on the same tokens. */
+
+.col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.col-head {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.col-head h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.mode-caption {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.mode-caption b {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.list {
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 11px 13px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: start;
+  transition: border-color 0.12s;
+}
+
+.row:hover {
+  border-color: var(--border-strong);
+}
+
+.row.sel {
+  border-color: var(--accent-border);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.row .uc {
+  grid-column: 1;
+}
+
+.row .tag {
+  font: 600 10.5px/1 var(--mono);
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.row .name {
+  font-size: 13.5px;
+  font-weight: 600;
+  margin: 3px 0 2px;
+}
+
+.row .desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.row .right {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* Additive: the fail-state chip icon, sized to match `.chip .tick`
+   (primitives.css) — the mockup only illustrates the pass/running states,
+   but `.chip.fail` (also primitives.css) needs the same icon treatment. */
+.chip .cross {
+  width: 12px;
+  height: 12px;
+}
+
+/* ── row extras: provenance tag, branch read-back hint, run notice ──── */
+/* None of these have mockup rules of their own — authored here on the same
+   tokens as the row/chip idiom above, since they're this column's own
+   supporting copy. */
+
+.provenance-tag {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 2px 7px;
+}
+
+.branch-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--accent-ink);
+}
+
+.run-notice {
+  margin: 0 12px;
+  font-size: 12.5px;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  padding: 8px 12px;
+}
+
+/* ── BYO lane-composition banners (re-homed from App.css) ───────────── */
+/* Rendered into this column's `banner` slot by EhrSwapBanner/
+   ConformantUnderEhrSwapBanner/DaVinciCoexistenceBanner (App.tsx). */
+
+.lane-banner {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  padding: 10px 12px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.lane-banner p {
+  margin: 0 0 6px;
+}
+
+.lane-banner p:last-child {
+  margin-bottom: 0;
+}
+
+.byo-sentinel {
+  font-weight: 600;
+  color: var(--ink);
+}

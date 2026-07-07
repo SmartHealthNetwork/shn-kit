@@ -1,6 +1,10 @@
 // StatusPanel.tsx — connectivity/system-status as first-class UI state.
 // Renders SSE liveness, identity, child health, verify probes, the
-// patient-app launcher, and the reset/restart affordances.
+// patient-app launcher, and the reset/restart affordances, laid out as the
+// full-width diagnostics card grid SystemsPage mounts. Markup
+// is grouped into cards; every handler and pinned string below is
+// unchanged from the pre-restyle version — only the surrounding structure
+// and class names moved.
 import { useState } from 'react';
 import type { JSX } from 'react';
 import type { BootstrapResponse, Probe, StatusResponse } from './types';
@@ -89,7 +93,7 @@ function ChildRestartControl({ name }: { name: string }): JSX.Element {
     <div className="child-restart">
       <button
         type="button"
-        className="btn btn-secondary"
+        className="btn ghost"
         disabled={state.kind === 'pending'}
         onClick={() => {
           void handleClick();
@@ -164,30 +168,34 @@ export function StatusPanel({ boot, status, sseState, onResetComplete, onVerifie
   };
 
   return (
-    <div className="status-panel">
-      <section className="status-section connectivity">
+    <div className="systems-page">
+      <section className="card systems-card connectivity">
         <h2>Connectivity</h2>
         <p className={`sse-indicator sse-${sseState}`}>
           {sseState === 'open' ? 'live' : sseState === 'reconnecting' ? 'reconnecting…' : 'connecting…'}
         </p>
       </section>
 
-      <section className="status-section identity">
+      <section className="card systems-card identity">
         <h2>Identity</h2>
-        {boot.email && <p className="identity-email">{boot.email}</p>}
-        {boot.holderId && <p className="identity-holder-id">{boot.holderId}</p>}
-        {boot.authExpiry && <p className="identity-expiry">Session expires {boot.authExpiry}</p>}
+        <div className="identity-facts">
+          {boot.email && <p className="identity-email">{boot.email}</p>}
+          {boot.holderId && <p className="identity-holder-id">{boot.holderId}</p>}
+          {boot.authExpiry && <p className="identity-expiry">Session expires {boot.authExpiry}</p>}
+        </div>
       </section>
 
-      <section className="status-section children">
+      <section className="card systems-card systems-card-wide children">
         <h2>Children</h2>
-        <ul>
+        <ul className="child-list">
           {(status?.children ?? []).map((c) => (
             <li key={c.name} className={`child-row child-${c.state}`}>
-              <span className={`state-dot state-dot-${c.state}`} aria-hidden="true" />
-              <span className="child-name">{c.name}</span>
-              <span className="child-state">{c.state}</span>
-              {c.restarts > 0 && <span className="child-restarts">restarts: {c.restarts}</span>}
+              <div className="child-summary">
+                <span className={`state-dot state-dot-${c.state}`} aria-hidden="true" />
+                <span className="child-name">{c.name}</span>
+                <span className="child-state">{c.state}</span>
+                {c.restarts > 0 && <span className="child-restarts">restarts: {c.restarts}</span>}
+              </div>
               {c.state === 'failed' && (
                 <div className="child-failure">
                   <p className="child-detail">{c.detail}</p>
@@ -200,14 +208,14 @@ export function StatusPanel({ boot, status, sseState, onResetComplete, onVerifie
         </ul>
       </section>
 
-      <section className="status-section verify">
+      <section className="card systems-card systems-card-wide verify">
         <h2>Verify the network</h2>
         {allSkipped(boot.verify) ? (
           <p className="verify-skipped" role="status">
             verify skipped — {boot.verify[0]?.detail}
           </p>
         ) : (
-          <ul>
+          <ul className="verify-list">
             {boot.verify.map((p) => (
               <li key={p.name} className={`verify-probe verify-${p.ok ? 'ok' : 'failed'}`}>
                 <span className="probe-name">{p.name}</span>
@@ -216,47 +224,57 @@ export function StatusPanel({ boot, status, sseState, onResetComplete, onVerifie
             ))}
           </ul>
         )}
-        <button
-          type="button"
-          className="btn btn-secondary"
-          disabled={recheck.kind === 'pending'}
-          onClick={() => {
-            void handleRecheck();
-          }}
-        >
-          {recheck.kind === 'pending' ? 'checking…' : 'Re-check'}
-        </button>
-        {recheck.kind === 'error' && (
-          <p role="alert" className="verify-recheck-error">
-            {recheck.message}
-          </p>
-        )}
-      </section>
-
-      {status?.patientAppUrl && (
-        <button
-          type="button"
-          className="btn btn-link"
-          onClick={() => openExternal(status.patientAppUrl as string)}
-        >
-          Open the Smart Health account app
-        </button>
-      )}
-
-      {status?.brProviderUrl && (
-        <section className="status-section provider-system">
-          <p>a third-party Da Vinci system (br-provider)</p>
+        <div className="verify-actions">
           <button
             type="button"
-            className="btn btn-link"
-            onClick={() => openExternal(status.brProviderUrl as string)}
+            className="btn ghost"
+            disabled={recheck.kind === 'pending'}
+            onClick={() => {
+              void handleRecheck();
+            }}
           >
-            Open the provider system
+            {recheck.kind === 'pending' ? 'checking…' : 'Re-check'}
           </button>
+          {recheck.kind === 'error' && (
+            <p role="alert" className="verify-recheck-error">
+              {recheck.message}
+            </p>
+          )}
+        </div>
+      </section>
+
+      {(status?.patientAppUrl || status?.brProviderUrl) && (
+        <section className="card systems-card launchers">
+          <h2>Launch</h2>
+          {status?.patientAppUrl && (
+            <div className="launcher-row">
+              <button
+                type="button"
+                className="btn btn-link"
+                onClick={() => openExternal(status.patientAppUrl as string)}
+              >
+                Open the Smart Health account app
+              </button>
+            </div>
+          )}
+
+          {status?.brProviderUrl && (
+            <div className="launcher-row">
+              <p className="launcher-caption">a third-party Da Vinci system (br-provider)</p>
+              <button
+                type="button"
+                className="btn btn-link"
+                onClick={() => openExternal(status.brProviderUrl as string)}
+              >
+                Open the provider system
+              </button>
+            </div>
+          )}
         </section>
       )}
 
-      <section className="status-section support-bundle">
+      <section className="card systems-card support-bundle">
+        <h2>Support bundle</h2>
         <a
           href={supportBundleUrl()}
           className="btn btn-link"
@@ -274,11 +292,11 @@ export function StatusPanel({ boot, status, sseState, onResetComplete, onVerifie
         )}
       </section>
 
-      <section className="status-section reset-panel">
+      <section className="card systems-card reset-panel">
         <h2>Reset</h2>
 
         {reset.kind === 'idle' && (
-          <button type="button" className="btn btn-secondary" onClick={() => setReset({ kind: 'confirming' })}>
+          <button type="button" className="btn ghost" onClick={() => setReset({ kind: 'confirming' })}>
             Reset
           </button>
         )}
@@ -286,22 +304,24 @@ export function StatusPanel({ boot, status, sseState, onResetComplete, onVerifie
         {reset.kind === 'confirming' && (
           <div className="reset-confirm">
             <p>This clears sign-in and provisioning state. Any runs in progress will be reset.</p>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                void handleConfirmReset();
-              }}
-            >
-              Confirm reset
-            </button>
-            <button type="button" className="btn btn-link" onClick={() => setReset({ kind: 'idle' })}>
-              Cancel
-            </button>
+            <div className="reset-confirm-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  void handleConfirmReset();
+                }}
+              >
+                Confirm reset
+              </button>
+              <button type="button" className="btn btn-link" onClick={() => setReset({ kind: 'idle' })}>
+                Cancel
+              </button>
+            </div>
           </div>
         )}
 
-        {reset.kind === 'resetting' && <p>Resetting…</p>}
+        {reset.kind === 'resetting' && <p className="reset-status">Resetting…</p>}
 
         {reset.kind === 'done' && (
           <div className="reset-done">
@@ -325,7 +345,7 @@ export function StatusPanel({ boot, status, sseState, onResetComplete, onVerifie
         )}
       </section>
 
-      <section className="status-section about-mount">
+      <section className="card systems-card systems-card-wide about-card">
         <AboutPanel />
       </section>
     </div>

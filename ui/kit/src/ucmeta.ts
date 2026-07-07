@@ -14,7 +14,7 @@ export interface UCMeta {
   title: string;
   description: string;
   branches?: Partial<Record<Lane, UCBranchOption[]>>; // absent ⇒ always branch ""
-  provenance?: Partial<Record<Lane, string>>; // §5.1 label, rendered as a small tag
+  provenance?: Partial<Record<Lane, string>>; // provenance label, rendered as a small tag
 }
 
 export const UC_METAS: UCMeta[] = [
@@ -102,14 +102,25 @@ export const UC_METAS: UCMeta[] = [
   },
 ];
 
-export const LANE_LABELS: Record<Lane, { title: string; blurb: string }> = {
+// The two lanes, in the order they render across the app (TopBar's
+// ModeSwitch and, historically, UCCards' own tablist).
+export const LANES: Lane[] = ['conformant', 'ehr'];
+
+// `short` is a CONCISE chip label for the TopBar mode switch — it is NOT a
+// paraphrase of `title`/`blurb` (those stay verbatim, grounded copy per the
+// file header) but a new, separately-authored label. The honest, fuller
+// framing lives in `blurb` (rendered as the Scenarios caption), never in
+// the chip.
+export const LANE_LABELS: Record<Lane, { title: string; short: string; blurb: string }> = {
   ehr: {
     title: 'Plain EHR (non-conformant provider)',
+    short: 'Plain EHR',
     blurb:
       'The Smart Gateway originates every scenario off a plain FHIR data server — no Da Vinci conformance required on the provider side (Mode A).',
   },
   conformant: {
     title: 'Da Vinci-conformant provider',
+    short: 'Da Vinci provider',
     blurb:
       "A conformant Da Vinci client originates through the Smart Gateway's ingress (UDAP B2B). In this build the Kit itself acts as the conformant client (direct-mint); the packaged Kit adds the real br-provider system in this role.",
   },

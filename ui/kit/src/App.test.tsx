@@ -109,6 +109,15 @@ async function advance(ms: number) {
   });
 }
 
+// Click a NavRail destination. The workbench swaps the working column (and,
+// for byo/systems, drops the inspector) — the re-housed panels (RunHistory,
+// BYOPanel, StatusPanel) render only once their destination is active.
+async function clickNav(name: RegExp): Promise<void> {
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name }));
+  });
+}
+
 const STATUS_POLL_MS = 3000;
 
 beforeEach(() => {
@@ -169,7 +178,7 @@ describe('App phase router', () => {
     expect(screen.getByText('Starting the Kit')).toBeDefined();
   });
 
-  it('provisioned + gateway ready + getRuns resolving renders the main surface (UCCards + RunInspector + StatusPanel)', async () => {
+  it('provisioned + gateway ready + getRuns resolving renders the main surface (Scenarios destination: UCCards + RunInspector)', async () => {
     await renderMain();
 
     // UCCards: the lane tablist + all 8 cards.
@@ -179,9 +188,9 @@ describe('App phase router', () => {
     // RunInspector: empty-state copy with no run selected.
     expect(screen.getByText('Run a scenario to see its flow.')).toBeDefined();
 
-    // StatusPanel: connectivity + reset affordances present.
-    expect(screen.getByText('live')).toBeDefined();
-    expect(screen.getByRole('button', { name: /^reset$/i })).toBeDefined();
+    // StatusPanel now lives behind the Systems destination — not on the
+    // default Scenarios surface.
+    expect(screen.queryByRole('button', { name: /^reset$/i })).toBeNull();
 
     expect(screen.queryByText('Starting the Kit')).toBeNull();
     expect(screen.queryByRole('button', { name: /sign in/i })).toBeNull();
@@ -202,6 +211,52 @@ describe('App phase router', () => {
 
     expect(screen.getByText(/reopen the ui with a fresh/i)).toBeDefined();
     expect(screen.queryByText(/can't reach the kit daemon/i)).toBeNull();
+  });
+});
+
+describe('App — workbench navigation', () => {
+  it('defaults to the Scenarios destination: cards + inspector present, diagnostics absent', async () => {
+    await renderMain();
+    expect(screen.getAllByTestId(/^card-uc0\d$/)).toHaveLength(8);
+    expect(screen.getByText('Run a scenario to see its flow.')).toBeDefined();
+    expect(screen.queryByRole('button', { name: /^reset$/i })).toBeNull();
+  });
+
+  it('clicking Systems swaps the working column to diagnostics, hides the cards, and drops the inspector', async () => {
+    await renderMain();
+    await clickNav(/^systems$/i);
+
+    // Diagnostics (StatusPanel) now visible: SSE liveness + reset.
+    expect(screen.getByText('live')).toBeDefined();
+    expect(screen.getByRole('button', { name: /^reset$/i })).toBeDefined();
+
+    // Scenario cards hidden; inspector absent on the full-width destination.
+    expect(screen.queryAllByTestId(/^card-uc0\d$/)).toHaveLength(0);
+    expect(screen.queryByText('Run a scenario to see its flow.')).toBeNull();
+  });
+
+  it('Run history is reachable via nav: it renders the history panel while the inspector stays present', async () => {
+    vi.mocked(api.getHistory).mockResolvedValue([
+      { runId: 'run-a', lane: 'conformant', uc: 'uc02', branch: '', state: 'passed', detail: 'ok', time: '2026-07-03T10:00:00Z', eventCount: 1 },
+    ]);
+    await renderMain();
+    await flush(); // getHistory resolves
+    await clickNav(/^run history$/i);
+
+    expect(screen.getByRole('heading', { name: 'Run history' })).toBeDefined();
+    // The inspector rides alongside history (selecting a row drives it).
+    expect(screen.getByText('Run a scenario to see its flow.')).toBeDefined();
+    // Scenario cards are hidden.
+    expect(screen.queryAllByTestId(/^card-uc0\d$/)).toHaveLength(0);
+  });
+
+  it('Bring your own is reachable via nav: it renders BYOPanel full-width (no inspector)', async () => {
+    await renderMain();
+    await flush(); // getBYO resolves
+    await clickNav(/^bring your own$/i);
+
+    expect(screen.getByRole('heading', { name: 'Bring your own' })).toBeDefined();
+    expect(screen.queryByText('Run a scenario to see its flow.')).toBeNull();
   });
 });
 
@@ -324,6 +379,7 @@ describe('App — run inspector selection (auto-follow vs. manual pick)', () => 
 describe('App — reset-required banner survives the phase flip', () => {
   it('main phase -> reset completes with restartRequired -> next bootstrap poll flips to signin-required -> the banner renders INSTEAD of the sign-in screen, and persists across further polls', async () => {
     await renderMain();
+    await clickNav(/^systems$/i); // reset lives on the Systems destination
     vi.mocked(api.postReset).mockResolvedValue({ restartRequired: true });
 
     await act(async () => {
@@ -356,6 +412,7 @@ describe('App — reset-required banner survives the phase flip', () => {
   it("the banner's Restart button calls restartKit() when canRestart() is true", async () => {
     vi.mocked(bridge.canRestart).mockReturnValue(true);
     await renderMain();
+    await clickNav(/^systems$/i); // reset lives on the Systems destination
     vi.mocked(api.postReset).mockResolvedValue({ restartRequired: true });
 
     await act(async () => {
@@ -392,7 +449,8 @@ describe('App — in-flight reconciliation', () => {
 
     await renderMain();
 
-    for (const b of screen.getAllByRole('button', { name: /^run /i })) {
+    // `Run uc0X` scoping avoids the "Run history" nav button (also /^run /).
+    for (const b of screen.getAllByRole('button', { name: /^run uc0\d$/i })) {
       expect(b).toBeDisabled();
     }
     expect(screen.getByRole('alert').textContent).toMatch(/in flight/i);
@@ -404,7 +462,7 @@ describe('App — in-flight reconciliation', () => {
     ]);
     await advance(3000);
 
-    for (const b of screen.getAllByRole('button', { name: /^run /i })) {
+    for (const b of screen.getAllByRole('button', { name: /^run uc0\d$/i })) {
       expect(b).not.toBeDisabled();
     }
     expect(screen.queryByRole('alert')).toBeNull();
@@ -444,6 +502,7 @@ describe('App — run history', () => {
 
     await renderMain();
     await flush(); // getHistory resolves; the row renders
+    await clickNav(/^run history$/i);
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /open run-hist/i }));
@@ -487,18 +546,19 @@ describe('App — run history', () => {
 
     await renderMain();
     await flush(); // getHistory resolves; both rows render
+    await clickNav(/^run history$/i);
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /open run-a/i }));
     });
-    let headers = Array.from(document.querySelectorAll('.inspector-header'));
+    let headers = Array.from(document.querySelectorAll('.insp-head'));
     expect(headers).toHaveLength(1);
     expect(headers[0].textContent).toContain('conformant/uc02');
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /compare run-b/i }));
     });
-    headers = Array.from(document.querySelectorAll('.inspector-header'));
+    headers = Array.from(document.querySelectorAll('.insp-head'));
     expect(headers).toHaveLength(2);
     expect(headers.some((h) => h.textContent?.includes('ehr/uc04'))).toBe(true);
 
@@ -506,9 +566,142 @@ describe('App — run history', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /compare run-b/i }));
     });
-    headers = Array.from(document.querySelectorAll('.inspector-header'));
+    headers = Array.from(document.querySelectorAll('.insp-head'));
     expect(headers).toHaveLength(1);
     expect(headers.some((h) => h.textContent?.includes('ehr/uc04'))).toBe(false);
+  });
+
+  it('opening compare renders an explicit two-up split with a visible "Close comparison" control; clicking it clears compareRunId back to the single pane', async () => {
+    vi.mocked(useEvents).mockReturnValue(
+      eventsView({
+        all: [
+          { seq: 1, time: '2026-07-03T14:00:00Z', type: 'run.started', runId: 'run-a', lane: 'conformant', uc: 'uc02' },
+          { seq: 2, time: '2026-07-03T14:05:00Z', type: 'run.started', runId: 'run-b', lane: 'ehr', uc: 'uc04' },
+        ],
+        activeRunId: undefined,
+      }),
+    );
+    vi.mocked(api.getHistory).mockResolvedValue([
+      { runId: 'run-a', lane: 'conformant', uc: 'uc02', branch: '', state: 'passed', detail: 'ok', time: '2026-07-03T14:00:00Z', eventCount: 1 },
+      { runId: 'run-b', lane: 'ehr', uc: 'uc04', branch: '', state: 'passed', detail: 'ok', time: '2026-07-03T14:05:00Z', eventCount: 1 },
+    ]);
+
+    await renderMain();
+    await flush(); // getHistory resolves; both rows render
+    await clickNav(/^run history$/i);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /open run-a/i }));
+    });
+
+    // Before comparing: no split, no close control.
+    expect(document.querySelector('.inspector-split')).toBeNull();
+    expect(screen.queryByRole('button', { name: /close comparison/i })).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /compare run-b/i }));
+    });
+
+    // Comparing: an explicit split housing both inspectors, plus a visible close control.
+    expect(document.querySelector('.inspector-split')).not.toBeNull();
+    expect(document.querySelectorAll('.insp-head')).toHaveLength(2);
+    const closeButton = screen.getByRole('button', { name: /close comparison/i });
+    expect(closeButton).toBeDefined();
+
+    await act(async () => {
+      fireEvent.click(closeButton);
+    });
+
+    // Closing collapses back to the single pane — the compare inspector and
+    // the close control both disappear, without touching the primary pane.
+    expect(document.querySelector('.inspector-split')).toBeNull();
+    const remainingHeaders = Array.from(document.querySelectorAll('.insp-head'));
+    expect(remainingHeaders).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /close comparison/i })).toBeNull();
+    expect(remainingHeaders[0].textContent).toContain('conformant/uc02');
+  });
+
+  it('switching nav destinations closes an open comparison — a comparison is destination-scoped, not carried across nav (the working column still swaps as before)', async () => {
+    vi.mocked(useEvents).mockReturnValue(
+      eventsView({
+        all: [
+          { seq: 1, time: '2026-07-03T14:00:00Z', type: 'run.started', runId: 'run-a', lane: 'conformant', uc: 'uc02' },
+          { seq: 2, time: '2026-07-03T14:05:00Z', type: 'run.started', runId: 'run-b', lane: 'ehr', uc: 'uc04' },
+        ],
+        activeRunId: undefined,
+      }),
+    );
+    vi.mocked(api.getHistory).mockResolvedValue([
+      { runId: 'run-a', lane: 'conformant', uc: 'uc02', branch: '', state: 'passed', detail: 'ok', time: '2026-07-03T14:00:00Z', eventCount: 1 },
+      { runId: 'run-b', lane: 'ehr', uc: 'uc04', branch: '', state: 'passed', detail: 'ok', time: '2026-07-03T14:05:00Z', eventCount: 1 },
+    ]);
+
+    await renderMain();
+    await flush(); // getHistory resolves; both rows render
+    await clickNav(/^run history$/i);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /open run-a/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /compare run-b/i }));
+    });
+    expect(document.querySelector('.inspector-split')).not.toBeNull();
+
+    // Switching to Scenarios still swaps the working column exactly as
+    // before (existing nav-swap behavior) — AND closes the stale
+    // comparison, rather than letting it survive into an unrelated
+    // destination.
+    await clickNav(/^scenarios/i);
+    expect(screen.getAllByTestId(/^card-uc0\d$/)).toHaveLength(8);
+    expect(document.querySelector('.inspector-split')).toBeNull();
+
+    // The primary selection (run-a) survives the nav swap — only the
+    // comparison closes.
+    const headers = document.querySelectorAll('.insp-head');
+    expect(headers).toHaveLength(1);
+    expect(headers[0].textContent).toContain('conformant/uc02');
+  });
+
+  it('a new live run auto-following clears a stale comparison (never pairs a brand-new run against an unrelated compareRunId)', async () => {
+    vi.mocked(useEvents).mockReturnValue(
+      eventsView({
+        all: [
+          { seq: 1, time: '2026-07-03T14:00:00Z', type: 'run.started', runId: 'run-a', lane: 'conformant', uc: 'uc02' },
+        ],
+        activeRunId: 'run-a',
+      }),
+    );
+    vi.mocked(api.getHistory).mockResolvedValue([
+      { runId: 'run-b', lane: 'ehr', uc: 'uc04', branch: '', state: 'passed', detail: 'ok', time: '2026-07-03T14:05:00Z', eventCount: 1 },
+    ]);
+
+    await renderMain();
+    await flush(); // getHistory resolves; run-b's row renders
+    await clickNav(/^run history$/i);
+
+    // run-a is auto-followed (never manually opened) and compared against
+    // the completed run-b.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /compare run-b/i }));
+    });
+    expect(document.querySelector('.inspector-split')).not.toBeNull();
+
+    // A brand-new run starts and auto-selects — manualPickRef was never
+    // set (Compare, unlike Open, never pins a manual selection), so the
+    // auto-follow branch fires and must drop the now-stale comparison.
+    vi.mocked(useEvents).mockReturnValue(
+      eventsView({
+        all: [
+          { seq: 1, time: '2026-07-03T14:00:00Z', type: 'run.started', runId: 'run-a', lane: 'conformant', uc: 'uc02' },
+          { seq: 2, time: '2026-07-03T15:00:00Z', type: 'run.started', runId: 'run-c', lane: 'conformant', uc: 'uc01' },
+        ],
+        activeRunId: 'run-c',
+      }),
+    );
+    await advance(STATUS_POLL_MS);
+
+    expect(document.querySelector('.inspector-split')).toBeNull();
   });
 
   it('export fetches the HistoryRecord, builds a Blob, and downloads it via a <runId>.json anchor click (the Record IS the export format)', async () => {
@@ -548,6 +741,7 @@ describe('App — run history', () => {
     try {
       await renderMain();
       await flush(); // getHistory resolves; the row renders
+      await clickNav(/^run history$/i);
 
       fireEvent.click(screen.getByRole('button', { name: /export run-a/i }));
       await flush(); // exportRun's getHistoryRecord() await settles
@@ -572,6 +766,7 @@ describe('App — run history', () => {
 
     await renderMain();
     await flush(); // getHistory resolves; the row renders
+    await clickNav(/^run history$/i);
 
     fireEvent.click(screen.getByRole('button', { name: /export run-a/i }));
     await flush(); // exportRun's getHistoryRecord() rejection settles
@@ -616,6 +811,7 @@ describe('App — run history', () => {
     try {
       await renderMain();
       await flush(); // getHistory resolves; the row renders
+      await clickNav(/^run history$/i);
 
       fireEvent.click(screen.getByRole('button', { name: /export run-a/i }));
       await flush();
@@ -638,6 +834,7 @@ describe('App — run history', () => {
 describe('App — resetPending over unreachable', () => {
   it('resetPending true AND getBootstrap rejecting renders the restart-required screen, not the daemon-down screen', async () => {
     await renderMain();
+    await clickNav(/^systems$/i); // reset lives on the Systems destination
     vi.mocked(api.postReset).mockResolvedValue({ restartRequired: true });
 
     await act(async () => {
@@ -673,7 +870,10 @@ describe('App — bring your own', () => {
     await flush(); // getBYO resolves
 
     expect(api.getBYO).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('Bring your own')).toBeDefined();
+    await clickNav(/^bring your own$/i);
+    // "Bring your own" is both the nav label and BYOPanel's heading — scope
+    // to the heading so the assertion isn't ambiguous.
+    expect(screen.getByRole('heading', { name: 'Bring your own' })).toBeDefined();
     expect(screen.getByText(/connected — your ehr is the ehr lane's data source/i)).toBeDefined();
   });
 
@@ -684,6 +884,7 @@ describe('App — bring your own', () => {
     await renderMain();
     await flush();
     expect(api.getBYO).toHaveBeenCalledTimes(1);
+    await clickNav(/^bring your own$/i);
 
     const ehrSection = within(screen.getByText('EHR (data source)').closest('section') as HTMLElement);
     await act(async () => {
@@ -710,6 +911,7 @@ describe('App — bring your own', () => {
 
     await renderMain();
     await flush();
+    await clickNav(/^bring your own$/i);
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /restore demo data/i }));
@@ -729,7 +931,7 @@ describe('App — bring your own', () => {
     expect(bridge.restartKit).toHaveBeenCalled();
   });
 
-  it('the S5 browser-debug fallback (no bridge) renders manual-restart instructions instead of calling restartKit()', async () => {
+  it('the browser-debug fallback (no bridge) renders manual-restart instructions instead of calling restartKit()', async () => {
     vi.mocked(bridge.canRestart).mockReturnValue(false);
     vi.mocked(api.getBYO).mockResolvedValue({
       ehr: { dataUrl: 'https://ehr.example.org/fhir', hasClientKey: false, applied: true, demoPersonas: null },
@@ -740,6 +942,7 @@ describe('App — bring your own', () => {
 
     await renderMain();
     await flush();
+    await clickNav(/^bring your own$/i);
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /restore demo data/i }));
@@ -870,7 +1073,8 @@ describe('App — BYO lane surfaces', () => {
 
     await renderMain();
 
-    for (const b of screen.getAllByRole('button', { name: /^run /i })) {
+    // `Run uc0X` scoping avoids the "Run history" nav button (also /^run /).
+    for (const b of screen.getAllByRole('button', { name: /^run uc0\d$/i })) {
       expect(b).toBeDisabled();
     }
     expect(screen.getByRole('alert').textContent).toMatch(
@@ -898,7 +1102,7 @@ describe('App — BYO provider label threading', () => {
     await renderMain();
     await flush(); // getBYO resolves
 
-    const providerNode = document.querySelector('.run-inspector [data-node="provider"]');
+    const providerNode = document.querySelector('.insp [data-node="provider"]');
     expect(providerNode?.textContent).toBe('Your EHR (FHIR data source)');
   });
 
@@ -925,7 +1129,7 @@ describe('App — BYO provider label threading', () => {
     await renderMain();
     await flush(); // getBYO resolves
 
-    const providerNode = document.querySelector('.run-inspector [data-node="provider"]');
+    const providerNode = document.querySelector('.insp [data-node="provider"]');
     expect(providerNode?.textContent).toBe('Your Da Vinci system');
   });
 
@@ -952,7 +1156,7 @@ describe('App — BYO provider label threading', () => {
     await renderMain();
     await flush(); // getBYO resolves
 
-    const providerNode = document.querySelector('.run-inspector [data-node="provider"]');
+    const providerNode = document.querySelector('.insp [data-node="provider"]');
     expect(providerNode?.textContent).toBe('Provider system');
   });
 
@@ -990,13 +1194,14 @@ describe('App — BYO provider label threading', () => {
 
     await renderMain();
     await flush(); // getBYO + getHistory resolve; the row renders
+    await clickNav(/^run history$/i);
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /open run-hist/i }));
     });
     await flush(); // getHistoryRecord resolves
 
-    const providerNode = document.querySelector('.run-inspector [data-node="provider"]');
+    const providerNode = document.querySelector('.insp [data-node="provider"]');
     expect(providerNode?.textContent).toBe('Plain EHR (seeded data source)');
   });
 
@@ -1034,19 +1239,20 @@ describe('App — BYO provider label threading', () => {
 
     await renderMain();
     await flush(); // getBYO + getHistory resolve; the row renders
+    await clickNav(/^run history$/i);
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /open run-hist-freeform/i }));
     });
     await flush(); // getHistoryRecord resolves
 
-    const providerNode = document.querySelector('.run-inspector [data-node="provider"]');
+    const providerNode = document.querySelector('.insp [data-node="provider"]');
     expect(providerNode?.textContent).toBe('Your EHR (FHIR data source)');
   });
 });
 
 describe('App — update banner', () => {
-  it('status.update.available renders a banner in the app-header linking via openExternal', async () => {
+  it('status.update.available renders a banner in the TopBar linking via openExternal', async () => {
     await renderMain();
     vi.mocked(api.getStatus).mockImplementation(() =>
       Promise.resolve({
@@ -1057,7 +1263,7 @@ describe('App — update banner', () => {
     await advance(STATUS_POLL_MS);
 
     expect(screen.getByText(/new version of the kit is available/i)).toBeDefined();
-    expect(document.querySelector('.app-header .update-banner')).not.toBeNull();
+    expect(document.querySelector('.topbar .update-banner')).not.toBeNull();
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /view release/i }));
@@ -1147,7 +1353,7 @@ describe('App — latestRunId fold', () => {
     await renderMain();
     await flush(); // getBYO + getHistory resolve
 
-    let providerNode = document.querySelector('.run-inspector [data-node="provider"]');
+    let providerNode = document.querySelector('.insp [data-node="provider"]');
     expect(providerNode?.textContent).toBe('Your EHR (FHIR data source)');
 
     // The run reaches terminal (activeRunId clears).
@@ -1165,11 +1371,12 @@ describe('App — latestRunId fold', () => {
     // Reopen the SAME run from history — its events are still in the ring
     // (this test's `all` array still carries them), so this exercises the
     // label logic alone, not a history-fetch fallback.
+    await clickNav(/^run history$/i);
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /open run-ehr-live/i }));
     });
 
-    providerNode = document.querySelector('.run-inspector [data-node="provider"]');
+    providerNode = document.querySelector('.insp [data-node="provider"]');
     expect(providerNode?.textContent).toBe('Plain EHR (seeded data source)');
   });
 });

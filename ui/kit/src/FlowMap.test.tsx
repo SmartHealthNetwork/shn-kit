@@ -74,6 +74,34 @@ function okLegStep(counterpart = 'payer'): Step {
   };
 }
 
+function eligibilityLegStep(): Step {
+  return {
+    id: '3e',
+    kind: 'leg',
+    legType: 'coverage-eligibility',
+    status: 'ok',
+    request: {
+      seq: 3,
+      time: '2026-07-03T00:00:00Z',
+      kind: 'leg.originated',
+      legType: 'coverage-eligibility',
+      correlationId: 'c-2e',
+      counterpart: 'payer',
+    },
+    response: {
+      seq: 4,
+      time: '2026-07-03T00:00:01Z',
+      kind: 'leg.response',
+      legType: 'coverage-eligibility',
+      correlationId: 'c-2e',
+      detail: '200',
+    },
+    correlationId: 'c-2e',
+    counterpart: 'payer',
+    narration: 'eligibility leg narration',
+  };
+}
+
 function failedLegStep(): Step {
   return {
     id: '4',
@@ -129,7 +157,7 @@ describe('FlowMap — node rail + remote zone', () => {
     for (const id of NODE_IDS) {
       expect(getNode(id)).toBeDefined();
     }
-    const remoteZone = document.querySelector('.remote-zone');
+    const remoteZone = document.querySelector('.remote');
     expect(remoteZone).not.toBeNull();
     for (const id of ['hub', 'payer-gateway', 'payer-engine']) {
       expect(remoteZone?.contains(getNode(id))).toBe(true);
@@ -176,7 +204,7 @@ describe('FlowMap — steps render in order, selection, click', () => {
     const story: RunStory = { runId: 'run-4', steps: [ingressStep(), validateStep(), okLegStep()], audit: [] };
     render(<FlowMap story={story} lane="conformant" selectedStepId={undefined} onSelectStep={onSelectStep} />);
 
-    const buttons = Array.from(document.querySelectorAll('.flow-step')) as HTMLElement[];
+    const buttons = Array.from(document.querySelectorAll('.step')) as HTMLElement[];
     expect(buttons).toHaveLength(3);
     expect(buttons.map((b) => b.getAttribute('data-step-id'))).toEqual(['1', '5', '3']);
 
@@ -196,20 +224,20 @@ describe('FlowMap — steps render in order, selection, click', () => {
     expect(onSelectStep).toHaveBeenCalledWith('3');
   });
 
-  it('marks the selected step with class "selected"', () => {
+  it('marks the selected step with class "sel"', () => {
     const story: RunStory = { runId: 'run-5', steps: [okLegStep()], audit: [] };
     render(<FlowMap story={story} lane="conformant" selectedStepId="3" onSelectStep={() => {}} />);
 
-    const button = document.querySelector('.flow-step') as HTMLElement;
-    expect(button.className).toContain('selected');
+    const button = document.querySelector('.step') as HTMLElement;
+    expect(button.className).toContain('sel');
   });
 
   it('does not mark an unselected step as selected', () => {
     const story: RunStory = { runId: 'run-6', steps: [okLegStep()], audit: [] };
     render(<FlowMap story={story} lane="conformant" selectedStepId="not-this-one" onSelectStep={() => {}} />);
 
-    const button = document.querySelector('.flow-step') as HTMLElement;
-    expect(button.className).not.toContain('selected');
+    const button = document.querySelector('.step') as HTMLElement;
+    expect(button.className).not.toContain('sel');
   });
 
   it('sets aria-pressed to reflect selection state independently per button', () => {
@@ -220,7 +248,7 @@ describe('FlowMap — steps render in order, selection, click', () => {
     };
     render(<FlowMap story={story} lane="conformant" selectedStepId="3" onSelectStep={() => {}} />);
 
-    const buttons = Array.from(document.querySelectorAll('.flow-step')) as HTMLElement[];
+    const buttons = Array.from(document.querySelectorAll('.step')) as HTMLElement[];
     expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
     expect(buttons[1].getAttribute('aria-pressed')).toBe('false');
   });
@@ -252,10 +280,10 @@ describe('FlowMap — remote-zone honesty (shown-never-faked)', () => {
     const story: RunStory = { runId: 'run-9', steps: [failedLegStep()], audit: [] };
     render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
 
-    const button = document.querySelector('.flow-step') as HTMLElement;
+    const button = document.querySelector('.step') as HTMLElement;
     expect(button.getAttribute('data-status')).toBe('failed');
 
-    const remoteZone = document.querySelector('.remote-zone') as HTMLElement;
+    const remoteZone = document.querySelector('.remote') as HTMLElement;
     expect(remoteZone.className).toContain('failed');
     // failure alone must not fake a lit (confirmed) response
     for (const id of ['hub', 'payer-gateway', 'payer-engine']) {
@@ -267,7 +295,7 @@ describe('FlowMap — remote-zone honesty (shown-never-faked)', () => {
     const story: RunStory = { runId: 'run-11', steps: [okLegStep(), failedLegStep()], audit: [] };
     render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
 
-    const remoteZone = document.querySelector('.remote-zone') as HTMLElement;
+    const remoteZone = document.querySelector('.remote') as HTMLElement;
     expect(remoteZone.className).toContain('lit');
     expect(remoteZone.className).toContain('failed');
 
@@ -275,7 +303,7 @@ describe('FlowMap — remote-zone honesty (shown-never-faked)', () => {
       expect(getNode(id).className).toContain('lit');
     }
 
-    const buttons = Array.from(document.querySelectorAll('.flow-step')) as HTMLElement[];
+    const buttons = Array.from(document.querySelectorAll('.step')) as HTMLElement[];
     expect(buttons).toHaveLength(2);
     expect(buttons[0].getAttribute('data-step-id')).toBe('3');
     expect(buttons[0].getAttribute('data-status')).toBe('ok');
@@ -291,7 +319,7 @@ describe('FlowMap — remote-zone honesty (shown-never-faked)', () => {
       expect(getNode(id).className).not.toContain('lit');
     }
 
-    const remoteZone = document.querySelector('.remote-zone') as HTMLElement;
+    const remoteZone = document.querySelector('.remote') as HTMLElement;
     expect(remoteZone.className).not.toContain('lit');
     expect(remoteZone.className).not.toContain('failed');
   });
@@ -442,6 +470,24 @@ describe('FlowMap — payer-node gating by legType family', () => {
   });
 });
 
+describe('FlowMap — eligibility leg lights the payer nodes with a consistent label', () => {
+  it('eligibility (coverage-eligibility) lights the payer nodes', () => {
+    const story: RunStory = { runId: 'e1', steps: [eligibilityLegStep()], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    for (const id of ['hub', 'payer-gateway', 'payer-engine']) {
+      expect(getNode(id).className).toContain('lit');
+    }
+  });
+
+  it('payer engine node is labelled "Payer system"', () => {
+    const story: RunStory = { runId: 'e2', steps: [eligibilityLegStep()], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    expect(getNode('payer-engine').textContent).toContain('Payer system');
+  });
+});
+
 describe('FlowMap — per-step counterpart labeling', () => {
   it("a leg step's rendered label shows its OWN counterpart holder id, not a hardcoded payer", () => {
     const story: RunStory = {
@@ -463,7 +509,7 @@ describe('FlowMap — fixture replay (run-ehr-uc03.json)', () => {
   it('renders one step button per story.steps.length; gateway, validator, and remote zone all lit', () => {
     render(<FlowMap story={ehrStory} lane="ehr" onSelectStep={() => {}} />);
 
-    const buttons = document.querySelectorAll('.flow-step');
+    const buttons = document.querySelectorAll('.step');
     expect(buttons).toHaveLength(ehrStory.steps.length);
 
     expect(getNode('gateway').className).toContain('lit');

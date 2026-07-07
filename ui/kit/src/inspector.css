@@ -1,0 +1,731 @@
+/* inspector.css — the persistent inspector column: RunInspector's shell +
+   FlowMap + StepDetail + JsonView. Ported from the design mockup's `.insp*`/
+   `.flow`/`.node`/`.remote`/`.steps`/`.detail`/`.facts`/`.pane`/`.code`/
+   `.vbadge`/`.toggle` region onto theme.css's tokens (mirrors scenarios.css's
+   porting convention). Several rules have no mockup equivalent and are
+   synthesized here on the same tokens, each called out in its own comment:
+   the audit-anchors strip (RunInspector's run-scoped audit block), the
+   validation badge (StepDetail's ValidationBadge — class names stay
+   test-pinned `validation-*`, restyled in the `.vbadge`/`.vnote` idiom), the
+   JSON tree (JsonView's interactive collapsible/searchable tree — the
+   mockup only shows a static formatted snippet, so this ports its dark
+   code-surface palette rather than its exact markup), and `.inspector-split`
+   (the compare pane's explicit 2-up layout + close control, new in this
+   restyle). */
+
+/* ── inspector shell ──────────────────────────────────────────────── */
+.insp {
+  background: var(--surface);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.insp.empty-state,
+.insp.loading-state,
+.insp.missing-state {
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: 16px 20px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.insp-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.insp-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* A friendly title (the mockup's "Prior auth, approved") has no source yet
+   — RunInspector only carries the technical lane/uc string (`.mono` below).
+   Ported anyway as a reusable design-system rule (mirrors primitives.css's
+   `.card` precedent of a pre-declared, not-yet-consumed utility). */
+.insp-title .t {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.insp-title .mono {
+  font: 600 12px/1 var(--mono);
+  color: var(--ink-2);
+}
+
+.insp-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.insp-meta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* ── substrate-view toggle (switch) ───────────────────────────────── */
+/* The real checkbox drives state but is visually hidden (sr-only pattern)
+   — `.sw` is the mockup's rendered slider pill, kept in sync purely via the
+   adjacent-sibling `:checked` selectors below (no extra state). */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle input[type='checkbox'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.toggle .sw {
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  position: relative;
+  flex: none;
+}
+
+.toggle .sw::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: 0.15s;
+}
+
+.toggle input:checked + .sw {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+
+.toggle input:checked + .sw::after {
+  transform: translateX(13px);
+  background: var(--accent);
+}
+
+.toggle input:focus-visible + .sw {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
+}
+
+/* run.failed terminal detail — the mockup only illustrates a passed run, so
+   this has no direct equivalent; synthesized on the red tokens already
+   used throughout. */
+.run-terminal-detail {
+  margin: 0 18px;
+  padding: 8px 12px;
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid var(--red-border);
+  border-radius: var(--r);
+  font-size: 13px;
+}
+
+.insp-body {
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 18px;
+  overflow: auto;
+  align-content: start;
+}
+
+/* Layout-only wrapper for the body's second grid cell — stacks StepDetail
+   (`.detail`, below) above the audit-anchors strip. No mockup equivalent
+   (the mockup's `.detail` IS the grid cell); this exists purely so the two
+   can share one. */
+.insp-detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.no-steps-note {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* ── flow map ─────────────────────────────────────────────────────── */
+.flow {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.flow .k {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.node {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--muted);
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node .b {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex: none;
+}
+
+.node.lit {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+.node.lit .b {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(58, 85, 230, 0.16);
+}
+
+.node[data-static='true'] {
+  font-style: italic;
+}
+
+.remote {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--r-lg);
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.remote.lit {
+  border-color: var(--accent-border);
+}
+
+.remote.failed {
+  border-color: var(--red-border);
+}
+
+.remote .cap {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-style: italic;
+  line-height: 1.35;
+  margin: 0 2px 1px;
+}
+
+.steps {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.step {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--r);
+  padding: 6px 9px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.step .lt {
+  font: 600 11.5px/1.3 var(--mono);
+  color: var(--ink);
+}
+
+.step .cp {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.step.ok {
+  border-left-color: var(--green-border);
+}
+
+/* `.failed`/`.open` have no mockup equivalent (it only illustrates a passed
+   run) — synthesized in the same left-border idiom as `.ok`. */
+.step.failed {
+  border-left-color: var(--red-border);
+}
+
+.step.failed .lt {
+  color: var(--red);
+}
+
+.step.open {
+  border-left-color: var(--amber-border);
+}
+
+.step.sel {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.step.sel .lt {
+  color: var(--accent-ink);
+}
+
+/* ── step detail ──────────────────────────────────────────────────── */
+.detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.narr {
+  font-size: 13px;
+  color: var(--ink);
+  margin: 0;
+}
+
+.http-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.substrate-framing {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 5px 14px;
+  margin: 0;
+}
+
+.facts dt {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  align-self: center;
+}
+
+.facts dd {
+  margin: 0;
+  font: 12px/1.3 var(--mono);
+  color: var(--ink-2);
+  word-break: break-all;
+}
+
+.open-step-note,
+.validate-substrate-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.failure-detail {
+  margin: 0;
+  color: var(--red);
+  font-size: 12px;
+}
+
+.json-search-label {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.json-search-input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.pane {
+  min-width: 0;
+}
+
+.pane h4 {
+  margin: 0 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── JSON tree (hand-rolled, JsonView.tsx) ────────────────────────── */
+/* The mockup's `.code` is a static formatted snippet; JsonView is an
+   interactive collapsible/searchable tree, so this ports the same dark
+   code-surface palette (literal dark-surface colors — same precedent as
+   shell.css's `.health` pill, whose comment explains why the light theme
+   tokens are illegible here) rather than the mockup's exact markup. Class
+   names are unchanged from the component (json-match/json-key-match/
+   json-value-match are test-pinned via `.toContain`). */
+.json-view {
+  background: #0f1524;
+  border: 1px solid #0b0f1a;
+  border-radius: var(--r);
+  padding: 10px 12px;
+  overflow: auto;
+  max-height: 320px;
+  font: 11.5px/1.6 var(--mono);
+  color: #cfd6ea;
+}
+
+.json-search-summary {
+  font: 11px var(--ui);
+  color: #97a0b5;
+  margin-bottom: 6px;
+}
+
+.json-node {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.json-children {
+  margin-left: 14px;
+  border-left: 1px dotted rgba(255, 255, 255, 0.12);
+  padding-left: 8px;
+}
+
+.json-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 0 4px 0 0;
+  color: #6b7488;
+}
+
+.json-key {
+  color: #8fb7ff;
+}
+
+.json-value {
+  color: #9ff0c8;
+}
+
+.json-bracket,
+.json-collapsed-summary {
+  color: #6b7488;
+}
+
+.json-match {
+  background: rgba(246, 193, 119, 0.25);
+  color: #f6c177;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* ── validation badge (StepDetail's ValidationBadge) ──────────────── */
+/* Class names stay `validation-*` (test-pinned via `.toContain`); restyled
+   here in the mockup's `.vbadge`/`.vnote` pill-and-caption idiom. */
+.validation-badge-group {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.validation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.validation-badge.validation-ok {
+  color: var(--green);
+  background: var(--green-bg);
+  border-color: var(--green-border);
+}
+
+.validation-badge.validation-failed {
+  color: var(--red);
+  background: var(--red-bg);
+  border-color: var(--red-border);
+}
+
+.validation-detail {
+  font-size: 11px;
+  color: var(--red);
+}
+
+.validator-posture-label {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ── audit anchors strip (run-scoped — never per-step) ────────────── */
+/* No mockup equivalent — synthesized in the `.facts` idiom (the same
+   compact fact-row register) per the task brief. Class names are unchanged
+   (`.audit-anchor-*`). */
+.audit-anchors {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.audit-anchors h3 {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.audit-anchor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.audit-anchor-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+.audit-anchor-type {
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.audit-anchor-parties,
+.audit-anchor-authority {
+  color: var(--ink-2);
+}
+
+.audit-anchor-outcome {
+  color: var(--muted);
+}
+
+.audit-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ── single-pane inspector column (App.tsx) ───────────────────────── */
+/* The default (non-compare) inspector layout. The compare pane uses its own
+   explicit `.inspector-split` grid below rather than this column
+   auto-detecting a second child. Re-homed from the retired App.css. */
+.inspector-column {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* App.tsx's export-run failure — a sibling of the inspector column/split
+   inside `.workbench-inspector`, so it's homed here rather than shell.css.
+   Same red-error idiom as the other alert surfaces (`.reset-error`,
+   `.verify-recheck-error`, `.support-bundle-error`, `.freeform-error`) — this
+   was the one error surface missing the treatment entirely. */
+.export-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* ── compare split (App.tsx's inspector column) ───────────────────── */
+/* New in this restyle: an explicit 2-up grid for the compare pane (rather
+   than the old `.inspector-column:has(> :nth-child(2))` heuristic) plus a
+   visible "Close comparison" control — Compare used to append a second
+   RunInspector with no way to close it short of re-clicking Compare on the
+   same history row. Stacks to one column below ~960px so neither pane
+   shrinks past readability. */
+.inspector-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  min-width: 0;
+}
+
+.inspector-split-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+@media (max-width: 960px) {
+  .inspector-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── run history panel (the `history` nav destination, RunHistory.tsx) ──
+   The mockup has no history screen — synthesized here, not in
+   scenarios.css, since RunHistory mounts in the same working-column slot
+   UCCards does and selecting a row drives THIS inspector column. Rows use
+   the same card-list idiom as scenarios.css's `.row` (surface/border/
+   radius, an inset accent ring for the selected state) and the shared
+   `.chip` pass/fail pill (primitives.css) for the result, rather than
+   inventing a parallel badge. Previously ad-hoc `.run-history-*` rules in
+   App.css — moved here, not duplicated. */
+.run-history {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.run-history.empty-state {
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: 16px 20px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.run-history h2 {
+  margin: 0 0 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.run-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-history-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  padding: 10px 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font-size: 12.5px;
+  transition: border-color 0.12s;
+}
+
+.run-history-row:hover {
+  border-color: var(--border-strong);
+}
+
+.run-history-row.selected {
+  border-color: var(--accent-border);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.run-history-row.comparing {
+  border-color: var(--amber-border);
+}
+
+.run-history-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.run-history-lane-uc {
+  font: 600 12px/1 var(--mono);
+  color: var(--ink-2);
+}
+
+.run-history-branch {
+  color: var(--ink-2);
+}
+
+.run-history-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-history-comparing-marker {
+  color: var(--amber);
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.run-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}

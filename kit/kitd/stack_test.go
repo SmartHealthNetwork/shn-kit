@@ -570,19 +570,20 @@ func TestBuildStack_TrioAbsent_ByteIdenticalToToday(t *testing.T) {
 }
 
 // TestBuildStack_TrioPresent_ChildrenOrder pins the required child-start order:
-// the trio comes BEFORE the gateway, never appended after it.
+// the gateway starts FIRST — it passes its own ready probe in well under a
+// second — and the trio follows, since it is the real multi-minute wait.
 func TestBuildStack_TrioPresent_ChildrenOrder(t *testing.T) {
 	stack, err := BuildStack(trioCfg(t, nil))
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	wantNames := []string{"validator", "data-server", "br-provider", "gateway"}
+	wantNames := []string{"gateway", "validator", "data-server", "br-provider"}
 	if len(stack.Children) != len(wantNames) {
 		t.Fatalf("Children = %d, want %d: %+v", len(stack.Children), len(wantNames), stack.Children)
 	}
 	for i, want := range wantNames {
 		if stack.Children[i].Name != want {
-			t.Errorf("Children[%d].Name = %q, want %q (trio must precede the gateway — this is the order flip from today's ExtraChildren-append shape)", i, stack.Children[i].Name, want)
+			t.Errorf("Children[%d].Name = %q, want %q (gateway first, then the trio — its ready probe is fast; the trio is the real wait)", i, stack.Children[i].Name, want)
 		}
 	}
 }
@@ -596,7 +597,7 @@ func TestBuildStack_TrioPresent_ValidateURLAndNoFakeValidator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	gwEnv := stack.Children[3].Env
+	gwEnv := stack.Children[0].Env
 	want := "FHIR_VALIDATE_URL=" + stack.ValidatorURL + "/fhir"
 	if !hasEnv(gwEnv, want) {
 		t.Errorf("gateway Env = %q, want %q", gwEnv, want)
@@ -618,8 +619,8 @@ func TestBuildStack_TrioPresent_FakeValidatorForced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	if !hasEnv(stack.Children[3].Env, "SHN_FAKE_VALIDATOR=1") {
-		t.Errorf("gateway Env = %q, want SHN_FAKE_VALIDATOR=1 (explicitly forced)", stack.Children[3].Env)
+	if !hasEnv(stack.Children[0].Env, "SHN_FAKE_VALIDATOR=1") {
+		t.Errorf("gateway Env = %q, want SHN_FAKE_VALIDATOR=1 (explicitly forced)", stack.Children[0].Env)
 	}
 }
 
@@ -632,8 +633,8 @@ func TestBuildStack_TrioPresent_FHIRDataURLDefault(t *testing.T) {
 		t.Fatalf("BuildStack: %v", err)
 	}
 	want := "FHIR_DATA_URL=" + stack.DataServerURL + "/fhir/provider"
-	if !hasEnv(stack.Children[3].Env, want) {
-		t.Errorf("gateway Env = %q, want %q", stack.Children[3].Env, want)
+	if !hasEnv(stack.Children[0].Env, want) {
+		t.Errorf("gateway Env = %q, want %q", stack.Children[0].Env, want)
 	}
 }
 
@@ -646,11 +647,11 @@ func TestBuildStack_TrioPresent_FHIRDataURLOverrideWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	if !hasEnv(stack.Children[3].Env, "FHIR_DATA_URL="+byoURL) {
-		t.Errorf("gateway Env = %q, want the caller's FHIRDataURL untouched", stack.Children[3].Env)
+	if !hasEnv(stack.Children[0].Env, "FHIR_DATA_URL="+byoURL) {
+		t.Errorf("gateway Env = %q, want the caller's FHIRDataURL untouched", stack.Children[0].Env)
 	}
 	defaultURL := "FHIR_DATA_URL=" + stack.DataServerURL + "/fhir/provider"
-	if hasEnv(stack.Children[3].Env, defaultURL) {
+	if hasEnv(stack.Children[0].Env, defaultURL) {
 		t.Errorf("gateway Env contains the DEFAULT %q despite an explicit override being set", defaultURL)
 	}
 }
@@ -662,7 +663,7 @@ func TestBuildStack_TrioPresent_NativeDTRPair(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	gwEnv := stack.Children[3].Env
+	gwEnv := stack.Children[0].Env
 	if !hasEnv(gwEnv, "PROVIDER_DTR_NATIVE=true") {
 		t.Errorf("gateway Env = %q, want PROVIDER_DTR_NATIVE=true", gwEnv)
 	}
@@ -736,9 +737,9 @@ func TestBuildStack_TrioPresent_IngressClientsAndPFX(t *testing.T) {
 		t.Fatalf("read PFX: %v", err)
 	}
 
-	brProviderSpec := stack.Children[2]
+	brProviderSpec := stack.Children[3]
 	if brProviderSpec.Name != brProviderChildName {
-		t.Fatalf("Children[2].Name = %q, want %q", brProviderSpec.Name, brProviderChildName)
+		t.Fatalf("Children[3].Name = %q, want %q", brProviderSpec.Name, brProviderChildName)
 	}
 	var certPassword string
 	for _, e := range brProviderSpec.Env {

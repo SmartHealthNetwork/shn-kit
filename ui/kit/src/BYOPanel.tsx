@@ -106,7 +106,7 @@ function EHRSection({ ehr, onSaved, onRestart }: EHRSectionProps): JSX.Element {
   };
 
   return (
-    <section className="byo-section byo-ehr">
+    <section className="card byo-section byo-ehr">
       <h3>EHR (data source)</h3>
 
       {state.kind === 'restart-pending' ? (
@@ -118,7 +118,7 @@ function EHRSection({ ehr, onSaved, onRestart }: EHRSectionProps): JSX.Element {
               <p>Connected — your EHR is the ehr lane&apos;s data source.</p>
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn ghost"
                 disabled={state.kind === 'busy'}
                 onClick={() => {
                   void handleRestore();
@@ -137,11 +137,12 @@ function EHRSection({ ehr, onSaved, onRestart }: EHRSectionProps): JSX.Element {
       )}
 
       <form
+        className="byo-form"
         onSubmit={(e) => {
           void handleSave(e);
         }}
       >
-        <label>
+        <label className="byo-field">
           Data URL
           <input
             type="text"
@@ -151,29 +152,29 @@ function EHRSection({ ehr, onSaved, onRestart }: EHRSectionProps): JSX.Element {
           />
         </label>
 
-        <fieldset>
+        <fieldset className="byo-fieldset">
           <legend>Authentication (optional)</legend>
-          <label>
+          <label className="byo-field">
             Token URL
             <input type="text" value={tokenUrl} onChange={(e) => setTokenUrl(e.target.value)} />
           </label>
-          <label>
+          <label className="byo-field">
             Client ID
             <input type="text" value={clientId} onChange={(e) => setClientId(e.target.value)} />
           </label>
-          <label>
+          <label className="byo-field">
             Algorithm
             <input type="text" value={alg} onChange={(e) => setAlg(e.target.value)} />
           </label>
-          <label>
+          <label className="byo-field">
             Scope
             <input type="text" value={scope} onChange={(e) => setScope(e.target.value)} />
           </label>
-          <label>
+          <label className="byo-field">
             Key ID
             <input type="text" value={kid} onChange={(e) => setKid(e.target.value)} />
           </label>
-          <label>
+          <label className="byo-field">
             Client key (PEM)
             <textarea value={clientKeyPem} onChange={(e) => setClientKeyPem(e.target.value)} />
           </label>
@@ -182,9 +183,11 @@ function EHRSection({ ehr, onSaved, onRestart }: EHRSectionProps): JSX.Element {
 
         <p className="byo-awareness-note">{AWARENESS_NOTE}</p>
 
-        <button type="submit" className="btn btn-primary" disabled={state.kind === 'busy'}>
-          Save
-        </button>
+        <div className="byo-form-actions">
+          <button type="submit" className="btn btn-primary" disabled={state.kind === 'busy'}>
+            Save
+          </button>
+        </div>
       </form>
 
       {state.kind === 'error' && (
@@ -233,7 +236,7 @@ function DaVinciSection({ davinci, ingress, onSaved, onRestart }: DaVinciSection
   };
 
   return (
-    <section className="byo-section byo-davinci">
+    <section className="card byo-section byo-davinci">
       <h3>Da Vinci (inbound ingress)</h3>
 
       {state.kind === 'restart-pending' ? (
@@ -245,7 +248,7 @@ function DaVinciSection({ davinci, ingress, onSaved, onRestart }: DaVinciSection
               <p>Connected — your Da Vinci system is registered as an ingress client.</p>
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn ghost"
                 disabled={state.kind === 'busy'}
                 onClick={() => {
                   void handleRestore();
@@ -264,19 +267,20 @@ function DaVinciSection({ davinci, ingress, onSaved, onRestart }: DaVinciSection
       )}
 
       <form
+        className="byo-form"
         onSubmit={(e) => {
           void handleSave(e);
         }}
       >
-        <label>
+        <label className="byo-field">
           Client ID
           <input type="text" required value={clientId} onChange={(e) => setClientId(e.target.value)} />
         </label>
-        <label>
+        <label className="byo-field">
           Algorithm
           <input type="text" required value={alg} onChange={(e) => setAlg(e.target.value)} />
         </label>
-        <label>
+        <label className="byo-field">
           Public key (PEM)
           <textarea required value={publicKeyPem} onChange={(e) => setPublicKeyPem(e.target.value)} />
         </label>
@@ -284,7 +288,7 @@ function DaVinciSection({ davinci, ingress, onSaved, onRestart }: DaVinciSection
         {ingress && (
           <div className="byo-ingress">
             <h4>Ingress</h4>
-            <dl>
+            <dl className="byo-ingress-facts">
               <dt>Base URL</dt>
               <dd>{ingress.baseUrl}</dd>
               <dt>Token URL</dt>
@@ -292,8 +296,8 @@ function DaVinciSection({ davinci, ingress, onSaved, onRestart }: DaVinciSection
               <dt>SMART configuration</dt>
               <dd>{ingress.smartConfigUrl}</dd>
             </dl>
-            <p>Endpoints:</p>
-            <ul>
+            <p className="byo-ingress-endpoints-label">Endpoints:</p>
+            <ul className="byo-ingress-endpoints">
               {ingress.endpoints.map((ep) => (
                 <li key={ep}>{ep}</li>
               ))}
@@ -304,9 +308,11 @@ function DaVinciSection({ davinci, ingress, onSaved, onRestart }: DaVinciSection
         <p className="byo-loopback-note">{LOOPBACK_SENTENCE}</p>
         <p className="byo-awareness-note">{AWARENESS_NOTE}</p>
 
-        <button type="submit" className="btn btn-primary" disabled={state.kind === 'busy'}>
-          Save
-        </button>
+        <div className="byo-form-actions">
+          <button type="submit" className="btn btn-primary" disabled={state.kind === 'busy'}>
+            Save
+          </button>
+        </div>
       </form>
 
       {state.kind === 'error' && (
@@ -345,7 +351,7 @@ function LoadErrorBanner({ loadError, onSaved }: { loadError: string; onSaved: (
       <p>Clear and reconfigure resets BOTH lanes back to demo data.</p>
       <button
         type="button"
-        className="btn btn-secondary"
+        className="btn ghost"
         disabled={clearing}
         onClick={() => {
           void handleClear();
@@ -361,10 +367,12 @@ function LoadErrorBanner({ loadError, onSaved }: { loadError: string; onSaved: (
 export function BYOPanel({ byo, onSaved, onRestart }: BYOPanelProps): JSX.Element {
   return (
     <div className="byo-panel">
-      <h2>Bring your own</h2>
+      <h2 className="byo-panel-title">Bring your own</h2>
       {byo.loadError && <LoadErrorBanner loadError={byo.loadError} onSaved={onSaved} />}
-      <EHRSection ehr={byo.ehr} onSaved={onSaved} onRestart={onRestart} />
-      <DaVinciSection davinci={byo.davinci} ingress={byo.ingress} onSaved={onSaved} onRestart={onRestart} />
+      <div className="byo-sections">
+        <EHRSection ehr={byo.ehr} onSaved={onSaved} onRestart={onRestart} />
+        <DaVinciSection davinci={byo.davinci} ingress={byo.ingress} onSaved={onSaved} onRestart={onRestart} />
+      </div>
     </div>
   );
 }

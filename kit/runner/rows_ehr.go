@@ -228,10 +228,18 @@ func ehrUC08(rn *Runner, branch string) (string, error) {
 	if out.AuthNumber != "" {
 		return "", fmt.Errorf("runner: ehr/uc08: authNumber=%q, want empty", out.AuthNumber)
 	}
-	if out.PatientDenialReason == "" {
-		return "", fmt.Errorf("runner: ehr/uc08: empty patientDenialReason")
+	// The payer's denial rationale always travels back — that is the
+	// environment-independent signal. patientDenialReason is a best-effort,
+	// fail-open patient-app lookup this build does not wire, so it is absent
+	// here; assert the rationale and surface the patient reason only when set.
+	if out.Rationale == "" {
+		return "", fmt.Errorf("runner: ehr/uc08: empty rationale")
 	}
-	return fmt.Sprintf("denied: %s", out.PatientDenialReason), nil
+	detail := fmt.Sprintf("denied: %s", out.Rationale)
+	if out.PatientDenialReason != "" {
+		detail += fmt.Sprintf("; patient reason: %s", out.PatientDenialReason)
+	}
+	return detail, nil
 }
 
 // ehrFreeform drives the "freeform" row: a

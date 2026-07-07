@@ -381,13 +381,19 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		RestartMax:   gatewayRestartMax,
 	}
 
-	// Children order: when the trio is present it
-	// comes BEFORE the gateway — [validator, data-server, br-provider,
-	// gateway] — never appended after it. cfg.ExtraChildren still follows the
-	// gateway, unchanged. The supervisor starts children sequentially,
-	// blocking on each one's ready probe, so this order is also the staged
-	// boot screen's order, for free.
+	// Children order: the gateway comes FIRST — [gateway, validator,
+	// data-server, br-provider] — so it starts and passes its ready probe in
+	// well under a second (its probe is its own smart-configuration endpoint;
+	// it does not connect to the FHIR servers at boot), and its boot-screen
+	// stage checks off fast. The bundled Java FHIR servers — the real
+	// multi-minute first-launch wait — start after it and become the visible
+	// wait. This is safe because runs only go live once EVERY child (including
+	// the trio) has passed its ready probe (see cmd/shnkitd's start loop +
+	// SetRunner). cfg.ExtraChildren still follows. The supervisor starts
+	// children sequentially, blocking on each one's ready probe, so this order
+	// is also the staged boot screen's order, for free.
 	var children []supervisor.ChildSpec
+	children = append(children, gatewaySpec)
 	if trio {
 		validatorSpec, err := BuildValidatorChildSpec(cfg.JavaAssetsDir, cfg.JREDir, cfg.StateDir, validatorPort, runtime.GOOS)
 		if err != nil {
@@ -404,7 +410,6 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		}
 		children = append(children, validatorSpec, dataServerSpec, brProviderSpec)
 	}
-	children = append(children, gatewaySpec)
 	children = append(children, cfg.ExtraChildren...)
 
 	driverCfg := scenariodriver.Config{

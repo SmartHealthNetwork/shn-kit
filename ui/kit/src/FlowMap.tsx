@@ -55,14 +55,14 @@ function classNames(...parts: Array<string | false | undefined>): string {
 // counterpart "payer", so a string match would be untested off that one
 // value). `federated-query-submit` and
 // `patient-dtr-request` are non-payer legs (a named holder/facility is the
-// counterpart); `eligibility-inquiry`, every `crd-*` leg, and
+// counterpart); `coverage-eligibility`, every `crd-*` leg, and
 // `dtr-questionnaire-fetch` are payer legs; `pas-*` (pas-submit's wire
 // legType `pas-claim`, and the amended `pas-update-submit`) are payer legs.
 // An unrecognized legType lights the Hub only — the honest fallback,
 // mirroring the narration table's own degradation rule.
 function isPayerLegType(legType: string): boolean {
   if (legType === 'federated-query-submit' || legType === 'patient-dtr-request') return false;
-  if (legType === 'eligibility-inquiry' || legType === 'dtr-questionnaire-fetch') return true;
+  if (legType === 'coverage-eligibility' || legType === 'dtr-questionnaire-fetch') return true;
   if (legType.startsWith('crd-') || legType.startsWith('pas-')) return true;
   return false;
 }
@@ -82,10 +82,11 @@ function FlowNode({
 }): JSX.Element {
   return (
     <div
-      className={classNames('flow-node', remote && 'remote', lit && 'lit')}
+      className={classNames('node', remote && 'remote', lit && 'lit')}
       data-node={id}
       data-static={isStatic ? 'true' : undefined}
     >
+      <span className="b" />
       {label}
     </div>
   );
@@ -124,28 +125,27 @@ export function FlowMap({
   const providerStatic = lane === 'ehr';
 
   return (
-    <div className="flow-map">
-      <div className="node-rail">
-        <FlowNode id="provider" label={providerLabel} lit={providerLit} isStatic={providerStatic} />
-        <FlowNode id="gateway" label="Smart Gateway" lit={steps.length > 0} />
-        <FlowNode id="validator" label="Validator" lit={hasValidate} />
-        <div className={classNames('remote-zone', remoteLit && 'lit', remoteFailed && 'failed')}>
-          <p className="remote-zone-caption">{REMOTE_ZONE_CAPTION}</p>
-          <FlowNode id="hub" label="Hub" lit={remoteLit} remote />
-          <FlowNode id="payer-gateway" label="Payer Smart Gateway" lit={payerLit} remote />
-          <FlowNode id="payer-engine" label="Payer engine" lit={payerLit} remote />
-        </div>
+    <div className="flow">
+      <div className="k">Flow</div>
+      <FlowNode id="provider" label={providerLabel} lit={providerLit} isStatic={providerStatic} />
+      <FlowNode id="gateway" label="Smart Gateway" lit={steps.length > 0} />
+      <FlowNode id="validator" label="Validator" lit={hasValidate} />
+      <div className={classNames('remote', remoteLit && 'lit', remoteFailed && 'failed')}>
+        <p className="cap">{REMOTE_ZONE_CAPTION}</p>
+        <FlowNode id="hub" label="Hub" lit={remoteLit} remote />
+        <FlowNode id="payer-gateway" label="Payer Smart Gateway" lit={payerLit} remote />
+        <FlowNode id="payer-engine" label="Payer system" lit={payerLit} remote />
       </div>
 
-      <ol className="flow-steps">
+      <ol className="steps">
         {steps.map((step) => {
           const { from, to } = edgeFor(step);
           const selected = step.id === selectedStepId;
           return (
-            <li key={step.id} className="flow-step-row">
+            <li key={step.id}>
               <button
                 type="button"
-                className={classNames('flow-step', `flow-step-${step.status}`, selected && 'selected')}
+                className={classNames('step', step.status, selected && 'sel')}
                 data-step-id={step.id}
                 data-from={from}
                 data-to={to}
@@ -153,9 +153,9 @@ export function FlowMap({
                 aria-pressed={selected}
                 onClick={() => onSelectStep(step.id)}
               >
-                <span className="flow-step-legtype">{step.legType}</span>
+                <span className="lt">{step.legType}</span>
                 {step.kind === 'leg' && (
-                  <span className="flow-step-counterpart">{step.counterpart ?? 'the hosted counterparty'}</span>
+                  <span className="cp">{step.counterpart ?? 'the hosted counterparty'}</span>
                 )}
               </button>
             </li>

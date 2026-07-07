@@ -119,7 +119,7 @@ describe('BYOPanel — EHR applied states', () => {
 });
 
 describe('BYOPanel — Da Vinci section', () => {
-  it('the form saves via putBYODaVinci; the ingress block + loopback sentence + §6.1 awareness note render pinned exactly', async () => {
+  it('the form saves via putBYODaVinci; the ingress block + loopback sentence + awareness note render pinned exactly', async () => {
     const byo = byoStatus({
       ingress: {
         baseUrl: 'http://127.0.0.1:54321',

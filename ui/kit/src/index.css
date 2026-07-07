@@ -1,18 +1,5 @@
-/* Base reset — screen-level styling lands in Tasks 5-7 */
-*, *::before, *::after {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  padding: 0;
-}
-
-#root {
-  width: 100%;
-  max-width: 100%;
-  margin: 0;
-  text-align: left;
-  border: none;
-  min-height: 100svh;
-}
+/* Base reset now lives in ./theme.css (the box-sizing reset, body
+   margin/reset, and #root sizing are all there) — nothing left to
+   duplicate here. This file stays as the main-entry stylesheet hook
+   in case a future global rule needs a home outside the design-token
+   file. */

@@ -14,6 +14,7 @@ import type { JSX } from 'react';
 import type { PatientContext, PatientSummary, RunResult } from './types';
 import type { EventsView } from './useEvents';
 import { ApiError, getBYOContext, getBYOPatients, postRun } from './api';
+import { StatusChip } from './StatusChip';
 
 export interface FreeFormPanelProps {
   events: EventsView;
@@ -154,14 +155,18 @@ export function FreeFormPanel({ events, results, onSelectRun }: FreeFormPanelPro
         </div>
       )}
 
-      <ul className="freeform-results">
+      <ul className="list">
         {freeformResults.map((r) => (
-          <li key={r.runId} className={`result-badge result-${r.state}`}>
-            <span className="badge-label">{r.state === 'passed' ? 'Passed' : 'Failed'}</span>
-            <p className="result-detail">{r.detail}</p>
-            <button type="button" className="btn btn-link" onClick={() => onSelectRun(r.runId)}>
-              View in inspector
-            </button>
+          <li key={r.runId} className="row">
+            <div className="uc">
+              <p className="desc">{r.detail}</p>
+            </div>
+            <div className="right">
+              <StatusChip state={r.state} />
+              <button type="button" className="link" onClick={() => onSelectRun(r.runId)}>
+                View in inspector
+              </button>
+            </div>
           </li>
         ))}
       </ul>

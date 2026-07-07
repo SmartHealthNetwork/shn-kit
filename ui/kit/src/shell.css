@@ -1,0 +1,476 @@
+/* shell.css — the persistent app-shell chrome (TopBar + ModeSwitch today;
+   the NavRail/workbench body land in a later task). Consumes theme.css's
+   tokens exclusively — no locally re-declared colors — with the
+   deliberate exception of the .health pill's translucent literals (see
+   its own comment below: the light --green/--amber/--red tokens are
+   illegible on the dark bar, so it ports the mockup's dark-bar literals
+   instead). Ports the mockup's .topbar/.wordmark/.seg/.spring/.cluster/
+   .who rules verbatim onto tokens. */
+
+/* ── app root ─────────────────────────────────────────────────── */
+/* The renderer's outermost flex container (App.tsx's `.app`). Re-homed from
+   the retired App.css onto theme.css's tokens — the body reset already sets
+   the background/color/font, so this only owns the column layout. */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+  font-family: var(--ui);
+  background: var(--app-bg);
+  color: var(--ink);
+}
+
+/* ── top bar ──────────────────────────────────────────────────── */
+.topbar {
+  background: linear-gradient(180deg, var(--bar-2), var(--bar));
+  color: var(--bar-ink);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px;
+  height: 48px;
+  border-bottom: 1px solid #0c111b;
+}
+
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 650;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.wordmark .glyph {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: linear-gradient(150deg, #5b74f0, var(--accent));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* ── mode switch (segmented control) ─────────────────────────── */
+.seg {
+  display: inline-flex;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.seg button {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--bar-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 5px 12px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.seg button .d {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.seg button[aria-current='true'] {
+  background: #fff;
+  color: var(--bar);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.seg button[aria-current='true'] .d {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.spring {
+  flex: 1;
+}
+
+.cluster {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* ── health pill ──────────────────────────────────────────────── */
+/* Lives on the dark top bar, so (per the mockup) this uses translucent
+   literals rather than the light --green/--amber/--red tokens (which are
+   tuned for light surfaces and would be illegible here). Default/no
+   data-level reads as ready (green); [data-level] variants below are
+   amber (starting) and red (degraded) analogs in the same idiom. */
+.health {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: #bfe8cf;
+  background: rgba(40, 200, 120, 0.12);
+  border: 1px solid rgba(40, 200, 120, 0.28);
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: default;
+}
+
+.health .pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #37d67a;
+  box-shadow: 0 0 0 3px rgba(55, 214, 122, 0.2);
+}
+
+.health[data-level='starting'] {
+  color: #f5dfa8;
+  background: rgba(220, 160, 40, 0.12);
+  border-color: rgba(220, 160, 40, 0.28);
+}
+
+.health[data-level='starting'] .pulse {
+  background: #e6b83a;
+  box-shadow: 0 0 0 3px rgba(230, 184, 58, 0.2);
+}
+
+.health[data-level='degraded'] {
+  color: #f5b8bf;
+  background: rgba(214, 55, 70, 0.12);
+  border-color: rgba(214, 55, 70, 0.28);
+}
+
+.health[data-level='degraded'] .pulse {
+  background: #e6473a;
+  box-shadow: 0 0 0 3px rgba(230, 71, 58, 0.2);
+}
+
+/* No status at all (no daemon data to summarize) reads as a neutral "no
+   data" pill, not calm green progress — muted dark-bar literals, same idiom
+   as the states above but without any readiness/progress connotation. */
+.health[data-level='unknown'] {
+  color: var(--bar-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.health[data-level='unknown'] .pulse {
+  background: var(--bar-muted);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
+}
+
+.who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--bar-muted);
+}
+
+.who .av {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #33406a;
+  color: #cfd7f5;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ── connection dot ───────────────────────────────────────────── */
+/* SSE liveness — a small, functional dot (NOT the mockup's decorative
+   traffic-light .lights). SSEState is 'connecting' | 'open' |
+   'reconnecting' (useEvents.ts); the base rule below is the muted
+   default so an unrecognized/future state still reads as neutral. */
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--bar-muted);
+}
+
+.connection-dot.connection-open {
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-bg);
+}
+
+.connection-dot.connection-connecting {
+  background: var(--bar-muted);
+}
+
+.connection-dot.connection-reconnecting {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-bg);
+}
+
+/* ── workbench body: nav rail | working column | inspector ─────── */
+/* The main phase's three-column shell. Column 1 is the nav rail, column 2
+   the destination-swapped working column, column 3 the persistent
+   inspector. On the byo/systems destinations the inspector is dropped and
+   the grid collapses to two columns (.workbench--full). Dimensions ported
+   verbatim from the design mockup's .body grid. */
+.workbench {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 216px minmax(300px, 1fr) minmax(360px, 1.35fr);
+}
+
+.workbench--full {
+  grid-template-columns: 216px 1fr;
+}
+
+/* Working column + inspector: each scrolls independently so the inspector
+   stays in view while the list scrolls. The re-housed components keep their
+   own card styling — these are containers only. */
+.workbench-col,
+.workbench-inspector {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.workbench-inspector {
+  border-left: 1px solid var(--border);
+}
+
+/* ── nav rail ──────────────────────────────────────────────────── */
+.nav {
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 12px 10px;
+  gap: 3px;
+}
+
+.nav .grp {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 12px 8px 5px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav-item svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  opacity: 0.8;
+  flex: none;
+}
+
+.nav-item:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.nav-item.on {
+  background: var(--accent-bg);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.nav-item.on svg {
+  opacity: 1;
+}
+
+.nav-label {
+  flex: 1;
+}
+
+.nav-item .count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.nav .foot {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding: 10px 8px 2px;
+}
+
+.nav .foot .line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* Explicit rule for the health label text itself — it already inherits
+   `.line`'s color/size, but this keeps the contract from silently depending
+   on inheritance alone if `.line` ever changes. */
+.nav-health-label {
+  color: var(--ink-2);
+}
+
+.nav .foot .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-bg);
+}
+
+.nav .foot .dot[data-level='starting'] {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-bg);
+}
+
+.nav .foot .dot[data-level='degraded'] {
+  background: var(--red);
+  box-shadow: 0 0 0 3px var(--red-bg);
+}
+
+/* No status at all — neutral grey, not the ready dot's green (there is
+   nothing to report as ready). */
+.nav .foot .dot[data-level='unknown'] {
+  background: var(--muted);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--muted) 20%, transparent);
+}
+
+.nav .foot .sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: 3px 0 0 16px;
+}
+
+/* ── phase card ───────────────────────────────────────────────── */
+/* The single-column centered surface shared by the pre-workbench phases:
+   sign-in (SignIn.tsx), boot progress (BootProgress.tsx's `.boot-progress`),
+   restart-required and unreachable (App.tsx). Restyled onto the design
+   system — a centered card with a hairline border, the large radius, the
+   same whisper shadow as primitives.css's `.card`, and the token palette.
+   Re-homed from the retired App.css (whose legacy :root block used to shadow
+   theme.css's tokens). */
+.phase-shell {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.phase-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent);
+  padding: 32px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.phase-card h1 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+/* SignIn's explainer + status lines. */
+.explainer {
+  margin: 0 0 20px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.signin-status {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.signin-status .detail {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.signin-status.error {
+  color: var(--red);
+}
+
+/* The restart-required + unreachable cards render bare paragraphs; scope the
+   copy treatment to those cards so it never leaks into the boot screen's
+   own (class-styled) paragraphs. */
+.restart-required-card p,
+.unreachable-card p {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+/* The unreachable card's heading reads as a failure — wins over the base
+   `.phase-card h1` above (equal specificity, later in source). */
+.unreachable-card h1 {
+  color: var(--red);
+}
+
+/* ── update banner ────────────────────────────────────────────── */
+/* App.tsx splices this into every phase's TopBar (the one mount that
+   survives every phase), so it lives in the dark bar chrome: bar ink + an
+   amber-tinted translucent fill, in the same idiom as the `.health` pill
+   above (the light-surface amber tokens would be illegible here). The
+   link's own color literal likewise stays legible on the dark bar, where
+   primitives.css's dark `--accent-ink` would not. Re-homed from the retired
+   App.css. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--bar-ink);
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  padding: 4px 12px;
+}
+
+.update-banner .btn-link {
+  color: #fde68a;
+  font-size: 12px;
+  padding: 0;
+}

@@ -231,7 +231,7 @@ describe('StepDetail — clinical view', () => {
   it('a failed step renders failed styling and the failure detail', () => {
     render(<StepDetail step={failedLegStep()} view="clinical" />);
     expect(screen.getByText('connection timed out')).toBeDefined();
-    const root = document.querySelector('.step-detail');
+    const root = document.querySelector('.detail');
     expect(root?.className).toContain('step-status-failed');
   });
 
@@ -290,7 +290,7 @@ describe('StepDetail — substrate view', () => {
   it('a failed step renders failed styling and the failure detail, still with no payload JSON', () => {
     render(<StepDetail step={failedLegStep()} view="substrate" />);
     expect(screen.getByText('connection timed out')).toBeDefined();
-    const root = document.querySelector('.step-detail');
+    const root = document.querySelector('.detail');
     expect(root?.className).toContain('step-status-failed');
     expect(document.body.textContent).not.toContain('"claim"');
     expect(document.body.textContent).not.toContain('stub');
@@ -308,7 +308,7 @@ describe('StepDetail — substrate view', () => {
 
     expect(screen.queryByText(OPEN_STEP_NOTE)).toBeNull();
     expect(screen.queryByText(SUBSTRATE_FRAMING)).toBeNull();
-    expect(document.querySelector('.leg-facts')).toBeNull();
+    expect(document.querySelector('.facts')).toBeNull();
 
     expect(screen.getByText('Valid')).toBeDefined();
     expect(screen.getByText(VALIDATOR_POSTURE_LABEL)).toBeDefined();
@@ -344,7 +344,7 @@ describe('StepDetail — substrate view', () => {
 
     expect(screen.queryByText(OPEN_STEP_NOTE)).toBeNull();
     expect(screen.queryByText(SUBSTRATE_FRAMING)).toBeNull();
-    expect(document.querySelector('.leg-facts')).toBeNull();
+    expect(document.querySelector('.facts')).toBeNull();
     expect(screen.getByText('Invalid')).toBeDefined();
     expect(screen.getByText(VALIDATE_SUBSTRATE_NOTE)).toBeDefined();
     expect(screen.getByText('invalid: missing required element Claim.type').className).toContain(

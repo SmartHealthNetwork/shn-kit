@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { UCCards } from './UCCards';
 import { LANE_LABELS } from './ucmeta';
 import type { EventsView } from './useEvents';
-import type { RunResult } from './types';
+import type { KitEvent, RunResult } from './types';
 
 // vi.mock factories are hoisted above the rest of the module, so ApiError
 // must be created through vi.hoisted rather than a plain top-level class
@@ -28,13 +28,19 @@ vi.mock('./api', () => ({
 
 import * as api from './api';
 
-function events(activeRunId?: string): EventsView {
+function events(activeRunId?: string, all: KitEvent[] = []): EventsView {
   return {
-    all: [],
-    byRun: () => [],
+    all,
+    byRun: (runId: string) => all.filter((e) => e.runId === runId),
     activeRunId,
     sseState: 'open',
   };
+}
+
+// A run.started event for `runId` — the event shape UCCards reads to
+// attribute the "Running" chip to the exact row that launched it.
+function runStarted(runId: string, lane: string, uc: string): KitEvent {
+  return { seq: 1, time: '2026-01-01T00:00:00Z', type: 'run.started', runId, lane, uc };
 }
 
 function noLatest(): RunResult | undefined {
@@ -47,12 +53,10 @@ beforeEach(() => {
 });
 
 describe('UCCards', () => {
-  it('renders exactly 8 cards in lane ehr and both lane titles; clicking the other lane calls onLane', async () => {
-    const onLane = vi.fn();
+  it('renders exactly 8 rows in lane ehr', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={onLane}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -60,41 +64,54 @@ describe('UCCards', () => {
     );
 
     expect(screen.getAllByTestId(/^card-uc0\d$/)).toHaveLength(8);
-    expect(screen.getByText(LANE_LABELS.ehr.title)).toBeDefined();
-    expect(screen.getByText(LANE_LABELS.conformant.title)).toBeDefined();
-
-    await userEvent.click(screen.getByRole('tab', { name: LANE_LABELS.conformant.title }));
-    expect(onLane).toHaveBeenCalledWith('conformant');
   });
 
-  it('lane tabs use aria-current (selection semantics) for the selected tab, not aria-pressed (toggle semantics) — parked aria-current-vs-pressed nit', () => {
-    render(
+  // The lane switch itself moved into TopBar's ModeSwitch (ModeSwitch.test.tsx
+  // owns the tablist/aria-current/onLane-firing assertions now) — UCCards
+  // keeps only the honest per-lane caption, never paraphrased into the
+  // switch's concise chip label.
+  it('renders the current lane\'s blurb as a caption, and no lane tablist', () => {
+    const { rerender } = render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
       />,
     );
 
-    const ehrTab = screen.getByRole('tab', { name: LANE_LABELS.ehr.title });
-    const conformantTab = screen.getByRole('tab', { name: LANE_LABELS.conformant.title });
+    expect(screen.getByText(LANE_LABELS.ehr.blurb)).toBeDefined();
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('tab')).toBeNull();
 
-    expect(ehrTab.getAttribute('aria-current')).toBe('true');
-    expect(conformantTab.getAttribute('aria-current')).toBeNull();
-    expect(ehrTab.hasAttribute('aria-pressed')).toBe(false);
-    expect(conformantTab.hasAttribute('aria-pressed')).toBe(false);
-    // aria-selected (role="tab"'s own selection attribute) is unchanged.
-    expect(ehrTab.getAttribute('aria-selected')).toBe('true');
-    expect(conformantTab.getAttribute('aria-selected')).toBe('false');
+    rerender(
+      <UCCards
+        lane="conformant"
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(LANE_LABELS.conformant.blurb)).toBeDefined();
+  });
+
+  it('the column header names the scenario list', () => {
+    render(
+      <UCCards
+        lane="ehr"
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: /prior-authorization scenarios/i })).toBeDefined();
   });
 
   it('branch pickers appear exactly per the row table (uc01 both lanes; uc05/uc07 ehr only)', () => {
     const { rerender } = render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -111,7 +128,6 @@ describe('UCCards', () => {
     rerender(
       <UCCards
         lane="conformant"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -127,7 +143,6 @@ describe('UCCards', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -144,11 +159,32 @@ describe('UCCards', () => {
     expect(api.postRun).toHaveBeenCalledWith('ehr', 'uc03', '');
   });
 
+  it('never-run rows show the primary Run affordance; once a result exists, "Run again"', () => {
+    const latestByRow = (lane: string, uc: string): RunResult | undefined =>
+      lane === 'ehr' && uc === 'uc03'
+        ? { runId: 'run-9', lane: 'ehr', uc: 'uc03', branch: '', state: 'passed', detail: 'approved' }
+        : undefined;
+
+    render(
+      <UCCards
+        lane="ehr"
+        events={events()}
+        latestByRow={latestByRow}
+        onSelectRun={vi.fn()}
+      />,
+    );
+
+    const uc02 = within(screen.getByTestId('card-uc02'));
+    expect(uc02.getByRole('button', { name: /^run uc02$/i }).textContent).toBe('Run');
+
+    const uc03 = within(screen.getByTestId('card-uc03'));
+    expect(uc03.getByRole('button', { name: /^run uc03$/i }).textContent).toBe('Run again');
+  });
+
   it('disabledReason disables every Run button and renders the reason exactly once', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         disabledReason="the stack is still starting"
@@ -169,7 +205,6 @@ describe('UCCards', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events('run-123')}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -184,7 +219,6 @@ describe('UCCards', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -203,7 +237,6 @@ describe('UCCards', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -222,7 +255,6 @@ describe('UCCards', () => {
     const { rerender } = render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -241,7 +273,6 @@ describe('UCCards', () => {
     rerender(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events('run-live')}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -255,7 +286,6 @@ describe('UCCards', () => {
     rerender(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -269,7 +299,6 @@ describe('UCCards', () => {
     const { rerender } = render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -284,7 +313,6 @@ describe('UCCards', () => {
     rerender(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events('run-live')}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -293,7 +321,6 @@ describe('UCCards', () => {
     rerender(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -303,7 +330,7 @@ describe('UCCards', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('latestByRow result renders the passed/failed badge + detail, and view-in-inspector calls onSelectRun', async () => {
+  it('latestByRow result renders the passed/failed chip, and view-in-inspector calls onSelectRun', async () => {
     const onSelectRun = vi.fn();
     const latestByRow = (lane: string, uc: string): RunResult | undefined => {
       if (lane === 'ehr' && uc === 'uc03') {
@@ -318,7 +345,6 @@ describe('UCCards', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={latestByRow}
         onSelectRun={onSelectRun}
@@ -326,22 +352,52 @@ describe('UCCards', () => {
     );
 
     const uc03 = within(screen.getByTestId('card-uc03'));
-    expect(uc03.getByText(/passed/i)).toBeDefined();
-    expect(uc03.getByText('approved, auth #A1')).toBeDefined();
+    expect(uc03.getByText('Passed')).toBeDefined();
 
     const uc08 = within(screen.getByTestId('card-uc08'));
-    expect(uc08.getByText(/failed/i)).toBeDefined();
-    expect(uc08.getByText('denied as expected')).toBeDefined();
+    expect(uc08.getByText('Failed')).toBeDefined();
+
+    // Rows with no result carry neither chip.
+    const uc02 = within(screen.getByTestId('card-uc02'));
+    expect(uc02.queryByText('Passed')).toBeNull();
+    expect(uc02.queryByText('Failed')).toBeNull();
 
     await userEvent.click(uc03.getByRole('button', { name: /view in inspector/i }));
     expect(onSelectRun).toHaveBeenCalledWith('run-9');
+  });
+
+  it('the in-flight run\'s OWN row shows a "Running" chip — never a different row or a different lane', () => {
+    const { rerender } = render(
+      <UCCards
+        lane="ehr"
+        events={events('run-live', [runStarted('run-live', 'ehr', 'uc04')])}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+
+    expect(within(screen.getByTestId('card-uc04')).getByText(/running/i)).toBeDefined();
+    // No other row in the SAME lane picks up the chip.
+    expect(within(screen.getByTestId('card-uc02')).queryByText(/running/i)).toBeNull();
+
+    // The identical event, but for the OTHER lane, must not light up this
+    // lane's uc04 row — a global in-flight signal is not enough; the run's
+    // own lane/uc must match.
+    rerender(
+      <UCCards
+        lane="conformant"
+        events={events('run-live', [runStarted('run-live', 'ehr', 'uc04')])}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+    expect(within(screen.getByTestId('card-uc04')).queryByText(/running/i)).toBeNull();
   });
 
   it('provenance tags render in conformant for uc01/uc05/uc06/uc07 only; none render in ehr', () => {
     const { rerender } = render(
       <UCCards
         lane="conformant"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -365,7 +421,6 @@ describe('UCCards', () => {
     rerender(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -379,7 +434,6 @@ describe('UCCards', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -397,7 +451,6 @@ describe('UCCards', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
@@ -421,7 +474,6 @@ describe('UCCards', () => {
     render(
       <UCCards
         lane="ehr"
-        onLane={vi.fn()}
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}

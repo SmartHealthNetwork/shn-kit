@@ -1,0 +1,433 @@
+/* byo.css — the "Bring your own" workbench destination (BYOPanel.tsx):
+   repoint the ehr lane at a partner EHR, or register a partner Da Vinci
+   system as an inbound ingress client. Also styles the conformant lane's
+   Watch surface (WatchPanel.tsx), mounted alongside UCCards via its
+   `extraPanel` slot once a Da Vinci swap is active.
+
+   The mockup has no BYO screen to port — these rules are SYNTHESIZED in
+   the established design-system idiom (the `.card` primitive, uppercase
+   section-label treatment, the token palette, the 8px-scale spacing) to
+   match the Systems page (systems.css) rather than a verbatim port. Every
+   `.byo-*`/`.watch-*` class below previously lived, unstyled or
+   under-styled, as ad-hoc rules in App.css — moved here, not duplicated.
+   FreeFormPanel's `.freeform-*` classes (the ehr lane's free-form surface,
+   mounted in place of the seeded cards under an EHR swap) are re-homed here
+   too — the last of App.css's survivors — restyled onto the design tokens
+   in the same idiom as the Watch surface below. */
+
+/* ── page ─────────────────────────────────────────────────────────── */
+.byo-panel-shell {
+  width: 100%;
+}
+
+.byo-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.byo-panel-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── load-error recovery banner ──────────────────────────────────── */
+.byo-load-error-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--red-bg);
+  border: 1px solid var(--red-border);
+  border-radius: var(--r);
+  font-size: 13px;
+  color: var(--red);
+}
+
+.byo-load-error-banner p {
+  margin: 0;
+}
+
+/* ── the two sections (EHR / Da Vinci), each its own full-width card ── */
+.byo-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.byo-section {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.byo-section h3 {
+  margin: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* ── connected / restart-pending / restart-banner states ─────────── */
+.byo-connected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: var(--green-bg);
+  border: 1px solid var(--green-border);
+  border-radius: var(--r);
+  font-size: 13px;
+  color: var(--green);
+}
+
+.byo-connected p {
+  margin: 0;
+  flex: 1;
+  min-width: 200px;
+}
+
+.byo-restart-banner {
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  font-size: 13px;
+  color: var(--amber);
+}
+
+.byo-restart-pending {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--r);
+}
+
+.byo-restart-pending p {
+  margin: 0;
+  flex: 1;
+  min-width: 200px;
+  font-size: 13px;
+  color: var(--accent-ink);
+}
+
+/* The restart-confirm dialog itself is a `.phase-card` (App.tsx renders
+   `className="byo-restart-confirm phase-card"`) — this rule only adds the
+   gap above it. */
+.byo-restart-confirm {
+  margin-top: 20px;
+}
+
+/* ── form ─────────────────────────────────────────────────────────── */
+.byo-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.byo-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.byo-fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.byo-fieldset legend {
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.byo-key-hint {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
+}
+
+.byo-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.byo-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* ── Da Vinci ingress block ───────────────────────────────────────── */
+.byo-ingress {
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r);
+  padding: 14px 16px;
+}
+
+.byo-ingress h4 {
+  margin: 0 0 10px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.byo-ingress-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0 0 12px;
+}
+
+.byo-ingress-facts dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.byo-ingress-facts dd {
+  margin: 0;
+  font: 12.5px var(--mono);
+  color: var(--ink-2);
+  word-break: break-all;
+}
+
+.byo-ingress-endpoints-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.byo-ingress-endpoints {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.byo-ingress-endpoints li {
+  font: 12px var(--mono);
+  color: var(--ink-2);
+}
+
+.byo-loopback-note,
+.byo-awareness-note {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
+}
+
+/* ── watch surface (WatchPanel.tsx) ───────────────────────────────── */
+.watch-panel {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.watch-panel h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.watch-provenance,
+.watch-outside-window-note,
+.watch-narration-note {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
+}
+
+.watch-active {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* A leading status dot (pure CSS, mirrors systems.css's `.sse-indicator`)
+   rather than splitting the pinned "Watching — run {runId}" sentence into
+   separate markup. */
+.watch-run-id {
+  position: relative;
+  margin: 0;
+  padding-left: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.watch-run-id::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.watch-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+.watch-result-passed {
+  background: var(--green-bg);
+  border-color: var(--green-border);
+}
+
+.watch-result-failed {
+  background: var(--red-bg);
+  border-color: var(--red-border);
+}
+
+.watch-result-detail {
+  margin: 0;
+  flex: 1;
+  min-width: 160px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.watch-notice {
+  padding: 8px 12px;
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  font-size: 12px;
+  color: var(--amber);
+}
+
+.watch-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* ── free-form panel (FreeFormPanel.tsx) ──────────────────────────── */
+/* The ehr lane's bring-your-own surface — browse the connected partner EHR,
+   preview a patient's order+coverage, run the data-derived PA spine. App.tsx
+   mounts it (via UCCards' `replaceCards` slot) in place of the seeded cards
+   once an EHR swap is applied, so it presents as its own inset card in the
+   Scenarios column. Restyled onto the design tokens here — re-homed from the
+   retired App.css. */
+.freeform-panel {
+  margin: 12px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.freeform-panel h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.freeform-provenance,
+.freeform-member-note {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
+}
+
+.freeform-patient-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.freeform-context {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r);
+}
+
+.freeform-context h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.freeform-order-summary,
+.freeform-coverage-summary {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.freeform-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--red);
+}
+
+.freeform-notice {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+}

@@ -45,10 +45,10 @@ describe('RunInspector — fixture replay (ehr uc03)', () => {
     expect(screen.getByText('ehr/uc03')).toBeDefined();
     expect(screen.getByText('Passed')).toBeDefined();
 
-    const buttons = document.querySelectorAll('.flow-step');
+    const buttons = document.querySelectorAll('.step');
     expect(buttons).toHaveLength(ehrStory.steps.length);
 
-    const selected = document.querySelector('.flow-step.selected') as HTMLElement;
+    const selected = document.querySelector('.step.sel') as HTMLElement;
     expect(selected.getAttribute('data-step-id')).toBe(ehrStory.steps[0].id);
     expect(screen.getByText(ehrStory.steps[0].narration)).toBeDefined();
   });
@@ -85,14 +85,14 @@ describe('RunInspector — fixture replay (ehr uc03)', () => {
     const user = userEvent.setup();
     render(<RunInspector runId={ehrRunId} events={ehrEvents} source="live" results={[]} />);
 
-    const buttons = Array.from(document.querySelectorAll('.flow-step')) as HTMLElement[];
+    const buttons = Array.from(document.querySelectorAll('.step')) as HTMLElement[];
     const target = ehrStory.steps[2];
     const targetButton = buttons.find((b) => b.getAttribute('data-step-id') === target.id);
     expect(targetButton).toBeDefined();
 
     await user.click(targetButton as HTMLElement);
 
-    expect(document.querySelector('.flow-step.selected')?.getAttribute('data-step-id')).toBe(target.id);
+    expect(document.querySelector('.step.sel')?.getAttribute('data-step-id')).toBe(target.id);
     expect(screen.getByText(target.narration)).toBeDefined();
   });
 });
@@ -157,7 +157,7 @@ describe('RunInspector — substrate toggle + audit anchors', () => {
 
     // Boundary: audit rows are a sibling of the step-detail pane,
     // never nested inside it.
-    const stepDetail = document.querySelector('.step-detail') as HTMLElement;
+    const stepDetail = document.querySelector('.detail') as HTMLElement;
     expect(stepDetail).not.toBeNull();
     for (const row of Array.from(rows)) {
       expect(stepDetail.contains(row)).toBe(false);
@@ -218,7 +218,7 @@ describe('RunInspector — run.failed terminal (failure is content)', () => {
     expect(screen.getByText('Failed')).toBeDefined();
     expect(screen.getByText('the payer leg did not complete')).toBeDefined();
 
-    const failedButton = document.querySelector('.flow-step[data-status="failed"]');
+    const failedButton = document.querySelector('.step[data-status="failed"]');
     expect(failedButton).not.toBeNull();
   });
 });
@@ -251,7 +251,7 @@ describe('RunInspector — posture forwarding', () => {
     );
 
     const target = document.querySelector(
-      `.flow-step[data-step-id="${validateStep?.id}"]`,
+      `.step[data-step-id="${validateStep?.id}"]`,
     ) as HTMLElement;
     expect(target).not.toBeNull();
     await user.click(target);
@@ -266,7 +266,7 @@ describe('RunInspector — posture forwarding', () => {
     render(<RunInspector runId={ehrRunId} events={ehrEvents} source="live" results={[]} />);
 
     const target = document.querySelector(
-      `.flow-step[data-step-id="${validateStep?.id}"]`,
+      `.step[data-step-id="${validateStep?.id}"]`,
     ) as HTMLElement;
     await user.click(target);
 
@@ -313,20 +313,20 @@ describe('RunInspector — live auto-follow vs. manual pin', () => {
     );
 
     // Single step so far — it's both first and newest.
-    expect(document.querySelector('.flow-step.selected')?.getAttribute('data-step-id')).toBe('2');
+    expect(document.querySelector('.step.sel')?.getAttribute('data-step-id')).toBe('2');
 
     // A second step appends — selection follows the newest.
     rerender(<RunInspector runId="run-live" events={eventsUpTo(4)} source="live" results={[]} />);
-    expect(document.querySelector('.flow-step.selected')?.getAttribute('data-step-id')).toBe('4');
+    expect(document.querySelector('.step.sel')?.getAttribute('data-step-id')).toBe('4');
 
     // Manual pick of the first step.
-    const buttons = Array.from(document.querySelectorAll('.flow-step')) as HTMLElement[];
+    const buttons = Array.from(document.querySelectorAll('.step')) as HTMLElement[];
     const firstButton = buttons.find((b) => b.getAttribute('data-step-id') === '2') as HTMLElement;
     await user.click(firstButton);
-    expect(document.querySelector('.flow-step.selected')?.getAttribute('data-step-id')).toBe('2');
+    expect(document.querySelector('.step.sel')?.getAttribute('data-step-id')).toBe('2');
 
     // Closing the second leg (still no terminal) must not steal the pin.
     rerender(<RunInspector runId="run-live" events={eventsUpTo(5)} source="live" results={[]} />);
-    expect(document.querySelector('.flow-step.selected')?.getAttribute('data-step-id')).toBe('2');
+    expect(document.querySelector('.step.sel')?.getAttribute('data-step-id')).toBe('2');
   });
 });

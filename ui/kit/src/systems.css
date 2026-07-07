@@ -1,0 +1,397 @@
+/* systems.css — the Systems diagnostics page (StatusPanel.tsx, mounted by
+   SystemsPage.tsx): connectivity, identity, child health, verify probes,
+   the patient-app/provider-system launchers, support bundle, and reset.
+   The mockup has no Systems screen to port — these rules are SYNTHESIZED
+   in the established design-system idiom (the `.card` primitive, the
+   uppercase section-label treatment used throughout, the token palette,
+   the 8px-scale spacing already used by shell.css/inspector.css), not a
+   verbatim port. Every class below was previously unstyled (the "labels
+   jammed against status text" complaint this task fixes) or lived as
+   ad-hoc rules in the now-retiring App.css (`.status-panel`,
+   `.child-restart*`, `.support-bundle-error`, `.about-*` — moved here,
+   not duplicated). */
+
+/* ── page grid ────────────────────────────────────────────────────── */
+.systems-page {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.systems-card {
+  padding: 18px 20px;
+}
+
+/* Sections with a list body (Children/Verify) or the About manifest span
+   every column so their rows have room to breathe. */
+.systems-card-wide {
+  grid-column: 1 / -1;
+}
+
+.systems-card h2 {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.systems-card p {
+  margin: 0;
+}
+
+/* ── connectivity ─────────────────────────────────────────────────── */
+.sse-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.sse-indicator::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: currentColor;
+}
+
+.sse-indicator.sse-open {
+  color: var(--green);
+}
+
+.sse-indicator.sse-open::before {
+  box-shadow: 0 0 0 3px var(--green-bg);
+}
+
+.sse-indicator.sse-reconnecting {
+  color: var(--amber);
+}
+
+.sse-indicator.sse-reconnecting::before {
+  box-shadow: 0 0 0 3px var(--amber-bg);
+}
+
+/* ── identity ─────────────────────────────────────────────────────── */
+.identity-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.identity-email {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.identity-holder-id {
+  font: 12px var(--mono);
+  color: var(--ink-2);
+}
+
+.identity-expiry {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── children ─────────────────────────────────────────────────────── */
+.child-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.child-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+.child-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 220px;
+}
+
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--muted);
+}
+
+.state-dot-ready {
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-bg);
+}
+
+.state-dot-starting,
+.state-dot-restarting {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-bg);
+}
+
+.state-dot-failed,
+.state-dot-exited,
+.state-dot-stopped {
+  background: var(--red);
+  box-shadow: 0 0 0 3px var(--red-bg);
+}
+
+.child-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.child-state {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.child-restarts {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The failed-child detail + its optional whole-Kit RestartButton — a
+   full-width sub-row so it never crowds the compact summary line above. */
+.child-failure {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--red-bg);
+  border: 1px solid var(--red-border);
+  border-radius: var(--r);
+}
+
+.child-detail {
+  flex: 1;
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* ── per-child restart control (validator/data-server/br-provider) ──── */
+.child-restart {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.child-restart-error {
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* ── verify the network ──────────────────────────────────────────── */
+.verify-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.verify-probe {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+.verify-probe.verify-ok {
+  border-color: var(--green-border);
+}
+
+.verify-probe.verify-failed {
+  border-color: var(--red-border);
+  background: var(--red-bg);
+}
+
+.probe-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.probe-detail {
+  font-size: 12px;
+  color: var(--ink-2);
+  text-align: right;
+}
+
+.verify-probe.verify-failed .probe-detail {
+  color: var(--red);
+}
+
+.verify-skipped {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 9px 12px;
+}
+
+.verify-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.verify-recheck-error {
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* ── launchers (patient-app / provider-system) ───────────────────── */
+.launcher-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.launcher-row + .launcher-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.launcher-caption {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+/* ── support bundle ───────────────────────────────────────────────── */
+.support-bundle-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* ── reset ────────────────────────────────────────────────────────── */
+.reset-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+.reset-confirm p {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.reset-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.reset-status {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.reset-done {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reset-done p {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.reset-restart-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.reset-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* ── About (AboutPanel.tsx — mounted, not restyled; the section header
+   rule above already reaches its nested <h2>) ─────────────────────── */
+.about-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 4px 0 12px;
+}
+
+.about-fact dt {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.about-fact dd {
+  margin: 0;
+  font: 12.5px var(--mono);
+  color: var(--ink-2);
+  word-break: break-all;
+}
+
+.about-igs {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.about-igs summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.about-igs ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.about-unavailable {
+  font-size: 13px;
+  font-style: italic;
+  color: var(--muted);
+}

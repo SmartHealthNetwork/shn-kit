@@ -1,0 +1,280 @@
+/* boot.css — the "Starting the Kit" staged-progress screen
+   (BootProgress.tsx). Translated from the approved design mockup's
+   stage/substep visuals onto the class/testid names the component AND
+   BootProgress.test.tsx already assert against (`.stage`/
+   `.stage-${state}`/`.stage-header`/`.stage-label`/`.stage-subtitle`/
+   `.stage-dot`/`.stage-spinner`) — never renamed to the mockup's own
+   literal selectors. New classes are added only for the FHIR-servers
+   sub-rows (`.stage-substeps`/`.stage-sub`/`.stage-sub-*`), mirroring the
+   mockup's done/active/waiting substep treatment.
+
+   These rules previously lived, under-migrated, in App.css's own legacy
+   :root token block — moved here onto theme.css's tokens exclusively,
+   matching every other already-restyled surface (shell.css, byo.css,
+   systems.css, scenarios.css, inspector.css). */
+
+/* ── the boot card itself ─────────────────────────────────────────── */
+.boot-progress {
+  max-width: 520px;
+}
+
+/* ── staged list ──────────────────────────────────────────────────── */
+.stage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage {
+  padding: 11px 0;
+}
+
+.stage + .stage {
+  border-top: 1px solid var(--surface-3);
+}
+
+.stage-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* One icon slot per stage — .stage-dot and .stage-spinner are mutually
+   exclusive children of it (never rendered side by side), so it always
+   occupies exactly the dot's 20px box regardless of which is showing. */
+.stage-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* The subtitle/detail/substeps/note all sit under the label, indented to
+   line up past the dot (20px) + header gap (10px) — the mockup achieves
+   this with a 2-column grid; our markup keeps the dot+label together in
+   one header row, so indenting the rows below it reads the same. */
+.stage-subtitle,
+.stage-detail,
+.stage-substeps,
+.stage-note {
+  margin: 4px 0 0;
+  padding-left: 30px;
+}
+
+.stage-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  background: var(--surface);
+  position: relative;
+}
+
+.stage-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.stage-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.stage-detail {
+  font-size: 12px;
+  color: var(--red);
+  font-weight: 500;
+}
+
+.stage-note {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ── done: solid dot + checkmark, muted → ink label goes green ───── */
+.stage.stage-done .stage-dot {
+  background: var(--green);
+  border-color: var(--green);
+}
+.stage.stage-done .stage-dot::after {
+  content: '\2713';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+}
+.stage.stage-done .stage-label {
+  color: var(--ink);
+}
+
+/* ── pending: everything reads muted until its turn comes ───────── */
+.stage.stage-pending .stage-label {
+  color: var(--muted);
+}
+
+/* ── active: the icon slot shows a spinning ring instead of a dot ── */
+.stage.stage-active .stage-label {
+  color: var(--accent-ink);
+}
+
+/* Visible motion on the in-progress stage so a slow boot reads as
+   working, not stuck. */
+.stage-spinner {
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid var(--accent-bg);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: stage-spin 0.8s linear infinite;
+}
+
+@keyframes stage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── failed: red dot, red label, detail line names the failure ──── */
+.stage.stage-failed .stage-dot {
+  background: var(--red);
+  border-color: var(--red);
+}
+.stage.stage-failed .stage-label {
+  color: var(--red);
+}
+
+/* ── FHIR-servers sub-rows ────────────────────────────────────────── */
+.stage-substeps {
+  list-style: none;
+  margin: 8px 0 2px;
+  padding: 8px 0 4px;
+  padding-left: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.stage-sub {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+}
+
+/* One icon slot per sub-row, same mutually-exclusive dot/spinner pattern
+   as the outer stages. */
+.stage-sub-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+
+.stage-sub-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  position: relative;
+}
+
+.stage-sub-label {
+  font-weight: 550;
+  color: var(--ink);
+}
+
+.stage-sub-status {
+  margin-left: auto;
+  font: 11px/1 var(--mono);
+  color: var(--muted);
+}
+
+.stage-sub-done .stage-sub-dot {
+  background: var(--green);
+  border-color: var(--green);
+}
+.stage-sub-done .stage-sub-dot::after {
+  content: '\2713';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+}
+
+.stage-sub-active .stage-sub-label {
+  color: var(--accent-ink);
+}
+.stage-sub-spinner {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent-bg);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: stage-spin 0.8s linear infinite;
+}
+
+.stage-sub-waiting .stage-sub-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* ── failed sub-row: red dot with an ✕, red label + status ─────────
+   Mirrors the done sub-row's dot/checkmark treatment so a terminally-
+   dead FHIR server reads as failed, never as an in-flight spinner. */
+.stage-sub-failed .stage-sub-dot {
+  background: var(--red);
+  border-color: var(--red);
+}
+.stage-sub-failed .stage-sub-dot::after {
+  content: '\2715';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+}
+.stage-sub-failed .stage-sub-label {
+  color: var(--red);
+}
+.stage-sub-failed .stage-sub-status {
+  color: var(--red);
+}
+
+/* ── the slow-boot hint + failure/restart affordance ─────────────── */
+.boot-hint {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 9px 12px;
+}
+
+.stage-action {
+  margin-top: 20px;
+  font-size: 13px;
+  color: var(--ink-2);
+}

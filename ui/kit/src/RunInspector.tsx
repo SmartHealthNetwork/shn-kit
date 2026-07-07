@@ -22,6 +22,7 @@ import type { RunSource } from './useRunEvents';
 import { buildRunStory } from './inspect';
 import { FlowMap } from './FlowMap';
 import { StepDetail, type InspectorView, type ValidatorPosture } from './StepDetail';
+import { StatusChip } from './StatusChip';
 
 export interface RunInspectorProps {
   runId?: string;
@@ -92,7 +93,7 @@ export function RunInspector({
 
   if (runId === undefined) {
     return (
-      <div className="run-inspector empty-state">
+      <div className="insp empty-state">
         <p>Run a scenario to see its flow.</p>
       </div>
     );
@@ -100,7 +101,7 @@ export function RunInspector({
 
   if (source === 'loading') {
     return (
-      <div className="run-inspector loading-state">
+      <div className="insp loading-state">
         <p>Loading this run…</p>
       </div>
     );
@@ -108,7 +109,7 @@ export function RunInspector({
 
   if (source === 'missing') {
     return (
-      <div className="run-inspector missing-state">
+      <div className="insp missing-state">
         <p>This run is no longer available.</p>
       </div>
     );
@@ -119,7 +120,7 @@ export function RunInspector({
   // narrowing honest without a non-null assertion; it can't actually miss.
   if (story === undefined) {
     return (
-      <div className="run-inspector loading-state">
+      <div className="insp loading-state">
         <p>Loading this run…</p>
       </div>
     );
@@ -136,33 +137,37 @@ export function RunInspector({
   const selectedStep = steps.find((s) => s.id === selectedStepId);
 
   return (
-    <div className="run-inspector">
-      <header className="inspector-header">
-        <span className="inspector-header-uc">
-          {`${lane}/${uc}`}
-          {summary?.branch ? ` (${summary.branch})` : ''}
-        </span>
-        {badge && (
-          <span className={`result-badge result-${badge.state}`}>
-            {badge.state === 'passed' ? 'Passed' : 'Failed'}
+    <div className="insp">
+      <div className="insp-head">
+        <div className="insp-title">
+          <span className="mono">
+            {`${lane}/${uc}`}
+            {summary?.branch ? ` (${summary.branch})` : ''}
           </span>
+          <div className="insp-tools">
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={view === 'substrate'}
+                onChange={(e) => setView(e.target.checked ? 'substrate' : 'clinical')}
+              />
+              <span className="sw" />
+              Substrate view
+            </label>
+          </div>
+        </div>
+        {badge && (
+          <div className="insp-meta">
+            <StatusChip state={badge.state} />
+          </div>
         )}
-      </header>
+      </div>
 
       {activeStory.terminal?.type === 'run.failed' && activeStory.terminal.detail && (
         <p className="run-terminal-detail">{activeStory.terminal.detail}</p>
       )}
 
-      <label className="view-toggle">
-        <input
-          type="checkbox"
-          checked={view === 'substrate'}
-          onChange={(e) => setView(e.target.checked ? 'substrate' : 'clinical')}
-        />
-        Substrate view
-      </label>
-
-      <div className="inspector-body">
+      <div className="insp-body">
         <FlowMap
           story={activeStory}
           lane={lane}
@@ -171,7 +176,7 @@ export function RunInspector({
           providerLabel={providerLabel}
         />
 
-        <div className="inspector-detail-pane">
+        <div className="insp-detail">
           {selectedStep ? (
             <StepDetail step={selectedStep} view={view} posture={posture} />
           ) : (

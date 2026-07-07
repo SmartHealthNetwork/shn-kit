@@ -4,6 +4,7 @@
 // can be tested standalone (mirrors UCCards' split).
 import type { JSX } from 'react';
 import type { HistorySummary } from './types';
+import { StatusChip } from './StatusChip';
 
 export interface RunHistoryProps {
   history: HistorySummary[];
@@ -50,9 +51,7 @@ export function RunHistory({
                     {h.branch}
                   </span>
                 )}
-                <span className={`result-badge result-${h.state}`}>
-                  {h.state === 'passed' ? 'Passed' : 'Failed'}
-                </span>
+                <StatusChip state={h.state} />
                 <span className="run-history-time">{new Date(h.time).toLocaleTimeString()}</span>
                 {isComparing && <span className="run-history-comparing-marker">comparing</span>}
               </div>

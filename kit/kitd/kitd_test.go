@@ -1303,7 +1303,7 @@ func TestVerifyPost_TokenGated(t *testing.T) {
 
 // TestVerifyPost_BoundedContext proves the ctx handed to the verify closure
 // carries a deadline no more than verifyTimeout from now — probe funcs must
-// not be able to hang the daemon indefinitely (the same bound §a live network
+// not be able to hang the daemon indefinitely (the same bound a live network
 // call like bootstrap.Verify's discovery GET relies on).
 func TestVerifyPost_BoundedContext(t *testing.T) {
 	const token = "verify-bounded-ctx-token"

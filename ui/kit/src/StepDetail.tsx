@@ -8,6 +8,7 @@ import { useState } from 'react';
 import type { JSX } from 'react';
 import type { Step } from './inspect';
 import { JsonView } from './JsonView';
+import { TickIcon } from './StatusChip';
 
 export type InspectorView = 'clinical' | 'substrate';
 
@@ -85,6 +86,7 @@ function ValidationBadge({
   return (
     <div className="validation-badge-group">
       <span className={`validation-badge ${ok ? 'validation-ok' : 'validation-failed'}`}>
+        {ok && TickIcon}
         {ok ? 'Valid' : 'Invalid'}
       </span>
       {!ok && <span className="validation-detail">{validation}</span>}
@@ -96,7 +98,7 @@ function ValidationBadge({
 export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps): JSX.Element {
   const [search, setSearch] = useState('');
 
-  const rootClassName = `step-detail step-status-${step.status} step-kind-${step.kind}`;
+  const rootClassName = `detail step-status-${step.status} step-kind-${step.kind}`;
   const failureDetail = step.status === 'failed' ? step.response?.detail ?? step.request?.detail : undefined;
   const isValidate = step.kind === 'validate';
 
@@ -125,44 +127,34 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
     return (
       <div className={rootClassName} data-view="substrate">
         <p className="substrate-framing">{SUBSTRATE_FRAMING}</p>
-        <dl className="leg-facts">
-          <div className="leg-fact">
-            <dt>Leg</dt>
-            <dd>{step.correlationId ?? '—'}</dd>
-          </div>
-          <div className="leg-fact">
-            <dt>Direction</dt>
-            <dd>{step.request?.direction ?? step.response?.direction ?? '—'}</dd>
-          </div>
-          <div className="leg-fact">
-            <dt>Counterpart</dt>
-            <dd>{step.counterpart ?? '—'}</dd>
-          </div>
-          <div className="leg-fact">
-            <dt>Request authority</dt>
-            <dd>{step.requestAuthority ?? '—'}</dd>
-          </div>
-          <div className="leg-fact">
-            <dt>Response authority</dt>
-            <dd>{step.responseAuthority ?? '—'}</dd>
-          </div>
+        <dl className="facts">
+          <dt>Leg</dt>
+          <dd>{step.correlationId ?? '—'}</dd>
+          <dt>Direction</dt>
+          <dd>{step.request?.direction ?? step.response?.direction ?? '—'}</dd>
+          <dt>Counterpart</dt>
+          <dd>{step.counterpart ?? '—'}</dd>
+          <dt>Request authority</dt>
+          <dd>{step.requestAuthority ?? '—'}</dd>
+          <dt>Response authority</dt>
+          <dd>{step.responseAuthority ?? '—'}</dd>
           {requestSize && (
-            <div className="leg-fact">
+            <>
               <dt>Request size</dt>
               <dd>{requestSize}</dd>
-            </div>
+            </>
           )}
           {responseSize && (
-            <div className="leg-fact">
+            <>
               <dt>Response size</dt>
               <dd>{responseSize}</dd>
-            </div>
+            </>
           )}
           {step.kind === 'ingress' && step.httpStatus !== undefined && (
-            <div className="leg-fact">
+            <>
               <dt>HTTP status</dt>
               <dd>{step.httpStatus}</dd>
-            </div>
+            </>
           )}
         </dl>
         {step.validation !== undefined && (
@@ -189,7 +181,7 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
     // step kind that isn't a leg; renamed to "Resource"/"Search resource".
     return (
       <div className={rootClassName} data-view="clinical">
-        <p className="step-narration">{step.narration}</p>
+        <p className="narr">{step.narration}</p>
         <label className="json-search-label">
           Search resource
           <input
@@ -199,10 +191,10 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
             onChange={(e) => setSearch(e.target.value)}
           />
         </label>
-        <section className="step-payload request-payload">
-          <h3>Resource</h3>
+        <div className="pane request-payload">
+          <h4>Resource</h4>
           <JsonView value={step.request?.payload} search={search} />
-        </section>
+        </div>
         {step.validation !== undefined && (
           <ValidationBadge validation={step.validation} posture={posture} />
         )}
@@ -212,7 +204,7 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
 
   return (
     <div className={rootClassName} data-view="clinical">
-      <p className="step-narration">{step.narration}</p>
+      <p className="narr">{step.narration}</p>
       {step.kind === 'ingress' && step.httpStatus !== undefined && (
         <p className="http-status">HTTP {step.httpStatus}</p>
       )}
@@ -225,18 +217,18 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
           onChange={(e) => setSearch(e.target.value)}
         />
       </label>
-      <section className="step-payload request-payload">
-        <h3>Request</h3>
+      <div className="pane request-payload">
+        <h4>Request</h4>
         <JsonView value={step.request?.payload} search={search} />
-      </section>
-      <section className="step-payload response-payload">
-        <h3>Response</h3>
+      </div>
+      <div className="pane response-payload">
+        <h4>Response</h4>
         {step.response ? (
           <JsonView value={step.response.payload} search={search} />
         ) : (
           <p className="open-step-note">{OPEN_STEP_NOTE}</p>
         )}
-      </section>
+      </div>
       {step.validation !== undefined && (
         <ValidationBadge validation={step.validation} posture={posture} />
       )}

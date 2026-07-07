@@ -36,6 +36,17 @@ Bundled (minified) into the built `ui/kit` JavaScript served at the app's
 | `react` | MIT | https://github.com/facebook/react/blob/main/LICENSE |
 | `react-dom` | MIT | https://github.com/facebook/react/blob/main/LICENSE |
 
+## Fonts
+
+Bundled as static files and referenced via `@font-face`. Version source:
+`ui/kit/src/fonts/` (vendored `.woff2` files, not an npm runtime
+dependency).
+
+| Component | Shipped as | License | Full text |
+|---|---|---|---|
+| Inter (variable, Latin subset) | `ui/kit/src/fonts/inter-variable-latin.woff2` | SIL Open Font License 1.1 | https://github.com/rsms/inter/blob/master/LICENSE.txt |
+| JetBrains Mono (variable, Latin subset) | `ui/kit/src/fonts/jetbrains-mono-variable-latin.woff2` | SIL Open Font License 1.1 | https://github.com/JetBrains/JetBrainsMono/blob/master/OFL.txt |
+
 ## Electron / Chromium
 
 The app's runtime shell. Version source: `desktop/package.json`'s `electron`

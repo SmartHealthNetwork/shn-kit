@@ -46,8 +46,13 @@ describe('RunHistory — rows', () => {
     expect(screen.getByText('covered')).toBeDefined();
     expect(screen.getByText('conformant/uc03')).toBeDefined();
     expect(screen.getByText(new Date(withBranch.time).toLocaleTimeString())).toBeDefined();
-    expect(screen.getByText('Passed')).toBeDefined();
-    expect(screen.getByText('Failed')).toBeDefined();
+
+    const passedChip = screen.getByText('Passed');
+    expect(passedChip.className).toMatch(/\bchip\b/);
+    expect(passedChip.className).toMatch(/\bpass\b/);
+    const failedChip = screen.getByText('Failed');
+    expect(failedChip.className).toMatch(/\bchip\b/);
+    expect(failedChip.className).toMatch(/\bfail\b/);
   });
 
   it('does not render a branch element for a branchless row', () => {

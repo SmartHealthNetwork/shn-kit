@@ -170,6 +170,11 @@ function hardenNavigation(w: BrowserWindow): void {
 
 function createWindow(session: Session): BrowserWindow {
   const w = new BrowserWindow({
+    width: 1200,
+    height: 820,
+    minWidth: 960,
+    minHeight: 640,
+    title: 'SHN Kit',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
