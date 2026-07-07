@@ -1958,7 +1958,11 @@ func TestSignIn_ResetRacesStaleness(t *testing.T) {
 		RegisterBaseURL: "http://holder.example",
 		Tokens:          tokens,
 		Now:             time.Now,
-		Ports:           []int{freePort(t)},
+		// This test drives two back-to-back sign-ins (the parked/reset flow, then a
+		// fresh one). A single-port pool is racy: the second SignIn can land on the
+		// first flow's not-yet-released loopback listener ("no free loopback port").
+		// Give it several ports so the fresh flow always has one free to bind.
+		Ports: []int{freePort(t), freePort(t), freePort(t)},
 	})
 
 	type signInResult struct {

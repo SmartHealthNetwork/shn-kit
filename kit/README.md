@@ -227,11 +227,14 @@ manifest `shnkitd` serves at `GET /api/about` — Kit semver comes from
 JRE directories follow **Go's own `GOOS`/`GOARCH` naming**, not Temurin's —
 see the flags table above.
 
-When the trio is present, the daemon boots it BEFORE the gateway child (each
-blocking on its own readiness probe), then wires the gateway's
-`FHIR_VALIDATE_URL` at the validator and (absent an explicit
-`--fhir-data-url`/bring-your-own override) `FHIR_DATA_URL` at the seeded data
-server.
+When the trio is present, the daemon boots the **gateway child first**, then the
+trio (validator, seeded data server, br-provider) — each blocking on its own
+readiness probe. Gateway-first boot: the gateway's ready check is its own
+sub-second endpoint, so it clears immediately and the multi-minute Java-server
+first launch becomes the *visible* boot stage. Either way the gateway is wired to
+the trio by config — its `FHIR_VALIDATE_URL` at the validator and (absent an
+explicit `--fhir-data-url`/bring-your-own override) `FHIR_DATA_URL` at the seeded
+data server.
 
 macOS ships one universal `.dmg` (Go binaries `lipo`-merged; both per-arch
 JREs ride along, since a JRE itself can't be lipo-merged). Windows ships an

@@ -12,8 +12,8 @@ are thin Electron wiring — every testable rule lives in the electron-free `con
 From the repo root:
 
 ```sh
-# 1. Build the real gateway binary (the same package test/kitlive's TestMain builds).
-go build -o /tmp/shn-gateway ./gateway/cmd/gateway
+# 1. Build the gateway binary from the pinned shn-gateway module (the kit depends on it).
+(cd kit && go build -o /tmp/shn-gateway github.com/SmartHealthNetwork/shn-gateway/cmd/gateway)
 
 # 2. Build the real shnkitd binary.
 cd kit && go build -o /tmp/shnkitd ./cmd/shnkitd && cd ..
@@ -26,8 +26,8 @@ cd desktop
 cp dev.config.example.json dev.config.json
 # edit dev.config.json: gatewayBin=/tmp/shn-gateway, kitdBin=/tmp/shnkitd,
 # uiDir=<repo>/ui/kit/dist, and EITHER:
-#   - secretsDir: a pre-provisioned shn register/Init bundle dir (kit/README's
-#     "CI provisioning recipe") — skips sign-in entirely, or
+#   - secretsDir: a pre-provisioned secrets bundle dir (e.g. from `shn register`)
+#     — skips sign-in entirely, or
 #   - accountsUrl: the Accounts service to sign in against (e.g. the preview
 #     portal, https://accounts.shn-preview.org) for a fresh interactive
 #     Cognito sign-in.

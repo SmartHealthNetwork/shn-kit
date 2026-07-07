@@ -60,7 +60,8 @@ type StackConfig struct {
 	// ExtraChildren is a generic append-AFTER-gateway extension seam (still
 	// available to any caller); the Java trio (below) is now assembled
 	// directly by BuildStack, keyed on JavaAssetsDir — it does NOT go
-	// through this field, and it is ordered BEFORE the gateway, not after.
+	// through this field, and it is ordered AFTER the gateway (which boots
+	// first), not before.
 	ExtraChildren []supervisor.ChildSpec
 
 	// JavaAssetsDir is the packaged Java trio's asset dir (HAPI validator +
@@ -150,8 +151,8 @@ type ingressClientFile struct {
 // key (and, when the Java trio is configured, a second RS384 keypair for
 // br-provider), materializes ingress-clients.json under StateDir, and
 // assembles the gateway ChildSpec (plus, when JavaAssetsDir != "", the
-// validator/data-server/br-provider ChildSpecs BEFORE it, and
-// cfg.ExtraChildren after it). It spawns no processes and blocks only on
+// validator/data-server/br-provider ChildSpecs AFTER it — the gateway boots
+// first — and cfg.ExtraChildren after those). It spawns no processes and blocks only on
 // local disk I/O.
 func BuildStack(cfg StackConfig) (Stack, error) {
 	trio := cfg.JavaAssetsDir != ""
