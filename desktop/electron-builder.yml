@@ -62,12 +62,24 @@ mac:
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # electron-builder's own built-in notarization step stays off; build/afterSign.js
-  # is the one conditional (env-keyed) path that notarizes when Apple credentials
-  # are present at CI, so the identical build comes out notarized when the
-  # secrets land and is skipped (logged, not thrown) otherwise.
+  # electron-builder's built-in notarization stays off. Instead the mac .dmg is
+  # SIGNED by electron-builder (dmg.sign, below), then notarized + stapled by an
+  # explicit packaging-workflow step (notarytool submits the whole .dmg —
+  # notarizing the container AND the .app inside in one pass — then stapler
+  # attaches the ticket). Signed + notarized + stapled is what lets Gatekeeper
+  # open the .dmg on a plain double-click and what `spctl` asserts. Signing the
+  # .app here (hardened runtime, above) is what makes the notarytool submission
+  # pass. A local `npm run pack`/dir build has no identity, so all of this is inert.
   notarize: false
-afterSign: build/afterSign.js
+
+# DMG signing: electron-builder builds the .dmg then codesigns it with the same
+# Developer ID identity + keychain it used for the .app (dmg-builder's signDmg).
+# Off by default; enabled so the shipped .dmg carries a code signature — in
+# addition to the workflow's notarize + staple — which is what
+# `spctl -a -t open --context context:primary-signature` assesses. Inert on an
+# unsigned/local build (no identity → isSignAllowed false → no-op).
+dmg:
+  sign: true
 
 # Windows ships NSIS .exe only (".msi/NSIS .exe" read as either/or) — one
 # artifact per OS keeps the smoke matrix honest; an .msi is additive later

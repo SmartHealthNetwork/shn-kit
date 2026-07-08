@@ -79,6 +79,42 @@ extract_war() { # extract_war <image> <container-path> <dest>
   mv "$dest.tmp" "$dest"
 }
 
+# Notarization guard (mac): Apple's notary service recursively unpacks the
+# shipped WARs (war -> jar) and REJECTS any unsigned Mach-O it finds inside a
+# nested jar. codesign/osx-sign only reach loose files in the .app bundle, never
+# a binary sealed inside a jar, so those are unsignable in place. sqlite-jdbc
+# bundles per-platform natives incl. Mac .dylibs, but the Kit never uses it (the
+# validator + data server + br-provider all run on H2 -- org.h2.Driver -- never
+# jdbc:sqlite), so those dylibs are dead weight that fails `notarytool` ("not
+# signed with a valid Developer ID certificate"). Strip just the Mac natives from
+# the jar: its Java classes stay (no ClassNotFound if org.sqlite is referenced)
+# and the other platforms' natives stay. Spring Boot's PropertiesLauncher needs
+# nested jars STORED, so the jar is re-inserted uncompressed (-0). Idempotent +
+# asserted, so a cached/rebuilt WAR converges and a future dylib reintroduction
+# fails the build here, not 25 minutes into mac notarization.
+strip_mac_natives_from_war() { # $1 = war path
+  local war="$1" jarent stage
+  jarent="$(unzip -Z1 "$war" 'WEB-INF/lib/sqlite-jdbc-*.jar' 2>/dev/null | head -1 || true)"
+  [ -n "$jarent" ] || { log "notarization strip: no sqlite-jdbc jar in $war — nothing to strip"; return 0; }
+  stage="$(mktemp -d)"
+  ( cd "$stage" && unzip -oq "$war" "$jarent" )
+  if unzip -Z1 "$stage/$jarent" 'org/sqlite/native/Mac/*' 2>/dev/null | grep -q .; then
+    zip -dq "$stage/$jarent" 'org/sqlite/native/Mac/*'
+    ( cd "$stage" && zip -0 -X -q "$war" "$jarent" )
+    log "notarization strip: removed org/sqlite/native/Mac/** from $jarent in $war"
+  else
+    log "notarization strip: $jarent already free of Mac natives"
+  fi
+  # Guard: re-extract and assert no Mac Mach-O survived — an unsigned Mach-O in a
+  # nested jar is exactly what fails Apple notarization.
+  rm -f "$stage/$jarent"
+  ( cd "$stage" && unzip -oq "$war" "$jarent" )
+  if unzip -Z1 "$stage/$jarent" 'org/sqlite/native/Mac/*' 2>/dev/null | grep -q .; then
+    rm -rf "$stage"; die "notarization strip failed: Mac natives still present in $jarent ($war)"
+  fi
+  rm -rf "$stage"
+}
+
 # ── (a) HAPI WAR from the pinned digest ───────────────────────────────────────
 if [ ! -f "$DIST/hapi/main.war" ]; then
   log "extracting HAPI WAR from $HAPI_DIGEST"
@@ -97,6 +133,12 @@ if [ ! -f "$DIST/brprovider/main.war" ]; then
 else
   log "brprovider/main.war present — skip"
 fi
+
+# Make both shipped WARs notarization-clean (see strip_mac_natives_from_war).
+# Runs every build (idempotent) so a WAR cached from before this guard converges;
+# it runs BEFORE prewarm/verify below, so both boot the already-stripped WARs.
+strip_mac_natives_from_war "$DIST/hapi/main.war"
+strip_mac_natives_from_war "$DIST/brprovider/main.war"
 
 # ── (c) IG packages, exact URLs from the two offline-bake Dockerfiles ─────────
 # gateway/deploy/validator/Dockerfile (8) + deploy/multiprocess/hapi.offline.Dockerfile (4)

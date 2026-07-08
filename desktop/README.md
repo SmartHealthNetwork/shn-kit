@@ -132,9 +132,12 @@ notarization key off `CSC_LINK`/`CSC_KEY_PASSWORD` and
 `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID`; the Windows installer is
 Authenticode-signed by a post-build `Azure/artifact-signing-action` step (Azure
 Artifact Signing) keyed off `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`
-— electron-builder builds the installer unsigned. `build/afterSign.js` notarizes
-only when all three Apple env vars are present, otherwise logs and no-ops. `build/entitlements.mac.plist`
-(hardened runtime) is inert unless the build is actually signed. The identical
+— electron-builder builds the installer unsigned. The mac `.dmg` is then notarized
+and stapled by a post-build packaging-workflow step (`xcrun notarytool` submits the
+whole `.dmg`, then `xcrun stapler` attaches the ticket so Gatekeeper opens it on a
+plain double-click); it runs only when all three Apple env vars are present.
+`build/entitlements.mac.plist` (hardened runtime) is inert unless the build is
+actually signed. The identical
 build comes out signed+notarized when the secrets land at CI and unsigned
 locally — `npm run pack` never needs any of this present.
 

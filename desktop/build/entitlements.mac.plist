@@ -1,18 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Hardened-runtime entitlements. Inert unless the
-  build is actually codesigned (CSC_LINK/CSC_KEY_PASSWORD set) -- an unsigned
-  `npm run pack`/`electron-builder --dir` build ignores entitlements
-  entirely, so this file is a signing-ready stub, never a requirement.
+  Hardened-runtime entitlements. Inert unless the build is actually codesigned
+  (CSC_LINK/CSC_KEY_PASSWORD set): an unsigned local `npm run pack` or dir-mode
+  `electron-builder` build ignores entitlements entirely, so this file is a
+  signing-ready stub, never a requirement.
 
-  Why each entry: the app spawns real OS child processes (shnkitd, the
-  gateway binary, and -- with the Java trio bundled -- a jlink'd JRE running
-  the HAPI validator/data-server/br-provider). The JVM needs JIT + unsigned
-  executable memory, and its own dylibs/native libs are not signed by us, so
-  library validation must be disabled for them to load under a hardened
-  runtime. No sandbox entitlement: the app is not (and does not need to be)
-  Mac App Store sandboxed.
+  Why each entry: the app spawns real OS child processes (shnkitd, the gateway
+  binary, and, with the Java trio bundled, a jlink'd JRE running the HAPI
+  validator/data-server/br-provider). The JVM needs JIT + unsigned executable
+  memory, and its own dylibs/native libs are not signed by us, so library
+  validation must be disabled for them to load under a hardened runtime. No
+  sandbox entitlement: the app is not (and does not need to be) Mac App Store
+  sandboxed.
+
+  NB: an XML comment must not contain a literal double-hyphen; Apple's
+  AMFIUnserializeXML parser rejects it at codesign time (invalid XML per the
+  1.0 spec) and fails the whole mac signing step. Keep this prose free of the
+  two-hyphen sequence. See desktop/test/entitlements.test.ts.
 -->
 <plist version="1.0">
   <dict>
