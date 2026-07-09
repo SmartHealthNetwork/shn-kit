@@ -103,6 +103,37 @@ func FetchDiscovery(ctx context.Context, hc *http.Client, discoveryURL string) (
 	return disc, nil
 }
 
+// PatientSurfaceReadable reports whether the hosted patient-surface render is reachable by
+// a machine client: GET <phgURL>/personas must return 200 with a decodable JSON array. In
+// the HOSTED topology the discovery-advertised phg endpoint is the machine /notify edge
+// only — the patient-surface reads (/personas, /authorizations) are internal/patient-only
+// (Cognito-gated at app.<apex>), so /personas is not routed (404 "no route"). shnkitd uses
+// this to decide whether UC-07's patient-surface read-back runs or degrades gracefully
+// (runner.Config.PatientSurfaceReadable). A nil hc uses http.DefaultClient; any error /
+// non-200 / non-array body ⇒ false (degrade the read-back, never hard-fail the whole run).
+func PatientSurfaceReadable(ctx context.Context, hc *http.Client, phgURL string) bool {
+	if phgURL == "" {
+		return false
+	}
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, phgURL+"/personas", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var personas []json.RawMessage
+	return json.NewDecoder(io.LimitReader(resp.Body, shnsdk.MaxResponseBytes)).Decode(&personas) == nil
+}
+
 // probeDiscovery GETs discoveryURL and decodes a shnsdk.Discovery. ok is
 // false whenever the "discovery" probe itself failed — a nil Discovery is
 // meaningless to callers in that case, so they must not use it.

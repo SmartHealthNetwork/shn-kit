@@ -76,6 +76,54 @@ func TestFetchDiscovery_Errors(t *testing.T) {
 	}
 }
 
+// TestPatientSurfaceReadable proves the boot probe that decides whether UC-07's read-back
+// runs or degrades: 200 + JSON array ⇒ readable; the HOSTED notify-only edge (404 "no
+// route") ⇒ not readable; a non-array body or an unreachable host ⇒ not readable.
+func TestPatientSurfaceReadable(t *testing.T) {
+	// Readable: a real patient-surface render (200 + JSON array — even empty).
+	readable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/personas" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"label":"Nakamura","pci":"pci:x"}]`))
+	}))
+	t.Cleanup(readable.Close)
+	if !PatientSurfaceReadable(context.Background(), nil, readable.URL) {
+		t.Fatal("PatientSurfaceReadable(real render) = false, want true")
+	}
+
+	// HOSTED notify-only edge: /personas is not routed → 404 "no route".
+	notifyOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/notify" {
+			w.WriteHeader(http.StatusMethodNotAllowed) // routed, POST-only
+			return
+		}
+		http.Error(w, "no route", http.StatusNotFound)
+	}))
+	t.Cleanup(notifyOnly.Close)
+	if PatientSurfaceReadable(context.Background(), nil, notifyOnly.URL) {
+		t.Fatal("PatientSurfaceReadable(notify-only edge) = true, want false (the desktop UC-07 failure)")
+	}
+
+	// A 200 that is NOT a JSON array (e.g. an HTML error page) ⇒ not readable.
+	notArray := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html>oops</html>`))
+	}))
+	t.Cleanup(notArray.Close)
+	if PatientSurfaceReadable(context.Background(), nil, notArray.URL) {
+		t.Fatal("PatientSurfaceReadable(non-array body) = true, want false")
+	}
+
+	// Empty URL and an unreachable host ⇒ not readable, no panic.
+	if PatientSurfaceReadable(context.Background(), nil, "") {
+		t.Fatal("PatientSurfaceReadable(\"\") = true, want false")
+	}
+	if PatientSurfaceReadable(context.Background(), nil, "http://127.0.0.1:0") {
+		t.Fatal("PatientSurfaceReadable(unreachable) = true, want false")
+	}
+}
+
 // fakeRegistrarSrv serves GET /holders with the fixed holders fixture
 // (mirrors the same FeedPayerRouter precondition used by the substrate's own
 // integration fixtures).

@@ -191,6 +191,43 @@ func TestRun_EHRUC01Covered(t *testing.T) {
 	}
 }
 
+// TestRun_UC07HCPCS_DegradesWhenPatientSurfaceUnreadable proves UC-07's patient-surface
+// read-back is SKIPPED gracefully (the row still PASSES on the PA) when the hosted
+// patient-surface reads are not externally reachable — the desktop failure. It also proves
+// the read-back is not even attempted (the PCI resolver must not run), so a future reachable
+// read-back path (Option 3) can be added without this masking it.
+func TestRun_UC07HCPCS_DegradesWhenPatientSurfaceUnreadable(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /scenario/uc07hcpcs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"paRequired":true,"authNumber":"PA-UC07","validUntil":"2026-12-31"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bus := event.NewBus(fixedClock)
+	rn := New(Config{
+		Driver:                 scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                    bus,
+		PatientSurfaceReadable: false, // HOSTED: the patient-surface reads are internal/patient-only
+		UC07PCI: func() (string, error) {
+			t.Error("UC07PCI resolver ran; the read-back must be skipped when the patient-surface is unreadable")
+			return "", fmt.Errorf("must not be called")
+		},
+	})
+
+	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc07", Branch: "hcpcs"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.State != StatePassed {
+		t.Fatalf("Result.State = %q, want %q (Detail=%q)", res.State, StatePassed, res.Detail)
+	}
+	if !strings.Contains(res.Detail, "PA-UC07") || !strings.Contains(res.Detail, "skipped") {
+		t.Fatalf("Detail = %q, want it to note the auth AND the skipped read-back", res.Detail)
+	}
+}
+
 // ---- Row 2: sequential lock -----------------------------------------------
 
 func TestRun_SequentialLock(t *testing.T) {

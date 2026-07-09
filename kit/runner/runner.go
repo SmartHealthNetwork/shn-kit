@@ -84,7 +84,18 @@ type Config struct {
 	Now      func() time.Time       // nil → time.Now
 	NewRunID func() string          // nil → monotonic "run-N"
 	UC07PCI  func() (string, error) // patient-surface PCI resolver
-	History  Sink                   // nil ok — no run-history capture without one
+	// PatientSurfaceReadable reports whether the hosted patient-surface reads
+	// (/personas, /authorizations) are reachable by this (machine) client. shnkitd
+	// sets it from a boot-time probe: in the HOSTED topology the discovery-advertised
+	// phg endpoint is the machine /notify edge only — the patient-surface reads are
+	// internal/patient-only (Cognito-gated at app.<apex>), so /personas is not routed
+	// (404 "no route"). When false, UC-07's patient-surface read-back is SKIPPED
+	// gracefully (the same "hosted reads are internal-only" principle as AuditURL=="";
+	// the PA itself still succeeds and asserts). This is a REACHABILITY GATE, not a
+	// removal: a future conformant read-back path (PDex Patient Access, reachable by a
+	// machine) simply won't degrade — nothing here forecloses it.
+	PatientSurfaceReadable bool
+	History                Sink // nil ok — no run-history capture without one
 	// BFFURL is the Java trio's br-provider base (kitd.Stack.BRProviderURL) —
 	// "" when no trio is configured. When set, the conformant lane's CRD
 	// prong originates through br-provider's real BFF

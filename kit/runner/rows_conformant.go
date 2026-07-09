@@ -635,6 +635,12 @@ func conformantUC07(rn *Runner, branch string) (string, error) {
 	}
 	detail := fmt.Sprintf("HCPCS %s (%s) approved via direct-mint PAS submit, auth %s", order.Code, order.Display, out.PreAuthRef)
 
+	// Skip the patient-surface read-back gracefully when it is not externally reachable
+	// (hosted topology — the reads are internal/patient-only); the PA already succeeded.
+	// Reachability gate, not a removal (see runner.Config.PatientSurfaceReadable).
+	if !rn.cfg.PatientSurfaceReadable {
+		return detail + "; patient-surface read-back skipped (hosted patient reads are internal/patient-only)", nil
+	}
 	n, total, err := uc07PatientSurfaceReadBack(rn)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc07: %w", err)

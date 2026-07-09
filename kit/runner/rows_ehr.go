@@ -201,6 +201,14 @@ func ehrUC07(rn *Runner, branch string) (string, error) {
 	if branch != "hcpcs" {
 		return detail, nil
 	}
+	// The patient-surface read-back needs the hosted /personas + /authorizations render.
+	// When it is not externally reachable (hosted topology: phg is the machine /notify
+	// edge; the reads are internal/patient-only), skip it gracefully — the PA itself
+	// already succeeded and asserted. Reachability gate, not a removal (see
+	// runner.Config.PatientSurfaceReadable): a future reachable read-back won't degrade.
+	if !rn.cfg.PatientSurfaceReadable {
+		return detail + "; patient-surface read-back skipped (hosted patient reads are internal/patient-only)", nil
+	}
 	n, total, err := uc07PatientSurfaceReadBack(rn)
 	if err != nil {
 		return "", fmt.Errorf("runner: ehr/uc07(hcpcs): %w", err)

@@ -357,6 +357,15 @@ func main() {
 				log.Printf("shnkitd: discovery published no PHG endpoint (UC-07 patient-surface read-back unavailable)")
 			}
 		}
+		// Boot probe: is the patient-surface render reachable by this machine client? In the
+		// HOSTED topology the phg endpoint is the machine /notify edge only (the reads are
+		// internal/patient-only), so /personas 404s ("no route"). When it is not readable,
+		// UC-07's read-back degrades gracefully instead of hard-failing (hosted reads are
+		// internal-only, same principle as the audit read). Reachability gate, not a removal.
+		pctx, pcancel := context.WithTimeout(ctx, 15*time.Second)
+		patientSurfaceReadable := bootstrap.PatientSurfaceReadable(pctx, nil, resolvedPHGURL)
+		pcancel()
+		log.Printf("shnkitd: patient-surface reads externally reachable: %v", patientSurfaceReadable)
 		scfg := kitd.StackConfig{
 			GatewayBinary: *gatewayBin,
 			StateDir:      *stateDir,
@@ -521,13 +530,14 @@ func main() {
 		}
 
 		d.SetRunner(runner.New(runner.Config{
-			Driver:   driver,
-			Bus:      bus,
-			Relay:    rly,
-			AuditURL: *auditURL,
-			UC07PCI:  resolveUC07PCI,
-			History:  runhistory.NewRecorder(histStore, bus, time.Now, log.Printf),
-			BFFURL:   stack.BRProviderURL, // "" when no trio
+			Driver:                 driver,
+			Bus:                    bus,
+			Relay:                  rly,
+			AuditURL:               *auditURL,
+			UC07PCI:                resolveUC07PCI,
+			PatientSurfaceReadable: patientSurfaceReadable,
+			History:                runhistory.NewRecorder(histStore, bus, time.Now, log.Printf),
+			BFFURL:                 stack.BRProviderURL, // "" when no trio
 		}))
 
 		b, ok := m.Bundle()
