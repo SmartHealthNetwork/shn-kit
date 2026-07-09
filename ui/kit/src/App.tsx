@@ -11,6 +11,7 @@ import type {
   KitEvent,
   Lane,
   Probe,
+  Register,
   RunResult,
   StatusResponse,
 } from './types';
@@ -209,6 +210,10 @@ export default function App() {
   const [runsLive, setRunsLive] = useState(false);
   const [results, setResults] = useState<RunResult[]>([]);
   const [lane, setLane] = useState<Lane>('conformant');
+  // The scenario-card detail level (Overview | Technical). A single global
+  // choice, threaded to UCCards; kept in App (not UCCards-local) so it survives
+  // nav changes, mirroring how `lane` is held. Defaults to the plain register.
+  const [register, setRegister] = useState<Register>('overview');
 
   // The active workbench destination — which surface fills the working
   // column (nav rail · working column · persistent inspector). The
@@ -705,6 +710,8 @@ export default function App() {
             {nav === 'scenarios' && (
               <UCCards
                 lane={lane}
+                register={register}
+                onRegister={setRegister}
                 events={reconciledEvents}
                 latestByRow={latestByRow}
                 disabledReason={disabledReason}

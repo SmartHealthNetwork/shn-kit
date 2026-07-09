@@ -61,6 +61,11 @@ export interface AboutManifest {
 
 export type Lane = 'ehr' | 'conformant';
 
+// The scenario-card detail level: 'overview' is the plain-language outcome for
+// any reader; 'technical' is the Da Vinci-mechanics register for integrators.
+// A single global choice (RegisterSwitch) flips every card + lane blurb at once.
+export type Register = 'overview' | 'technical';
+
 export interface RunResult {
   runId: string;
   lane: Lane;

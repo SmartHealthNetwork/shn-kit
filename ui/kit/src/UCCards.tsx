@@ -5,14 +5,21 @@
 // lanes offer different pickers per row).
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
-import type { KitEvent, Lane, RunResult } from './types';
+import type { KitEvent, Lane, Register, RunResult } from './types';
 import type { EventsView } from './useEvents';
 import { postRun, ApiError } from './api';
 import { UC_METAS, LANE_LABELS, type UCMeta } from './ucmeta';
+import { RegisterSwitch } from './RegisterSwitch';
 import { StatusChip } from './StatusChip';
 
 export interface UCCardsProps {
   lane: Lane;
+  // Detail level for the card descriptions + the lane blurb caption. A single
+  // global choice (App owns it), flipped by the RegisterSwitch in the col-head.
+  // Optional with an 'overview' default so standalone renders (tests) need not
+  // thread it; the real app always passes it.
+  register?: Register;
+  onRegister?(r: Register): void;
   events: EventsView;
   latestByRow(lane: Lane, uc: string, branch: string): RunResult | undefined;
   disabledReason?: string; // (a)-(c) reasons, computed by App
@@ -56,6 +63,7 @@ function displayTag(uc: string): string {
 interface UCCardProps {
   meta: UCMeta;
   lane: Lane;
+  register: Register;
   disabled: boolean;
   // This row's run is the one currently occupying the runner's sequential
   // lock — derived by the parent from the SAME event stream already
@@ -70,6 +78,7 @@ interface UCCardProps {
 function UCCard({
   meta,
   lane,
+  register,
   disabled,
   isActiveRun,
   latestByRow,
@@ -87,7 +96,11 @@ function UCCard({
   // SSE round-trip.
   const [posting, setPosting] = useState(false);
 
-  const provenance = lane === 'conformant' ? meta.provenance?.conformant : undefined;
+  // Provenance is an honest "this leg is a stand-in on this lane" mechanics
+  // caveat: conformant lane AND the Technical register only (noise for the
+  // plain reader).
+  const provenance =
+    lane === 'conformant' && register === 'technical' ? meta.provenance?.conformant : undefined;
   const selectedOption = options?.find((o) => o.value === branch);
   const showReadBackHint = selectedOption?.label.toLowerCase().includes('read-back') ?? false;
   const latest = latestByRow(lane, meta.uc, branch);
@@ -102,7 +115,7 @@ function UCCard({
       <div className="uc">
         <div className="tag">{displayTag(meta.uc)}</div>
         <div className="name">{meta.title}</div>
-        <p className="desc">{meta.description}</p>
+        <p className="desc">{meta.description[register]}</p>
         {provenance && <span className="provenance-tag">{provenance}</span>}
       </div>
 
@@ -161,6 +174,8 @@ function UCCard({
 
 export function UCCards({
   lane,
+  register = 'overview',
+  onRegister,
   events,
   latestByRow,
   disabledReason,
@@ -220,12 +235,17 @@ export function UCCards({
   return (
     <div className="col">
       <div className="col-head">
-        <h1>Prior-authorization scenarios</h1>
-        {/* The lane switch itself lives in TopBar's ModeSwitch — this
-            caption is the honest, fuller framing for whichever lane is
-            currently selected; the switch's own concise chip label is not
-            a substitute for it. */}
-        <p className="mode-caption">{LANE_LABELS[lane].blurb}</p>
+        <div className="col-head-row">
+          <h1>Prior-authorization scenarios</h1>
+          {/* The global detail-level toggle. The lane switch itself lives in
+              TopBar's ModeSwitch; this one flips every card + the caption
+              below between the plain and Da Vinci-mechanics registers. */}
+          <RegisterSwitch register={register} onRegister={onRegister ?? (() => undefined)} />
+        </div>
+        {/* The honest, fuller framing for whichever lane is currently
+            selected, in the currently-selected register; the ModeSwitch's own
+            concise chip label is not a substitute for it. */}
+        <p className="mode-caption">{LANE_LABELS[lane].blurb[register]}</p>
         {banner}
       </div>
 
@@ -242,6 +262,7 @@ export function UCCards({
               key={`${meta.uc}-${lane}`}
               meta={meta}
               lane={lane}
+              register={register}
               disabled={disabled}
               isActiveRun={activeRunStarted?.lane === lane && activeRunStarted?.uc === meta.uc}
               latestByRow={latestByRow}

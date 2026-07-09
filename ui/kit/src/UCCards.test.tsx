@@ -80,7 +80,10 @@ describe('UCCards', () => {
       />,
     );
 
-    expect(screen.getByText(LANE_LABELS.ehr.blurb)).toBeDefined();
+    // Default register is Overview, so the caption is the overview blurb. The
+    // RegisterSwitch is a role="group" of toggle buttons, NOT a tablist/tab —
+    // the lane tablist genuinely moved to TopBar's ModeSwitch.
+    expect(screen.getByText(LANE_LABELS.ehr.blurb.overview)).toBeDefined();
     expect(screen.queryByRole('tablist')).toBeNull();
     expect(screen.queryByRole('tab')).toBeNull();
 
@@ -92,7 +95,7 @@ describe('UCCards', () => {
         onSelectRun={vi.fn()}
       />,
     );
-    expect(screen.getByText(LANE_LABELS.conformant.blurb)).toBeDefined();
+    expect(screen.getByText(LANE_LABELS.conformant.blurb.overview)).toBeDefined();
   });
 
   it('the column header names the scenario list', () => {
@@ -394,31 +397,61 @@ describe('UCCards', () => {
     expect(within(screen.getByTestId('card-uc04')).queryByText(/running/i)).toBeNull();
   });
 
-  it('provenance tags render in conformant for uc01/uc05/uc06/uc07 only; none render in ehr', () => {
+  // The four conformant provenance tags carry an honest "this leg is a stand-in
+  // on this lane" disclosure. They are Technical-register only (mechanics/
+  // caveats, noise for the plain reader), conformant-lane only, and carry NO
+  // internal deferral IDs (CXL-D11 / D-2RI-1 / D-2RI-6 were scrubbed).
+  const PROVENANCE = [
+    "Eligibility isn't a Da Vinci prior-auth operation, so this lane runs the same coverage check as the plain-EHR lane.",
+    "On this lane the federated (CDex) query runs gateway-to-gateway, so the consent-denied branch isn't exercised here.",
+    "The DTR questionnaire package is fetched through the real Da Vinci flow; the manual clinician-facing DTR app isn't part of this run.",
+    "Also reads the approval back from the patient's Smart Health account, where that surface is reachable.",
+  ];
+
+  it('provenance tags render in conformant + Technical only (uc01/05/06/07), never in Overview, never in ehr, and carry no internal IDs', () => {
     const { rerender } = render(
       <UCCards
         lane="conformant"
+        register="technical"
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
       />,
     );
 
-    expect(
-      screen.getByText("SHN-originated gap-fill — eligibility isn't a Da Vinci ingress operation"),
-    ).toBeDefined();
-    expect(
-      screen.getByText(
-        'CDex evidence carried on the amended re-POST; the federated-query leg is SHN-bracketed, no consent branch (CXL-D11)',
-      ),
-    ).toBeDefined();
-    expect(
-      screen.getByText('Real $questionnaire-package via the ingress; manual DTR SPA deferred (D-2RI-1)'),
-    ).toBeDefined();
-    expect(screen.getByText('Hybrid patient-surface read-back (D-2RI-6 analog)')).toBeDefined();
-    expect(screen.queryAllByText(/^—$/)).toHaveLength(0);
+    for (const p of PROVENANCE) expect(screen.getByText(p)).toBeDefined();
+    // The scrubbed internal deferral IDs must not reappear anywhere.
+    for (const id of ['CXL-D11', 'D-2RI-1', 'D-2RI-6', 'gap-fill', 'SHN-bracketed']) {
+      expect(screen.queryByText(new RegExp(id))).toBeNull();
+    }
 
+    // Same lane, Overview register: the tags are hidden.
     rerender(
+      <UCCards
+        lane="conformant"
+        register="overview"
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+    for (const p of PROVENANCE) expect(screen.queryByText(p)).toBeNull();
+
+    // ehr lane never shows provenance, even in Technical.
+    rerender(
+      <UCCards
+        lane="ehr"
+        register="technical"
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+    for (const p of PROVENANCE) expect(screen.queryByText(p)).toBeNull();
+  });
+
+  it('defaults to the Overview register: plain-language card copy shows, Da Vinci-mechanics copy does not', () => {
+    render(
       <UCCards
         lane="ehr"
         events={events()}
@@ -426,8 +459,70 @@ describe('UCCards', () => {
         onSelectRun={vi.fn()}
       />,
     );
-    expect(screen.queryByText("SHN-originated gap-fill — eligibility isn't a Da Vinci ingress operation")).toBeNull();
-    expect(screen.queryByText('Hybrid patient-surface read-back (D-2RI-6 analog)')).toBeNull();
+
+    // uc03 Overview vs Technical discriminators.
+    expect(screen.getByText(/filled in from the patient's chart/i)).toBeDefined();
+    expect(screen.queryByText(/CRD flags the order as needing prior authorization/i)).toBeNull();
+  });
+
+  it('the global Technical register swaps every card to the Da Vinci-mechanics copy', () => {
+    render(
+      <UCCards
+        lane="ehr"
+        register="technical"
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+
+    // uc03 flips...
+    expect(screen.getByText(/CRD flags the order as needing prior authorization/i)).toBeDefined();
+    expect(screen.queryByText(/filled in from the patient's chart/i)).toBeNull();
+    // ...and so does uc08 — one switch moves all cards together.
+    expect(screen.getByText(/the conservative-therapy answers fall below the policy threshold/i)).toBeDefined();
+    expect(screen.queryByText(/the documented conservative therapy falls short/i)).toBeNull();
+  });
+
+  it('the lane blurb caption follows the register', () => {
+    const { rerender } = render(
+      <UCCards
+        lane="ehr"
+        register="overview"
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(LANE_LABELS.ehr.blurb.overview)).toBeDefined();
+
+    rerender(
+      <UCCards
+        lane="ehr"
+        register="technical"
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(LANE_LABELS.ehr.blurb.technical)).toBeDefined();
+  });
+
+  it('renders the register switch and toggling it calls onRegister', async () => {
+    const onRegister = vi.fn();
+    render(
+      <UCCards
+        lane="ehr"
+        register="overview"
+        onRegister={onRegister}
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Technical' }));
+    expect(onRegister).toHaveBeenCalledWith('technical');
   });
 
   it('uc07 in ehr with hcpcs selected shows the patient read-back hint', async () => {
