@@ -1,7 +1,7 @@
 {
   "name": "shn-kit-desktop",
   "private": true,
-  "version": "0.9.3",
+  "version": "0.9.4",
   "main": "dist/main.js",
   "scripts": {
     "test": "vitest run",

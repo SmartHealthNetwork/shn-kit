@@ -35,6 +35,47 @@ func fakeDiscoverySrv(t *testing.T, registrarURL string) *httptest.Server {
 	return srv
 }
 
+// TestFetchDiscovery_ResolvesPHG proves shnkitd can read the patient-surface (PHG)
+// endpoint off discovery — the resolution cmd/shnkitd uses to wire the scenario driver's
+// UC-07 read-back (without it the driver hits "" + /personas → the desktop UC-07 failure).
+func TestFetchDiscovery_ResolvesPHG(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(shnsdk.Discovery{
+			Endpoints: shnsdk.DiscoveryEndpoints{
+				Registrar: "https://registrar.example",
+				PHG:       "https://phg.example",
+				Consent:   "https://consent.example",
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	disc, err := FetchDiscovery(context.Background(), nil, srv.URL)
+	if err != nil {
+		t.Fatalf("FetchDiscovery: %v", err)
+	}
+	if disc.Endpoints.PHG != "https://phg.example" {
+		t.Fatalf("Endpoints.PHG = %q, want https://phg.example", disc.Endpoints.PHG)
+	}
+}
+
+// TestFetchDiscovery_Errors proves the fetch surfaces transport/status failures (so
+// shnkitd's best-effort resolution logs and falls back rather than panicking).
+func TestFetchDiscovery_Errors(t *testing.T) {
+	// Non-200.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(bad.Close)
+	if _, err := FetchDiscovery(context.Background(), nil, bad.URL); err == nil {
+		t.Fatal("FetchDiscovery(500): want error, got nil")
+	}
+	// Unreachable host.
+	if _, err := FetchDiscovery(context.Background(), nil, "http://127.0.0.1:0/discovery"); err == nil {
+		t.Fatal("FetchDiscovery(unreachable): want error, got nil")
+	}
+}
+
 // fakeRegistrarSrv serves GET /holders with the fixed holders fixture
 // (mirrors the same FeedPayerRouter precondition used by the substrate's own
 // integration fixtures).

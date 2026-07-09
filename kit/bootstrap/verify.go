@@ -75,6 +75,34 @@ func Verify(ctx context.Context, hc *http.Client, discoveryURL, holderID string,
 	return probes
 }
 
+// FetchDiscovery GETs discoveryURL and decodes the shnsdk.Discovery descriptor. It is the
+// shared fetch used by the boot Verify probe (probeDiscovery) AND by shnkitd's endpoint
+// resolution (cmd/shnkitd resolves endpoints.PHG for the scenario driver's UC-07
+// patient-surface read-back, matching how the gateway resolves its own endpoints from
+// discovery). A nil hc uses http.DefaultClient.
+func FetchDiscovery(ctx context.Context, hc *http.Client, discoveryURL string) (shnsdk.Discovery, error) {
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	if err != nil {
+		return shnsdk.Discovery{}, err
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return shnsdk.Discovery{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return shnsdk.Discovery{}, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var disc shnsdk.Discovery
+	if err := json.NewDecoder(io.LimitReader(resp.Body, shnsdk.MaxResponseBytes)).Decode(&disc); err != nil {
+		return shnsdk.Discovery{}, err
+	}
+	return disc, nil
+}
+
 // probeDiscovery GETs discoveryURL and decodes a shnsdk.Discovery. ok is
 // false whenever the "discovery" probe itself failed — a nil Discovery is
 // meaningless to callers in that case, so they must not use it.
@@ -83,19 +111,8 @@ func probeDiscovery(ctx context.Context, hc *http.Client, discoveryURL string) (
 		return Probe{Name: "discovery", OK: false, Detail: "discovery: " + detail}, shnsdk.Discovery{}, false
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	disc, err := FetchDiscovery(ctx, hc, discoveryURL)
 	if err != nil {
-		return fail(err.Error())
-	}
-	resp, err := hc.Do(req)
-	if err != nil {
-		return fail(err.Error())
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fail(fmt.Sprintf("status %d", resp.StatusCode))
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, shnsdk.MaxResponseBytes)).Decode(&disc); err != nil {
 		return fail(err.Error())
 	}
 	if disc.Endpoints.Registrar == "" {

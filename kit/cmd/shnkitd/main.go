@@ -334,13 +334,36 @@ func main() {
 		case <-ctx.Done():
 			return
 		}
+		// Resolve the patient-surface (PHG) endpoint from discovery for the scenario
+		// driver's UC-07 read-back, unless --phg-url pinned it. The gateway resolves its
+		// OWN PHG from discovery (gateway/app.go firstNonEmpty(cfg.PHGURL, endpoints.PHG)),
+		// but the scenario driver runs HERE in shnkitd and needs the same resolution —
+		// otherwise ResolvePersonaPCI/GetAuthorizations hit "" + /personas →
+		// "unsupported protocol scheme" (the desktop UC-07 failure: the packaged
+		// kit.config.json ships no phgUrl). Best-effort: a discovery miss leaves PHGURL as
+		// the flag value; the gateway still resolves its own from discovery.
+		resolvedPHGURL := *phgURL
+		if resolvedPHGURL == "" && *discoveryURL != "" {
+			dctx, dcancel := context.WithTimeout(ctx, 15*time.Second)
+			disc, derr := bootstrap.FetchDiscovery(dctx, nil, *discoveryURL)
+			dcancel()
+			switch {
+			case derr != nil:
+				log.Printf("shnkitd: resolve PHG from discovery: %v (UC-07 patient-surface read-back unavailable until reachable)", derr)
+			case disc.Endpoints.PHG != "":
+				resolvedPHGURL = disc.Endpoints.PHG
+				log.Printf("shnkitd: resolved patient-surface (PHG) endpoint from discovery: %s", resolvedPHGURL)
+			default:
+				log.Printf("shnkitd: discovery published no PHG endpoint (UC-07 patient-surface read-back unavailable)")
+			}
+		}
 		scfg := kitd.StackConfig{
 			GatewayBinary: *gatewayBin,
 			StateDir:      *stateDir,
 			SecretsDir:    secretsDir, // the bundle home resolved above (--secrets or {state-dir}/secrets)
 			DiscoveryURL:  *discoveryURL,
 			AuditURL:      *auditURL,
-			PHGURL:        *phgURL,
+			PHGURL:        resolvedPHGURL,
 			ConsentURL:    *consentURL,
 			FHIRDataURL:   *fhirDataURL,
 			FakeValidator: *fakeValidator,
