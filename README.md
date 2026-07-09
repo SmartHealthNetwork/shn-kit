@@ -8,14 +8,13 @@ real from a desktop machine — no Docker, no engineering help.
 Installers are attached to [Releases](https://github.com/SmartHealthNetwork/shn-kit/releases):
 a macOS universal `.dmg` (Apple Silicon + Intel) and a Windows NSIS `.exe`.
 
-> **Early access — these builds are UNSIGNED.** Code signing is not yet in place, so your OS
-> will warn you the app is from an unidentified developer. To open it anyway:
-> - **macOS:** right-click (or Control-click) **SHN Kit** → **Open** → **Open** in the dialog.
->   If that is still blocked, run once after installing:
->   `xattr -dr com.apple.quarantine "/Applications/SHN Kit.app"`.
-> - **Windows:** on the SmartScreen prompt, click **More info** → **Run anyway**.
->
-> Signed builds will replace these once code signing lands.
+Both installers are code-signed and notarized — download, open, and run, with no
+security-warning workarounds:
+- **macOS:** signed with an Apple Developer ID certificate and notarized by Apple; a
+  plain double-click opens it, with no Gatekeeper block.
+- **Windows:** Authenticode-signed (publisher "Smart Health Network PBC"); it installs
+  without an "Unknown publisher" warning. On a brand-new download SmartScreen may still
+  prompt until the file builds reputation — click **More info** → **Run anyway**.
 
 ## What's inside
 
@@ -44,11 +43,10 @@ synthetic — no PHI, ever.
   Docker and a system Temurin 21 JDK; see `kit/README.md`'s "Packaging"
   section.
 
-Release installers are built from exactly this tree by the maintainers' CI.
-(Current early-access Releases are unsigned; signing is conditional and switches
-on when the signing secrets are present — see `desktop/README.md`.) Building from
-source yourself also produces a locally runnable build — see `desktop/README.md`'s
-dev recipe.
+Release installers are built from exactly this tree by the maintainers' CI, then
+code-signed and notarized (macOS Developer ID + Apple notarization; Windows
+Authenticode — see `desktop/README.md`). Building from source yourself produces a
+locally runnable, unsigned build — see `desktop/README.md`'s dev recipe.
 
 ## Privacy
 
