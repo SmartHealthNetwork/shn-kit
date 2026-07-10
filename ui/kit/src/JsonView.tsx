@@ -5,6 +5,13 @@
 // matches are wrapped in <mark className="json-match"> and every ancestor
 // path of a match is force-expanded, even past defaultDepth, so a hit is
 // always visible without the caller hand-driving toggles.
+//
+// Open-state is CENTRALIZED here (not per-node): a global `mode`
+// (default | all | none) sets the baseline every node reads, and per-node
+// `overrides` (keyed by path) record explicit clicks. This is what lets
+// "Expand all" / "Collapse all" flip the whole tree at once — a per-node
+// useState can't be reached from the top — while an individual toggle still
+// wins over the global baseline, and a search hit force-expands over both.
 import { useMemo, useState } from 'react';
 import type { JSX } from 'react';
 
@@ -13,6 +20,12 @@ export interface JsonViewProps {
   search?: string;
   defaultDepth?: number;
 }
+
+// The global open baseline. 'default' = open while depth < defaultDepth (the
+// original behavior); 'all' = every container open; 'none' = only the root
+// open (descendants collapsed) so "Collapse all" still shows the top-level
+// structure rather than a bare `{…}`.
+type OpenMode = 'default' | 'all' | 'none';
 
 function isContainer(value: unknown): value is Record<string, unknown> | unknown[] {
   return typeof value === 'object' && value !== null;
@@ -28,6 +41,14 @@ function formatPrimitive(value: unknown): string {
   if (value === null) return 'null';
   if (typeof value === 'string') return value;
   return String(value);
+}
+
+// baselineOpen is the open state a node takes from the global `mode` alone,
+// before per-node overrides or search force-expansion are applied.
+function baselineOpen(mode: OpenMode, depth: number, defaultDepth: number): boolean {
+  if (mode === 'all') return true;
+  if (mode === 'none') return depth === 0;
+  return depth < defaultDepth;
 }
 
 interface MatchInfo {
@@ -84,13 +105,23 @@ interface JsonNodeProps {
   defaultDepth: number;
   expandPaths: Set<string>;
   search: string;
+  mode: OpenMode;
+  overrides: Record<string, boolean>;
+  onToggle(path: string, nextOpen: boolean): void;
 }
 
-function JsonNode({ label, value, depth, path, defaultDepth, expandPaths, search }: JsonNodeProps): JSX.Element {
-  // Always called (rules of hooks) — unused on the leaf branch below, but a
-  // node's container/leaf-ness is stable for a given tree position so this
-  // never actually toggles branches across re-renders in practice.
-  const [manualOpen, setManualOpen] = useState<boolean | undefined>(undefined);
+function JsonNode({
+  label,
+  value,
+  depth,
+  path,
+  defaultDepth,
+  expandPaths,
+  search,
+  mode,
+  overrides,
+  onToggle,
+}: JsonNodeProps): JSX.Element {
   const needle = search.trim().toLowerCase();
   const keyMatches = needle !== '' && label !== undefined && label.toLowerCase().includes(needle);
 
@@ -116,8 +147,13 @@ function JsonNode({ label, value, depth, path, defaultDepth, expandPaths, search
   }
 
   const forcedOpen = expandPaths.has(path);
-  const defaultOpen = depth < defaultDepth;
-  const open = manualOpen !== undefined ? manualOpen || forcedOpen : defaultOpen || forcedOpen;
+  // Precedence: a search hit force-opens; else an explicit per-node click;
+  // else the global mode's baseline.
+  const open = forcedOpen
+    ? true
+    : path in overrides
+      ? overrides[path]
+      : baselineOpen(mode, depth, defaultDepth);
   const isArray = Array.isArray(value);
   const entries = containerEntries(value);
 
@@ -128,7 +164,7 @@ function JsonNode({ label, value, depth, path, defaultDepth, expandPaths, search
         className="json-toggle"
         aria-expanded={open}
         aria-label={open ? `collapse ${label ?? 'root'}` : `expand ${label ?? 'root'}`}
-        onClick={() => setManualOpen(!open)}
+        onClick={() => onToggle(path, !open)}
       >
         {open ? '▾' : '▸'}
       </button>
@@ -152,6 +188,9 @@ function JsonNode({ label, value, depth, path, defaultDepth, expandPaths, search
               defaultDepth={defaultDepth}
               expandPaths={expandPaths}
               search={search}
+              mode={mode}
+              overrides={overrides}
+              onToggle={onToggle}
             />
           ))}
         </div>
@@ -167,11 +206,41 @@ export function JsonView({ value, search = '', defaultDepth = 2 }: JsonViewProps
   const { expandPaths, count } = useMemo(() => computeMatches(value, search), [value, search]);
   const trimmedSearch = search.trim();
 
+  // Global open baseline + per-node explicit toggles. "Expand/Collapse all"
+  // flips the baseline and clears the overrides (so a previously hand-collapsed
+  // node re-opens under Expand all); a single toggle records an override that
+  // wins over the baseline until the next Expand/Collapse all.
+  const [mode, setMode] = useState<OpenMode>('default');
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const handleToggle = (path: string, nextOpen: boolean) =>
+    setOverrides((prev) => ({ ...prev, [path]: nextOpen }));
+  const setAll = (next: OpenMode) => {
+    setMode(next);
+    setOverrides({});
+  };
+
+  const showControls = isContainer(value); // nothing to expand/collapse on a primitive root
+  const showSummary = trimmedSearch !== '';
+
   return (
     <div className="json-view">
-      {trimmedSearch !== '' && (
-        <div className="json-search-summary">
-          {count > 0 ? `${count} match${count === 1 ? '' : 'es'}` : 'no matches'}
+      {(showControls || showSummary) && (
+        <div className="json-controls">
+          {showControls && (
+            <>
+              <button type="button" className="json-control" onClick={() => setAll('all')}>
+                Expand all
+              </button>
+              <button type="button" className="json-control" onClick={() => setAll('none')}>
+                Collapse all
+              </button>
+            </>
+          )}
+          {showSummary && (
+            <span className="json-search-summary">
+              {count > 0 ? `${count} match${count === 1 ? '' : 'es'}` : 'no matches'}
+            </span>
+          )}
         </div>
       )}
       <JsonNode
@@ -181,6 +250,9 @@ export function JsonView({ value, search = '', defaultDepth = 2 }: JsonViewProps
         defaultDepth={defaultDepth}
         expandPaths={expandPaths}
         search={search}
+        mode={mode}
+        overrides={overrides}
+        onToggle={handleToggle}
       />
     </div>
   );

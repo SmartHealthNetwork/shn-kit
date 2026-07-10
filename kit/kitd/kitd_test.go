@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SmartHealthNetwork/shn-gateway/fhirseed"
 	scenariodriver "github.com/SmartHealthNetwork/shn-gateway/scenariodriver"
 	shnsdk "github.com/SmartHealthNetwork/shn-sdk"
 
@@ -2912,17 +2913,15 @@ func TestBYOGet_DemoPersonas_HangingSentinelBounded(t *testing.T) {
 }
 
 // TestConformantLaneSentinelMember_PinnedInSeedArtifact cross-pins
-// conformantLaneSentinelMember against the COMMITTED
-// kit/seed/demo-personas-conformant.json bytes: kit
-// never imports the root module's internal/fhirseed census list (the
-// boundary fence, kit/seed/doc.go) — the seed artifact itself is the
-// kit-local ground truth this sentinel must track. Fails loudly if a future
-// regen of the seed artifact ever drops MBR-COVERED.
+// conformantLaneSentinelMember against the conformant-lane download bundle
+// served at GET /api/byo/seed-bundle/conformant (fhirseed.ConformantSeedBundle,
+// the frozen bytes shipped by the shn-gateway module): the sentinel is the
+// GET /api/byo tri-state's "does your connected server carry the demo
+// personas" check, so it must actually be present in the artifact a
+// bring-your-own operator downloads and POSTs. Fails loudly if a future bake
+// of the artifact ever drops MBR-COVERED.
 func TestConformantLaneSentinelMember_PinnedInSeedArtifact(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "seed", "demo-personas-conformant.json"))
-	if err != nil {
-		t.Fatalf("read kit/seed/demo-personas-conformant.json: %v", err)
-	}
+	b := fhirseed.ConformantSeedBundle()
 	var bundle struct {
 		Entry []struct {
 			Resource struct {
@@ -2944,7 +2943,7 @@ func TestConformantLaneSentinelMember_PinnedInSeedArtifact(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("conformantLaneSentinelMember %q not found as a member identifier in kit/seed/demo-personas-conformant.json", conformantLaneSentinelMember)
+		t.Fatalf("conformantLaneSentinelMember %q not found as a member identifier in fhirseed.ConformantSeedBundle()", conformantLaneSentinelMember)
 	}
 }
 

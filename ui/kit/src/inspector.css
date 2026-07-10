@@ -425,10 +425,32 @@
   color: #cfd6ea;
 }
 
+/* The Expand all / Collapse all controls (+ optional search summary) row,
+   pinned above the tree in the dark JSON panel. */
+.json-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.json-control {
+  font: 11px var(--ui);
+  color: #cfd6ea;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.json-control:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .json-search-summary {
   font: 11px var(--ui);
   color: #97a0b5;
-  margin-bottom: 6px;
 }
 
 .json-node {

@@ -993,7 +993,7 @@ describe('App — BYO lane surfaces', () => {
     ).toBeDefined();
     expect(screen.getByText(/the demo personas are synthetic/i)).toBeDefined();
     expect(screen.getByText(/your server carries the demo personas/i)).toBeDefined();
-    expect(screen.getByText(/demo-personas-conformant\.json/)).toBeDefined();
+    expect(screen.getByText(/download the conformant seed bundle from the.*bring your own.*panel/i)).toBeDefined();
 
     // Switch to the ehr lane: cards disappear, FreeFormPanel + swap banner appear.
     await act(async () => {

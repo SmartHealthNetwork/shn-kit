@@ -87,4 +87,61 @@ describe('JsonView', () => {
     expect(document.querySelector('[data-path="1.note"]')).not.toBeNull();
     expect(screen.getByText('null')).toBeDefined();
   });
+
+  it('a container root shows the Expand all / Collapse all controls; a primitive root shows neither', () => {
+    const { unmount } = render(<JsonView value={{ a: 1 }} />);
+    expect(screen.getByRole('button', { name: 'Expand all' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Collapse all' })).toBeDefined();
+    unmount();
+
+    render(<JsonView value="just a string" />);
+    expect(screen.queryByRole('button', { name: 'Expand all' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Collapse all' })).toBeNull();
+  });
+
+  it('"Expand all" opens every nested container, even beyond defaultDepth', () => {
+    const value = { nested: { deeper: { secretDeepKey: 'secret-deep-value' } } };
+    render(<JsonView value={value} defaultDepth={2} />);
+    // Collapsed by default beyond depth 2.
+    expect(screen.queryByText('secretDeepKey')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
+    expect(screen.getByText('secretDeepKey')).toBeDefined();
+    expect(screen.getByText('secret-deep-value')).toBeDefined();
+  });
+
+  it('"Collapse all" collapses descendants but keeps the root open (top-level keys stay visible)', () => {
+    const value = { a: { b: 1 }, c: 2 };
+    render(<JsonView value={value} defaultDepth={5} />);
+    // Fully open at defaultDepth 5.
+    expect(screen.getByText('b')).toBeDefined();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
+    // Root stays open → its own keys are still there…
+    expect(screen.getByText('a')).toBeDefined();
+    expect(screen.getByText('c')).toBeDefined();
+    // …but every nested container is collapsed.
+    expect(screen.queryByText('b')).toBeNull();
+  });
+
+  it('after "Expand all", an individual node can still be collapsed (per-node toggle overrides the global)', () => {
+    const value = { nested: { deeper: { k: 'v' } } };
+    render(<JsonView value={value} defaultDepth={2} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
+    expect(screen.getByText('k')).toBeDefined();
+
+    // 'nested' is now open, so its toggle collapses it; the subtree disappears
+    // even though "Expand all" is the active baseline.
+    fireEvent.click(screen.getByRole('button', { name: 'collapse nested' }));
+    expect(screen.queryByText('k')).toBeNull();
+  });
+
+  it('search force-expansion still wins after "Collapse all"', () => {
+    const value = { nested: { deeper: { patientName: 'Linda Johansson' } } };
+    render(<JsonView value={value} defaultDepth={5} search="Johansson" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
+    // The matched path is force-expanded regardless of the collapse-all baseline.
+    expect(screen.getByText('Linda Johansson')).toBeDefined();
+  });
 });

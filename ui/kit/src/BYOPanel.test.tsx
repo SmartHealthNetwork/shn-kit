@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { BYOPanel } from './BYOPanel';
 import type { BYOStatus } from './types';
@@ -23,10 +23,16 @@ vi.mock('./api', () => ({
   deleteBYOEhr: vi.fn(),
   putBYODaVinci: vi.fn(),
   deleteBYODaVinci: vi.fn(),
+  seedBundleUrl: vi.fn((lane: string) => `/api/byo/seed-bundle/${lane}`),
   ApiError,
 }));
 
+vi.mock('./bridge', () => ({
+  resolveToken: vi.fn(() => Promise.resolve('t-1')),
+}));
+
 import * as api from './api';
+import * as bridge from './bridge';
 
 function byoStatus(overrides: Partial<BYOStatus> = {}): BYOStatus {
   return { ehr: null, davinci: null, ingress: null, ...overrides };
@@ -38,6 +44,8 @@ beforeEach(() => {
   vi.mocked(api.deleteBYOEhr).mockResolvedValue({ restartRequired: true });
   vi.mocked(api.putBYODaVinci).mockResolvedValue({ restartRequired: true });
   vi.mocked(api.deleteBYODaVinci).mockResolvedValue({ restartRequired: true });
+  vi.mocked(api.seedBundleUrl).mockImplementation((lane: string) => `/api/byo/seed-bundle/${lane}`);
+  vi.mocked(bridge.resolveToken).mockResolvedValue('t-1');
 });
 
 describe('BYOPanel — EHR section', () => {
@@ -154,6 +162,120 @@ describe('BYOPanel — Da Vinci section', () => {
       alg: 'RS384',
       publicKeyPem: '-----BEGIN PUBLIC KEY-----',
     });
+  });
+});
+
+describe('BYOPanel — Seed your server', () => {
+  // Mirrors StatusPanel.test.tsx's download-support-bundle harness
+  // (fetch/blob/URL.createObjectURL/anchor-click mocks) — this component
+  // reuses that exact download pattern.
+  function stubDownload() {
+    const blob = new Blob(['bundle-bytes']);
+    const fetchStub = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) });
+    vi.stubGlobal('fetch', fetchStub);
+
+    const createObjectURL = vi.fn(() => 'blob:mock-url');
+    const revokeObjectURL = vi.fn();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+
+    const realCreateElement = document.createElement.bind(document);
+    const anchor = realCreateElement('a');
+    const clickSpy = vi.spyOn(anchor, 'click').mockImplementation(() => {});
+    const createElementSpy = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation((tagName: string, options?: ElementCreationOptions) => {
+        if (tagName === 'a') return anchor;
+        return realCreateElement(tagName, options);
+      });
+
+    return {
+      fetchStub,
+      createObjectURL,
+      revokeObjectURL,
+      anchor,
+      clickSpy,
+      restore: () => {
+        createElementSpy.mockRestore();
+        URL.createObjectURL = originalCreateObjectURL;
+        URL.revokeObjectURL = originalRevokeObjectURL;
+        vi.unstubAllGlobals();
+      },
+    };
+  }
+
+  it('EHR section: Download seed bundle fetches the ehr lane with a Bearer header, downloads shn-ehr-personas.json, and the recipe echoes the typed data URL', async () => {
+    const mocks = stubDownload();
+    try {
+      const byo = byoStatus({
+        ehr: { dataUrl: 'https://ehr.example.org/fhir', hasClientKey: false, applied: false, demoPersonas: null },
+      });
+      render(<BYOPanel byo={byo} onSaved={vi.fn()} onRestart={vi.fn()} />);
+
+      const ehrSection = within(screen.getByText('EHR (data source)').closest('section') as HTMLElement);
+      expect(
+        ehrSection.getByText(/curl -X POST.*shn-ehr-personas\.json.*https:\/\/ehr\.example\.org\/fhir/),
+      ).toBeDefined();
+
+      await userEvent.click(ehrSection.getByRole('button', { name: /download seed bundle/i }));
+
+      await waitFor(() => expect(mocks.fetchStub).toHaveBeenCalledOnce());
+      const [url, init] = mocks.fetchStub.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('/api/byo/seed-bundle/ehr');
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer t-1');
+
+      await waitFor(() => expect(mocks.createObjectURL).toHaveBeenCalledOnce());
+      expect(mocks.anchor.download).toBe('shn-ehr-personas.json');
+      expect(mocks.clickSpy).toHaveBeenCalledTimes(1);
+      expect(mocks.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+    } finally {
+      mocks.restore();
+    }
+  });
+
+  it('EHR section: an empty dataUrl shows the <your-ehr-fhir-base> placeholder in the recipe', () => {
+    render(<BYOPanel byo={byoStatus()} onSaved={vi.fn()} onRestart={vi.fn()} />);
+    const ehrSection = within(screen.getByText('EHR (data source)').closest('section') as HTMLElement);
+    expect(ehrSection.getByText(/<your-ehr-fhir-base>/)).toBeDefined();
+  });
+
+  it('Da Vinci section: Download seed bundle fetches the conformant lane, downloads shn-conformant-personas.json, and the recipe shows the <your-fhir-base> placeholder', async () => {
+    const mocks = stubDownload();
+    try {
+      render(<BYOPanel byo={byoStatus()} onSaved={vi.fn()} onRestart={vi.fn()} />);
+
+      const dvSection = within(screen.getByText('Da Vinci (inbound ingress)').closest('section') as HTMLElement);
+      expect(dvSection.getByText(/<your-fhir-base>/)).toBeDefined();
+
+      await userEvent.click(dvSection.getByRole('button', { name: /download seed bundle/i }));
+
+      await waitFor(() => expect(mocks.fetchStub).toHaveBeenCalledOnce());
+      const [url, init] = mocks.fetchStub.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('/api/byo/seed-bundle/conformant');
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer t-1');
+
+      await waitFor(() => expect(mocks.createObjectURL).toHaveBeenCalledOnce());
+      expect(mocks.anchor.download).toBe('shn-conformant-personas.json');
+      expect(mocks.clickSpy).toHaveBeenCalledTimes(1);
+      expect(mocks.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+    } finally {
+      mocks.restore();
+    }
+  });
+
+  it('a fetch failure renders a visible inline error instead of an unhandled rejection', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    try {
+      render(<BYOPanel byo={byoStatus()} onSaved={vi.fn()} onRestart={vi.fn()} />);
+      const ehrSection = within(screen.getByText('EHR (data source)').closest('section') as HTMLElement);
+      await userEvent.click(ehrSection.getByRole('button', { name: /download seed bundle/i }));
+
+      await waitFor(() => expect(ehrSection.getByRole('alert').textContent).toMatch(/http 500/i));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

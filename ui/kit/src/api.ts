@@ -208,6 +208,15 @@ export function supportBundleUrl(): string {
   return '/api/support-bundle';
 }
 
+// seedBundleUrl returns GET /api/byo/seed-bundle/{lane}'s path — same
+// Bearer-gated-route-as-Blob-download shape as supportBundleUrl() above:
+// a bare string, not a token-qualified URL, fetched with an Authorization
+// header (never a bare `<a href>` navigation, which can't carry it).
+// SeedYourServerBlock (BYOPanel.tsx) does exactly that.
+export function seedBundleUrl(lane: 'ehr' | 'conformant'): string {
+  return `/api/byo/seed-bundle/${lane}`;
+}
+
 export function getHistoryRecord(runId: string): Promise<HistoryRecord> {
   return json<HistoryRecord>(`/api/history/${encodeURIComponent(runId)}`).then((record) => ({
     ...record,

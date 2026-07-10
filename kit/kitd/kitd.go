@@ -419,6 +419,7 @@ func (d *Daemon) handler() http.Handler {
 	gated.HandleFunc("DELETE /api/byo/davinci", d.handleBYODaVinciDelete)
 	gated.HandleFunc("GET /api/byo/patients", d.handleBYOPatientsGet)
 	gated.HandleFunc("GET /api/byo/patients/{fhirId}/context", d.handleBYOPatientContextGet)
+	gated.HandleFunc("GET /api/byo/seed-bundle/{lane}", d.handleBYOSeedBundleGet)
 	gated.HandleFunc("POST /api/children/{name}/restart", d.handleChildRestart)
 	gated.HandleFunc("GET /api/about", d.handleAbout)
 	gated.HandleFunc("GET /api/support-bundle", d.handleSupportBundle)
@@ -864,11 +865,11 @@ type byoEHRResponse struct {
 // MBR-COVERED, the persona conformantUC02..conformantUC05 all hardcode
 // (kit/runner/rows_conformant.go) — used as GET /api/byo's "does your
 // connected server carry the demo personas" sentinel check. One check
-// stands in for the whole kit/seed/demo-personas-
-// conformant.json bundle because that bundle loads all-or-nothing (a single
-// manual transaction POST): if the partner server resolves MBR-COVERED it
-// carries the bundle; if it doesn't, this member is as good a sentinel as
-// any of the other four.
+// stands in for the whole fhirseed.ConformantSeedBundle() bundle (also
+// served for download at GET /api/byo/seed-bundle/conformant) because that
+// bundle loads all-or-nothing (a single manual transaction POST): if the
+// partner server resolves MBR-COVERED it carries the bundle; if it doesn't,
+// this member is as good a sentinel as any of the other four.
 const conformantLaneSentinelMember = "MBR-COVERED"
 
 // demoPersonasState answers GET /api/byo's "ehr.demoPersonas" tri-state:

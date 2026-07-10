@@ -42,9 +42,10 @@ var conformantRows = map[string]rowFunc{
 // keeps running seeded when the swap target carries the seeded members, but
 // under an applied EHR swap this shape means the member a conformant row hardcodes
 // (MBR-COVERED, MBR-NOTCOVERED, MBR-UC06, MBR-UC07HCPCS, MBR-UC08) is not a
-// Patient on the partner's connected FHIR server — the remedy is loading
-// the demo persona bundle (kit/seed/demo-personas-conformant.json, manual
-// transaction-POST) onto it, or restoring demo data.
+// Patient on the partner's connected FHIR server — the remedy is loading the
+// demo persona bundle (fhirseed.ConformantSeedBundle(), downloadable from
+// GET /api/byo/seed-bundle/conformant, manual transaction-POST) onto it, or
+// restoring demo data.
 //
 // Pinned live at gateway/engine/ingress_crd.go:104 (ingressCRDSubjectPCI's
 // g.cfg.SoR.ResolvePatient miss — hit by every PostCRD-driven row) and

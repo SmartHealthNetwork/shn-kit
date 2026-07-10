@@ -63,7 +63,8 @@ function ConformantUnderEhrSwapBanner({ demoPersonas }: { demoPersonas: boolean 
       <p>The demo personas are synthetic — load them into a test server, never a production system.</p>
       {sentinel && <p className="byo-sentinel">{sentinel}</p>}
       <p>
-        See <code>kit/seed/demo-personas-conformant.json</code> — see the README for how to load it.
+        Download the conformant seed bundle from the &quot;Bring your own&quot; panel and POST it to
+        your own FHIR server so these members resolve.
       </p>
     </div>
   );

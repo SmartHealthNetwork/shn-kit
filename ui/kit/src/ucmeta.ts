@@ -188,7 +188,7 @@ export const LANE_LABELS: Record<
       overview:
         'A Da Vinci-conformant provider system sends each scenario straight into the Smart Gateway, the way a real EHR integration would.',
       technical:
-        "A conformant Da Vinci client originates through the Smart Gateway's authenticated inbound endpoint (UDAP B2B). In this build the Kit itself acts as that client; the packaged Kit adds a real Da Vinci provider system in this role.",
+        "A conformant Da Vinci client originates through the Smart Gateway's authenticated inbound endpoint. In this build the Kit itself acts as that client; the packaged Kit adds a real Da Vinci provider system in this role.",
     },
   },
 };

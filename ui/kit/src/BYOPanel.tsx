@@ -15,6 +15,7 @@ import {
   putBYODaVinci,
   putBYOEhr,
 } from './api';
+import { SeedYourServerBlock } from './SeedYourServerBlock';
 
 export interface BYOPanelProps {
   byo: BYOStatus;
@@ -190,6 +191,8 @@ function EHRSection({ ehr, onSaved, onRestart }: EHRSectionProps): JSX.Element {
         </div>
       </form>
 
+      <SeedYourServerBlock lane="ehr" postBase={dataUrl || '<your-ehr-fhir-base>'} />
+
       {state.kind === 'error' && (
         <p role="alert" className="byo-error">
           {state.message}
@@ -314,6 +317,8 @@ function DaVinciSection({ davinci, ingress, onSaved, onRestart }: DaVinciSection
           </button>
         </div>
       </form>
+
+      <SeedYourServerBlock lane="conformant" postBase="<your-fhir-base>" />
 
       {state.kind === 'error' && (
         <p role="alert" className="byo-error">
