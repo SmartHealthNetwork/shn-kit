@@ -2,8 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within, act, fireEvent } from '@testing-library/react';
 import App from './App';
 import { computeDisabledReason, isGatewayReady } from './App';
-import type { BootstrapResponse, HistoryRecord, HistorySummary, RunResult, StatusResponse } from './types';
+import type { BootstrapResponse, HistoryRecord, HistorySummary, KitEvent, RunResult, StatusResponse } from './types';
 import type { EventsView } from './useEvents';
+import ehrUc03 from './fixtures/run-ehr-uc03.json';
+
+const ehrUc03Events = ehrUc03 as unknown as KitEvent[];
 
 // vi.mock factories are hoisted above the rest of the module, so ApiError
 // must be created through vi.hoisted rather than a plain top-level class.
@@ -1378,5 +1381,62 @@ describe('App — latestRunId fold', () => {
 
     providerNode = document.querySelector('.insp [data-node="provider"]');
     expect(providerNode?.textContent).toBe('Plain EHR (seeded data source)');
+  });
+});
+
+describe('App — ehr provider node lights from real sor.read frames (end-to-end)', () => {
+  // The regenerated fixture now carries real observer frames (sor.read
+  // among them) recorded off the ehr lane's actual System-of-Record reads —
+  // see FlowMap.test.tsx's own fixture-replay describe block and
+  // inspect.test.ts's buildRunStory replay for the unit-level proof. This
+  // test is the END-TO-END proof: loaded through the NORMAL App flow (the
+  // same eventsView/renderMain idiom every other App test above uses, not
+  // hand-rolled scaffolding), the inspector's FlowMap provider node lights
+  // for real — it is not the dashed/static old-gateway placeholder.
+  it('the ehr fixture (run-ehr-uc03.json) loaded through the App flow lights the provider node and drops data-static', async () => {
+    const runId = ehrUc03Events[0].runId as string;
+    vi.mocked(useEvents).mockReturnValue(
+      eventsView({
+        all: ehrUc03Events,
+        activeRunId: runId,
+      }),
+    );
+
+    await renderMain();
+    await flush(); // getBYO resolves
+
+    const providerNode = document.querySelector('.insp [data-node="provider"]');
+    expect(providerNode).not.toBeNull();
+    expect(providerNode?.className).toContain('lit');
+    expect(providerNode?.getAttribute('data-static')).not.toBe('true');
+  });
+
+  // Fallback pin: an ehr-lane story with NO sor steps stays static/never-lit
+  // — the old-gateway degradation. FlowMap.test.tsx already pins this at
+  // the unit level ('ehr lane WITHOUT sor steps: provider node static +
+  // never lit (old-gateway fallback)'); this is the App-level counterpart,
+  // driven the same natural way the App flow can express a sor-less story
+  // (a hand-built minimal events array — the SAME idiom the "BYO provider
+  // label threading" tests above use, e.g. the 'Your EHR (FHIR data
+  // source)' test), since the App flow doesn't need the full fixture to
+  // express "no sor frames happened" — no in-test filtering of the fixture
+  // was needed to get here.
+  it('an ehr-lane run with no sor steps keeps the provider node static (data-static="true") and never lit, through the same App flow', async () => {
+    vi.mocked(useEvents).mockReturnValue(
+      eventsView({
+        all: [
+          { seq: 1, time: '2026-07-03T14:00:00Z', type: 'run.started', runId: 'run-ehr-no-sor', lane: 'ehr', uc: 'uc01' },
+        ],
+        activeRunId: 'run-ehr-no-sor',
+      }),
+    );
+
+    await renderMain();
+    await flush(); // getBYO resolves
+
+    const providerNode = document.querySelector('.insp [data-node="provider"]');
+    expect(providerNode).not.toBeNull();
+    expect(providerNode?.getAttribute('data-static')).toBe('true');
+    expect(providerNode?.className).not.toContain('lit');
   });
 });

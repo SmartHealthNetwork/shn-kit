@@ -60,6 +60,13 @@ export function RunInspector({
 
   const [view, setView] = useState<InspectorView>('clinical');
   const [selectedStepId, setSelectedStepId] = useState<string | undefined>(undefined);
+  // Replay-run token: an incrementing counter FlowMap watches to sequence a
+  // whole-story replay. `replaying` tracks only "is one in flight right
+  // now" (set true on click, cleared by FlowMap's onReplayEnd) — it is
+  // deliberately NOT part of the enable rule's story-completeness check
+  // below; it only ever ADDS a disable, never removes one.
+  const [replayToken, setReplayToken] = useState(0);
+  const [replaying, setReplaying] = useState(false);
   const manualPickRef = useRef(false);
   const prevRunIdRef = useRef<string | undefined>(undefined);
   const prevStepCountRef = useRef(0);
@@ -72,6 +79,11 @@ export function RunInspector({
       manualPickRef.current = false;
       prevStepCountRef.current = steps.length;
       setSelectedStepId(steps[0]?.id);
+      // Defensive reset: FlowMap always signals its end (even on a mid-replay
+      // unmount), so `replaying` should already be false here — but switching
+      // to a fresh run must never inherit a stale in-flight flag that would
+      // leave THIS run's Replay button wedged disabled.
+      setReplaying(false);
       return;
     }
 
@@ -89,6 +101,15 @@ export function RunInspector({
   const handleSelectStep = (id: string) => {
     manualPickRef.current = true;
     setSelectedStepId(id);
+  };
+
+  const handleReplayClick = () => {
+    setReplaying(true);
+    setReplayToken((t) => t + 1);
+  };
+
+  const handleReplayEnd = () => {
+    setReplaying(false);
   };
 
   if (runId === undefined) {
@@ -136,6 +157,14 @@ export function RunInspector({
   const badge = summary ?? results.find((r) => r.runId === runId);
   const selectedStep = steps.find((s) => s.id === selectedStepId);
 
+  // Replay-run enable rule: disabled IF AND ONLY IF the story has no
+  // terminal yet, or a replay is already in flight. `source` is IRRELEVANT
+  // — useRunEvents.ts computes 'live' as "the run's events are still in the
+  // ring", so a just-completed run stays source: 'live' until ring
+  // eviction; gating on source would disable the button at exactly the
+  // moment users most want it.
+  const replayDisabled = activeStory.terminal === undefined || replaying;
+
   return (
     <div className="insp">
       <div className="insp-head">
@@ -145,6 +174,9 @@ export function RunInspector({
             {summary?.branch ? ` (${summary.branch})` : ''}
           </span>
           <div className="insp-tools">
+            <button type="button" className="ctl" onClick={handleReplayClick} disabled={replayDisabled}>
+              Replay run
+            </button>
             <label className="toggle">
               <input
                 type="checkbox"
@@ -174,6 +206,8 @@ export function RunInspector({
           selectedStepId={selectedStep?.id}
           onSelectStep={handleSelectStep}
           providerLabel={providerLabel}
+          replayToken={replayToken}
+          onReplayEnd={handleReplayEnd}
         />
 
         <div className="insp-detail">

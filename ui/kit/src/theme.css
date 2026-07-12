@@ -2,7 +2,10 @@
    This is the app's own design system: every later screen/component
    stylesheet consumes the custom properties below. Keep this file the
    single source of truth for color/type/radius tokens — don't
-   re-declare a token locally in a component stylesheet. */
+   re-declare a token locally in a component stylesheet.
+   The design system was extracted to ui/shared/src/theme.css, which is now
+   the actual single source of truth: new/shared token work goes there, and
+   this copy migrates opportunistically. */
 
 @font-face {
   font-family: 'Inter';
@@ -56,6 +59,12 @@
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'IBM Plex Mono', Menlo, monospace;
   --r: 7px;
   --r-lg: 11px;
+
+  /* Kit-local — flow-map-only (FlowEdges.tsx's directional edge overlay).
+     Not shared-design-system material: these don't migrate to
+     ui/shared/src/theme.css alongside the rest of this file's tokens. */
+  --edge: #cdd3e0;
+  --edge-lit: #8b9cf0;
 }
 
 *,

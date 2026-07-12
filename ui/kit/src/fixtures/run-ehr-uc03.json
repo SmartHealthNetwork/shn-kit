@@ -1,22 +1,107 @@
 [
  {
-  "seq": 36,
-  "time": "2026-07-03T23:20:25.922903-04:00",
+  "seq": 42,
+  "time": "2026-07-11T22:37:16.711043-04:00",
   "type": "run.started",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03"
  },
  {
-  "seq": 37,
-  "time": "2026-07-03T23:20:25.923881-04:00",
+  "seq": 43,
+  "time": "2026-07-11T22:37:16.712032-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 13,
-   "time": "2026-07-03T23:20:25.923727-04:00",
+   "seq": 19,
+   "time": "2026-07-11T22:37:16.711849-04:00",
+   "kind": "sor.read",
+   "direction": "sor",
+   "op": "ResolvePatient",
+   "detail": "found"
+  }
+ },
+ {
+  "seq": 44,
+  "time": "2026-07-11T22:37:16.712146-04:00",
+  "type": "observer",
+  "runId": "run-1783823836710-4",
+  "lane": "ehr",
+  "uc": "uc03",
+  "observer": {
+   "seq": 20,
+   "time": "2026-07-11T22:37:16.712002-04:00",
+   "kind": "sor.read",
+   "direction": "sor",
+   "op": "OpenCoverage",
+   "payload": {
+    "beneficiary": {
+     "reference": "Patient/MBR-COVERED"
+    },
+    "contained": [
+     {
+      "id": "cms-payer",
+      "identifier": [
+       {
+        "system": "urn:oid:2.16.840.1.113883.6.300",
+        "value": "00001"
+       }
+      ],
+      "name": "Centers for Medicare and Medicaid Services",
+      "resourceType": "Organization"
+     }
+    ],
+    "id": "c1",
+    "identifier": [
+     {
+      "type": {
+       "coding": [
+        {
+         "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+         "code": "MB"
+        }
+       ]
+      },
+      "system": "urn:shn:coverage",
+      "value": "Coverage/MBR-COVERED"
+     }
+    ],
+    "meta": {
+     "profile": [
+      "http://hl7.org/fhir/us/core/StructureDefinition/us-core-coverage"
+     ]
+    },
+    "payor": [
+     {
+      "reference": "#cms-payer"
+     }
+    ],
+    "relationship": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
+       "code": "self"
+      }
+     ]
+    },
+    "resourceType": "Coverage",
+    "status": "active"
+   },
+   "detail": "found"
+  }
+ },
+ {
+  "seq": 45,
+  "time": "2026-07-11T22:37:16.712231-04:00",
+  "type": "observer",
+  "runId": "run-1783823836710-4",
+  "lane": "ehr",
+  "uc": "uc03",
+  "observer": {
+   "seq": 21,
+   "time": "2026-07-11T22:37:16.712122-04:00",
    "kind": "validate.result",
    "direction": "validate",
    "payload": {
@@ -55,15 +140,15 @@
   }
  },
  {
-  "seq": 38,
-  "time": "2026-07-03T23:20:25.923922-04:00",
+  "seq": 46,
+  "time": "2026-07-11T22:37:16.712262-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 14,
-   "time": "2026-07-03T23:20:25.923797-04:00",
+   "seq": 22,
+   "time": "2026-07-11T22:37:16.712174-04:00",
    "kind": "validate.result",
    "direction": "validate",
    "payload": {
@@ -123,19 +208,19 @@
   }
  },
  {
-  "seq": 39,
-  "time": "2026-07-03T23:20:25.924032-04:00",
+  "seq": 47,
+  "time": "2026-07-11T22:37:16.712334-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 15,
-   "time": "2026-07-03T23:20:25.923882-04:00",
+   "seq": 23,
+   "time": "2026-07-11T22:37:16.712237-04:00",
    "kind": "leg.originated",
    "legType": "crd-order-select",
    "direction": "originate",
-   "correlationId": "adecc3db866798b366190141c81cb5ab",
+   "correlationId": "2a11c7c360732185a3a26025086dc4d8",
    "counterpart": "payer",
    "authorityFrame": "provider-tpo",
    "op": "crd-order-select",
@@ -255,19 +340,19 @@
   }
  },
  {
-  "seq": 40,
-  "time": "2026-07-03T23:20:25.931395-04:00",
+  "seq": 48,
+  "time": "2026-07-11T22:37:16.717747-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 16,
-   "time": "2026-07-03T23:20:25.931307-04:00",
+   "seq": 24,
+   "time": "2026-07-11T22:37:16.71765-04:00",
    "kind": "leg.response",
    "legType": "crd-order-select",
    "direction": "originate",
-   "correlationId": "adecc3db866798b366190141c81cb5ab",
+   "correlationId": "2a11c7c360732185a3a26025086dc4d8",
    "counterpart": "payer",
    "authorityFrame": "payer-coverage",
    "op": "crd-cards",
@@ -289,19 +374,19 @@
   }
  },
  {
-  "seq": 41,
-  "time": "2026-07-03T23:20:25.931414-04:00",
+  "seq": 49,
+  "time": "2026-07-11T22:37:16.717783-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 17,
-   "time": "2026-07-03T23:20:25.931352-04:00",
+   "seq": 25,
+   "time": "2026-07-11T22:37:16.717704-04:00",
    "kind": "leg.originated",
    "legType": "dtr-questionnaire-fetch",
    "direction": "originate",
-   "correlationId": "8f850e40c798027c60d85395672434c9",
+   "correlationId": "cdcc1b58d6df8ebec3a25418ada6013a",
    "counterpart": "payer",
    "authorityFrame": "provider-tpo",
    "op": "dtr-questionnaire-fetch",
@@ -311,19 +396,19 @@
   }
  },
  {
-  "seq": 42,
-  "time": "2026-07-03T23:20:25.937152-04:00",
+  "seq": 50,
+  "time": "2026-07-11T22:37:16.723234-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 18,
-   "time": "2026-07-03T23:20:25.937019-04:00",
+   "seq": 26,
+   "time": "2026-07-11T22:37:16.723038-04:00",
    "kind": "leg.response",
    "legType": "dtr-questionnaire-fetch",
    "direction": "originate",
-   "correlationId": "8f850e40c798027c60d85395672434c9",
+   "correlationId": "cdcc1b58d6df8ebec3a25418ada6013a",
    "counterpart": "payer",
    "authorityFrame": "payer-coverage",
    "op": "dtr-questionnaire",
@@ -443,15 +528,15 @@
   }
  },
  {
-  "seq": 43,
-  "time": "2026-07-03T23:20:25.9372-04:00",
+  "seq": 51,
+  "time": "2026-07-11T22:37:16.723291-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 19,
-   "time": "2026-07-03T23:20:25.937057-04:00",
+   "seq": 27,
+   "time": "2026-07-11T22:37:16.723085-04:00",
    "kind": "validate.result",
    "direction": "validate",
    "payload": {
@@ -571,15 +656,47 @@
   }
  },
  {
-  "seq": 44,
-  "time": "2026-07-03T23:20:25.937707-04:00",
+  "seq": 52,
+  "time": "2026-07-11T22:37:16.723367-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 20,
-   "time": "2026-07-03T23:20:25.937613-04:00",
+   "seq": 28,
+   "time": "2026-07-11T22:37:16.723256-04:00",
+   "kind": "sor.read",
+   "direction": "sor",
+   "op": "PatientFHIRRef",
+   "detail": "found"
+  }
+ },
+ {
+  "seq": 53,
+  "time": "2026-07-11T22:37:16.723375-04:00",
+  "type": "observer",
+  "runId": "run-1783823836710-4",
+  "lane": "ehr",
+  "uc": "uc03",
+  "observer": {
+   "seq": 29,
+   "time": "2026-07-11T22:37:16.723308-04:00",
+   "kind": "sor.read",
+   "direction": "sor",
+   "op": "ClinicalContext",
+   "detail": "found"
+  }
+ },
+ {
+  "seq": 54,
+  "time": "2026-07-11T22:37:16.723714-04:00",
+  "type": "observer",
+  "runId": "run-1783823836710-4",
+  "lane": "ehr",
+  "uc": "uc03",
+  "observer": {
+   "seq": 30,
+   "time": "2026-07-11T22:37:16.723586-04:00",
    "kind": "validate.result",
    "direction": "validate",
    "payload": {
@@ -614,7 +731,7 @@
     "subject": {
      "reference": "Patient/MBR-COVERED"
     },
-    "authored": "2026-07-04T03:20:25Z",
+    "authored": "2026-07-12T02:37:16Z",
     "item": [
      {
       "linkId": "conservative-therapy-weeks",
@@ -680,15 +797,15 @@
   }
  },
  {
-  "seq": 45,
-  "time": "2026-07-03T23:20:25.938637-04:00",
+  "seq": 55,
+  "time": "2026-07-11T22:37:16.725341-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 21,
-   "time": "2026-07-03T23:20:25.938492-04:00",
+   "seq": 31,
+   "time": "2026-07-11T22:37:16.725188-04:00",
    "kind": "validate.result",
    "direction": "validate",
    "payload": {
@@ -696,12 +813,12 @@
      {
       "fullUrl": "https://shn.example/fhir/Claim/convergence-claim",
       "resource": {
-       "created": "2026-07-04T03:20:25Z",
+       "created": "2026-07-12T02:37:16Z",
        "id": "convergence-claim",
        "identifier": [
         {
          "system": "urn:shn:correlation",
-         "value": "739b553655099109f4736fe9dc614650"
+         "value": "1530c0d972be9e69f2182abf84b803e1"
         }
        ],
        "insurance": [
@@ -865,7 +982,7 @@
      {
       "fullUrl": "https://shn.example/fhir/QuestionnaireResponse/convergence-qr",
       "resource": {
-       "authored": "2026-07-04T03:20:25Z",
+       "authored": "2026-07-12T02:37:16Z",
        "extension": [
         {
          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
@@ -963,29 +1080,29 @@
     ],
     "identifier": {
      "system": "urn:shn:pas:bundle",
-     "value": "739b553655099109f4736fe9dc614650"
+     "value": "1530c0d972be9e69f2182abf84b803e1"
     },
     "resourceType": "Bundle",
-    "timestamp": "2026-07-04T03:20:25Z",
+    "timestamp": "2026-07-12T02:37:16Z",
     "type": "collection"
    },
    "detail": "valid"
   }
  },
  {
-  "seq": 46,
-  "time": "2026-07-03T23:20:25.938689-04:00",
+  "seq": 56,
+  "time": "2026-07-11T22:37:16.725469-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 22,
-   "time": "2026-07-03T23:20:25.938547-04:00",
+   "seq": 32,
+   "time": "2026-07-11T22:37:16.725229-04:00",
    "kind": "leg.originated",
    "legType": "pas-claim",
    "direction": "originate",
-   "correlationId": "739b553655099109f4736fe9dc614650",
+   "correlationId": "1530c0d972be9e69f2182abf84b803e1",
    "counterpart": "payer",
    "authorityFrame": "provider-tpo",
    "op": "pas-submit",
@@ -994,12 +1111,12 @@
      {
       "fullUrl": "https://shn.example/fhir/Claim/convergence-claim",
       "resource": {
-       "created": "2026-07-04T03:20:25Z",
+       "created": "2026-07-12T02:37:16Z",
        "id": "convergence-claim",
        "identifier": [
         {
          "system": "urn:shn:correlation",
-         "value": "739b553655099109f4736fe9dc614650"
+         "value": "1530c0d972be9e69f2182abf84b803e1"
         }
        ],
        "insurance": [
@@ -1163,7 +1280,7 @@
      {
       "fullUrl": "https://shn.example/fhir/QuestionnaireResponse/convergence-qr",
       "resource": {
-       "authored": "2026-07-04T03:20:25Z",
+       "authored": "2026-07-12T02:37:16Z",
        "extension": [
         {
          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
@@ -1261,28 +1378,28 @@
     ],
     "identifier": {
      "system": "urn:shn:pas:bundle",
-     "value": "739b553655099109f4736fe9dc614650"
+     "value": "1530c0d972be9e69f2182abf84b803e1"
     },
     "resourceType": "Bundle",
-    "timestamp": "2026-07-04T03:20:25Z",
+    "timestamp": "2026-07-12T02:37:16Z",
     "type": "collection"
    }
   }
  },
  {
-  "seq": 47,
-  "time": "2026-07-03T23:20:25.944754-04:00",
+  "seq": 57,
+  "time": "2026-07-11T22:37:16.730973-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 23,
-   "time": "2026-07-03T23:20:25.944662-04:00",
+   "seq": 33,
+   "time": "2026-07-11T22:37:16.730823-04:00",
    "kind": "leg.response",
    "legType": "pas-claim",
    "direction": "originate",
-   "correlationId": "739b553655099109f4736fe9dc614650",
+   "correlationId": "1530c0d972be9e69f2182abf84b803e1",
    "counterpart": "payer",
    "authorityFrame": "payer-coverage",
    "op": "pas-response",
@@ -1306,7 +1423,7 @@
     "patient": {
      "reference": "Patient/MBR-COVERED"
     },
-    "created": "2026-07-04T03:20:25Z",
+    "created": "2026-07-12T02:37:16Z",
     "insurer": {
      "reference": "Organization/payer"
     },
@@ -1314,12 +1431,12 @@
     "identifier": [
      {
       "system": "urn:shn:correlation",
-      "value": "739b553655099109f4736fe9dc614650"
+      "value": "1530c0d972be9e69f2182abf84b803e1"
      }
     ],
-    "preAuthRef": "PA-4e4f4a6464f4",
+    "preAuthRef": "PA-7cc975ac6c6c",
     "preAuthPeriod": {
-     "end": "2026-10-01"
+     "end": "2026-10-09"
     },
     "item": [
      {
@@ -1361,15 +1478,15 @@
   }
  },
  {
-  "seq": 48,
-  "time": "2026-07-03T23:20:25.944788-04:00",
+  "seq": 58,
+  "time": "2026-07-11T22:37:16.731004-04:00",
   "type": "observer",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 24,
-   "time": "2026-07-03T23:20:25.944682-04:00",
+   "seq": 34,
+   "time": "2026-07-11T22:37:16.730844-04:00",
    "kind": "validate.result",
    "direction": "validate",
    "payload": {
@@ -1392,7 +1509,7 @@
     "patient": {
      "reference": "Patient/MBR-COVERED"
     },
-    "created": "2026-07-04T03:20:25Z",
+    "created": "2026-07-12T02:37:16Z",
     "insurer": {
      "reference": "Organization/payer"
     },
@@ -1400,12 +1517,12 @@
     "identifier": [
      {
       "system": "urn:shn:correlation",
-      "value": "739b553655099109f4736fe9dc614650"
+      "value": "1530c0d972be9e69f2182abf84b803e1"
      }
     ],
-    "preAuthRef": "PA-4e4f4a6464f4",
+    "preAuthRef": "PA-7cc975ac6c6c",
     "preAuthPeriod": {
-     "end": "2026-10-01"
+     "end": "2026-10-09"
     },
     "item": [
      {
@@ -1448,16 +1565,16 @@
   }
  },
  {
-  "seq": 49,
-  "time": "2026-07-03T23:20:25.945471-04:00",
+  "seq": 59,
+  "time": "2026-07-11T22:37:16.731728-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 12,
-   "timestamp": "2026-07-03T23:20:25-04:00",
-   "sender": "kit-provider",
+   "timestamp": "2026-07-11T22:37:16-04:00",
+   "sender": "shn-kit-live01",
    "recipient": "authz",
    "transactionType": "authz-decision:crd-order-select",
    "authorityFrame": "provider-tpo",
@@ -1467,16 +1584,16 @@
   }
  },
  {
-  "seq": 50,
-  "time": "2026-07-03T23:20:25.945481-04:00",
+  "seq": 60,
+  "time": "2026-07-11T22:37:16.731738-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 13,
-   "timestamp": "2026-07-03T23:20:25-04:00",
-   "sender": "kit-provider",
+   "timestamp": "2026-07-11T22:37:16-04:00",
+   "sender": "shn-kit-live01",
    "recipient": "payer",
    "transactionType": "crd-order-select",
    "authorityFrame": "provider-tpo",
@@ -1486,15 +1603,15 @@
   }
  },
  {
-  "seq": 51,
-  "time": "2026-07-03T23:20:25.945485-04:00",
+  "seq": 61,
+  "time": "2026-07-11T22:37:16.731742-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 14,
-   "timestamp": "2026-07-03T23:20:25-04:00",
+   "timestamp": "2026-07-11T22:37:16-04:00",
    "sender": "payer",
    "recipient": "authz",
    "transactionType": "authz-decision:crd-cards",
@@ -1505,17 +1622,17 @@
   }
  },
  {
-  "seq": 52,
-  "time": "2026-07-03T23:20:25.945488-04:00",
+  "seq": 62,
+  "time": "2026-07-11T22:37:16.731744-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 15,
-   "timestamp": "2026-07-03T23:20:25-04:00",
+   "timestamp": "2026-07-11T22:37:16-04:00",
    "sender": "payer",
-   "recipient": "kit-provider",
+   "recipient": "shn-kit-live01",
    "transactionType": "crd-order-select",
    "authorityFrame": "payer-coverage",
    "scope": "crd-context",
@@ -1524,16 +1641,16 @@
   }
  },
  {
-  "seq": 53,
-  "time": "2026-07-03T23:20:25.945491-04:00",
+  "seq": 63,
+  "time": "2026-07-11T22:37:16.731747-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 16,
-   "timestamp": "2026-07-03T23:20:25-04:00",
-   "sender": "kit-provider",
+   "timestamp": "2026-07-11T22:37:16-04:00",
+   "sender": "shn-kit-live01",
    "recipient": "authz",
    "transactionType": "authz-decision:dtr-questionnaire-fetch",
    "authorityFrame": "provider-tpo",
@@ -1543,16 +1660,16 @@
   }
  },
  {
-  "seq": 54,
-  "time": "2026-07-03T23:20:25.945497-04:00",
+  "seq": 64,
+  "time": "2026-07-11T22:37:16.731753-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 17,
-   "timestamp": "2026-07-03T23:20:25-04:00",
-   "sender": "kit-provider",
+   "timestamp": "2026-07-11T22:37:16-04:00",
+   "sender": "shn-kit-live01",
    "recipient": "payer",
    "transactionType": "dtr-questionnaire-fetch",
    "authorityFrame": "provider-tpo",
@@ -1562,15 +1679,15 @@
   }
  },
  {
-  "seq": 55,
-  "time": "2026-07-03T23:20:25.9455-04:00",
+  "seq": 65,
+  "time": "2026-07-11T22:37:16.731756-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 18,
-   "timestamp": "2026-07-03T23:20:25-04:00",
+   "timestamp": "2026-07-11T22:37:16-04:00",
    "sender": "payer",
    "recipient": "authz",
    "transactionType": "authz-decision:dtr-questionnaire",
@@ -1581,17 +1698,17 @@
   }
  },
  {
-  "seq": 56,
-  "time": "2026-07-03T23:20:25.945503-04:00",
+  "seq": 66,
+  "time": "2026-07-11T22:37:16.731759-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 19,
-   "timestamp": "2026-07-03T23:20:25-04:00",
+   "timestamp": "2026-07-11T22:37:16-04:00",
    "sender": "payer",
-   "recipient": "kit-provider",
+   "recipient": "shn-kit-live01",
    "transactionType": "dtr-questionnaire-fetch",
    "authorityFrame": "payer-coverage",
    "scope": "questionnaire-only",
@@ -1600,16 +1717,16 @@
   }
  },
  {
-  "seq": 57,
-  "time": "2026-07-03T23:20:25.945506-04:00",
+  "seq": 67,
+  "time": "2026-07-11T22:37:16.731761-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 20,
-   "timestamp": "2026-07-03T23:20:25-04:00",
-   "sender": "kit-provider",
+   "timestamp": "2026-07-11T22:37:16-04:00",
+   "sender": "shn-kit-live01",
    "recipient": "authz",
    "transactionType": "authz-decision:pas-submit",
    "authorityFrame": "provider-tpo",
@@ -1619,16 +1736,16 @@
   }
  },
  {
-  "seq": 58,
-  "time": "2026-07-03T23:20:25.94551-04:00",
+  "seq": 68,
+  "time": "2026-07-11T22:37:16.731765-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 21,
-   "timestamp": "2026-07-03T23:20:25-04:00",
-   "sender": "kit-provider",
+   "timestamp": "2026-07-11T22:37:16-04:00",
+   "sender": "shn-kit-live01",
    "recipient": "payer",
    "transactionType": "pas-claim",
    "authorityFrame": "provider-tpo",
@@ -1638,15 +1755,15 @@
   }
  },
  {
-  "seq": 59,
-  "time": "2026-07-03T23:20:25.945513-04:00",
+  "seq": 69,
+  "time": "2026-07-11T22:37:16.731768-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 22,
-   "timestamp": "2026-07-03T23:20:25-04:00",
+   "timestamp": "2026-07-11T22:37:16-04:00",
    "sender": "payer",
    "recipient": "authz",
    "transactionType": "authz-decision:pas-response",
@@ -1657,17 +1774,17 @@
   }
  },
  {
-  "seq": 60,
-  "time": "2026-07-03T23:20:25.945516-04:00",
+  "seq": 70,
+  "time": "2026-07-11T22:37:16.731771-04:00",
   "type": "audit",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
    "seq": 23,
-   "timestamp": "2026-07-03T23:20:25-04:00",
+   "timestamp": "2026-07-11T22:37:16-04:00",
    "sender": "payer",
-   "recipient": "kit-provider",
+   "recipient": "shn-kit-live01",
    "transactionType": "pas-claim",
    "authorityFrame": "payer-coverage",
    "scope": "pas-bundle",
@@ -1676,12 +1793,12 @@
   }
  },
  {
-  "seq": 61,
-  "time": "2026-07-03T23:20:25.945519-04:00",
+  "seq": 71,
+  "time": "2026-07-11T22:37:16.731773-04:00",
   "type": "run.finished",
-  "runId": "run-1783135225922-4",
+  "runId": "run-1783823836710-4",
   "lane": "ehr",
   "uc": "uc03",
-  "detail": "approved, auth PA-4e4f4a6464f4, 3 QR items"
+  "detail": "approved, auth PA-7cc975ac6c6c, 3 QR items"
  }
 ]

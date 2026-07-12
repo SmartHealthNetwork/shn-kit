@@ -221,7 +221,30 @@ function fallbackNarration(legType: string, counterpart: string | undefined): st
   return `The Smart Gateway exchanged "${legType}" with ${counterpart ?? 'the hosted counterparty'}.`;
 }
 
+// sor.read narration: keyed on the observer frame's Op (the Go
+// SystemOfRecord method name — cannot collide with the kebab-case leg/route
+// keys above). The fallback is sor-specific ON PURPOSE: the generic
+// fallbackNarration says "with the hosted counterparty", which would be
+// dishonest for a local data-source read.
+const SOR_NARRATION: Record<string, string> = {
+  ResolvePatient: 'The gateway looked the member up in its data source.',
+  PatientFHIRRef: 'The gateway resolved the member’s FHIR Patient reference in its data source.',
+  CoverageInforce: 'The gateway checked the member’s coverage record in its data source.', // not fixture-verified
+  ClinicalContext: 'The gateway read the member’s clinical context from its data source.',
+  SupplementalReport: 'The gateway looked for a supplemental report in its data source.', // not fixture-verified
+  FacilityRecords: 'The gateway read the member’s facility records from its data source.', // not fixture-verified
+  OpenOrder: 'The gateway read the member’s open order from its data source.', // not fixture-verified
+  OpenCoverage: 'The gateway read the member’s in-force coverage record from its data source.',
+  ResolveByReference: 'The gateway resolved a referenced resource from its data source.', // not fixture-verified
+};
+
+function sorNarration(op: string | undefined): string {
+  if (op !== undefined && SOR_NARRATION[op] !== undefined) return SOR_NARRATION[op];
+  return `The gateway read ${op ?? 'a record'} from its data source.`;
+}
+
 function narrationFor(step: Step): string {
+  if (step.kind === 'sor') return sorNarration(step.sorOp);
   const request = step.request;
   const key = request ? narrationKey(request) : step.legType;
   const entry = NARRATION[key];
@@ -237,7 +260,7 @@ function narrationFor(step: Step): string {
 // Step pairing
 // ---------------------------------------------------------------------------
 
-export type StepKind = 'ingress' | 'leg' | 'validate';
+export type StepKind = 'ingress' | 'leg' | 'validate' | 'sor';
 export type StepStatus = 'open' | 'ok' | 'failed';
 
 export interface Step {
@@ -253,6 +276,8 @@ export interface Step {
   responseAuthority?: string;
   httpStatus?: string; // ingress.responded Detail
   validation?: string; // validate.result Detail
+  sorOp?: string; // sor.read frames: the SystemOfRecord method name
+  sorDetail?: string; // sor.read frames: "found" / "not found" / coverage status
   narration: string; // narration table or fallback — never empty
 }
 
@@ -316,6 +341,21 @@ function makeValidateStep(frame: ObserverFrame): Step {
     status,
     request: frame,
     validation: frame.detail,
+    narration: '',
+  };
+  step.narration = narrationFor(step);
+  return step;
+}
+
+function makeSorStep(frame: ObserverFrame): Step {
+  const step: Step = {
+    id: String(frame.seq),
+    kind: 'sor',
+    legType: 'sor.read',
+    status: 'ok', // a miss is a normal branch, never a failed step
+    request: frame,
+    sorOp: frame.op,
+    sorDetail: frame.detail,
     narration: '',
   };
   step.narration = narrationFor(step);
@@ -425,6 +465,10 @@ export function buildRunStory(runId: string, events: KitEvent[]): RunStory {
       }
       case 'validate.result': {
         steps.push(makeValidateStep(frame));
+        break;
+      }
+      case 'sor.read': {
+        steps.push(makeSorStep(frame));
         break;
       }
       default:

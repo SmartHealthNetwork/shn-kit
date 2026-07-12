@@ -1,7 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { FlowMap, REMOTE_ZONE_CAPTION, EHR_PROVIDER_LABEL, CONFORMANT_PROVIDER_LABEL } from './FlowMap';
+import {
+  FlowMap,
+  REMOTE_ZONE_CAPTION,
+  EHR_PROVIDER_LABEL,
+  CONFORMANT_PROVIDER_LABEL,
+  edgeStatesFor,
+  edgeForStep,
+} from './FlowMap';
 import { buildRunStory } from './inspect';
 import type { Step, RunStory } from './inspect';
 import type { KitEvent } from './types';
@@ -142,6 +149,19 @@ function validateStep(): Step {
   };
 }
 
+function sorStep(op = 'OpenOrder'): Step {
+  return {
+    id: '9',
+    kind: 'sor',
+    legType: 'sor.read',
+    status: 'ok',
+    request: { seq: 9, time: '2026-07-03T00:00:00Z', kind: 'sor.read', op, detail: 'found' },
+    sorOp: op,
+    sorDetail: 'found',
+    narration: 'sor narration',
+  };
+}
+
 const NODE_IDS = ['provider', 'gateway', 'validator', 'hub', 'payer-gateway', 'payer-engine'];
 
 function getNode(id: string): HTMLElement {
@@ -168,14 +188,21 @@ describe('FlowMap — node rail + remote zone', () => {
     );
   });
 
-  it('ehr lane: provider node is labeled "Plain EHR (seeded data source)", marked data-static="true", and never lit even with ingress steps', () => {
+  it('ehr lane WITHOUT sor steps: provider node static + never lit (old-gateway fallback)', () => {
     const story: RunStory = { runId: 'run-1', steps: [ingressStep()], audit: [] };
     render(<FlowMap story={story} lane="ehr" onSelectStep={() => {}} />);
-
     const provider = getNode('provider');
     expect(provider.textContent).toContain(EHR_PROVIDER_LABEL);
     expect(provider.getAttribute('data-static')).toBe('true');
     expect(provider.className).not.toContain('lit');
+  });
+
+  it('ehr lane WITH sor steps: provider node lights for real and is not static', () => {
+    const story: RunStory = { runId: 'run-1s', steps: [sorStep()], audit: [] };
+    render(<FlowMap story={story} lane="ehr" onSelectStep={() => {}} />);
+    const provider = getNode('provider');
+    expect(provider.className).toContain('lit');
+    expect(provider.getAttribute('data-static')).not.toBe('true');
   });
 
   it('conformant lane: provider node is labeled "Provider system" and lights when the story has ingress steps', () => {
@@ -380,7 +407,7 @@ function okUnknownLegTypeStep(): Step {
 }
 
 describe('FlowMap — providerLabel override', () => {
-  it('ehr lane: providerLabel overrides the node text but keeps data-static="true" and never lit', () => {
+  it('ehr lane WITHOUT sor steps: providerLabel overrides the node text but keeps data-static="true" and never lit', () => {
     const story: RunStory = { runId: 'run-p1', steps: [ingressStep()], audit: [] };
     render(
       <FlowMap
@@ -395,6 +422,23 @@ describe('FlowMap — providerLabel override', () => {
     expect(provider.textContent).toContain('Your EHR (FHIR data source)');
     expect(provider.getAttribute('data-static')).toBe('true');
     expect(provider.className).not.toContain('lit');
+  });
+
+  it('ehr lane WITH sor steps: providerLabel overrides the node text and lights for real (label still overrides; lit follows the sor rule)', () => {
+    const story: RunStory = { runId: 'run-p1s', steps: [sorStep()], audit: [] };
+    render(
+      <FlowMap
+        story={story}
+        lane="ehr"
+        providerLabel="Your EHR (FHIR data source)"
+        onSelectStep={() => {}}
+      />,
+    );
+
+    const provider = getNode('provider');
+    expect(provider.textContent).toContain('Your EHR (FHIR data source)');
+    expect(provider.className).toContain('lit');
+    expect(provider.getAttribute('data-static')).not.toBe('true');
   });
 
   it('conformant lane: providerLabel overrides the node text and still lights on ingress', () => {
@@ -517,5 +561,144 @@ describe('FlowMap — fixture replay (run-ehr-uc03.json)', () => {
     for (const id of ['hub', 'payer-gateway', 'payer-engine']) {
       expect(getNode(id).className).toContain('lit');
     }
+  });
+});
+
+describe('edgeStatesFor', () => {
+  it('ehr lane, no sor: src is the static fallback', () => {
+    expect(edgeStatesFor([validateStep()], 'ehr').src).toBe('static');
+  });
+  it('ehr lane, sor present: src lights both directions', () => {
+    expect(edgeStatesFor([sorStep()], 'ehr').src).toEqual({ out: true, back: true });
+  });
+  it('conformant lane: src lights out on ingress, back only when responded', () => {
+    const open = { ...ingressStep(), response: undefined, status: 'open' as const, httpStatus: undefined };
+    expect(edgeStatesFor([open], 'conformant').src).toEqual({ out: true, back: false });
+    expect(edgeStatesFor([ingressStep()], 'conformant').src).toEqual({ out: true, back: true });
+  });
+  it('leg edge: open leg lights out only; ok leg lights back; failed leg never lights back', () => {
+    expect(edgeStatesFor([openLegStep()], 'ehr').leg).toEqual({ out: true, back: false });
+    expect(edgeStatesFor([okLegStep()], 'ehr').leg).toEqual({ out: true, back: true });
+    expect(edgeStatesFor([failedLegStep()], 'ehr').leg).toEqual({ out: true, back: false });
+  });
+  it('validate edge lights both on any validate step', () => {
+    expect(edgeStatesFor([validateStep()], 'ehr').val).toEqual({ out: true, back: true });
+  });
+});
+
+describe('edgeForStep', () => {
+  it('sor maps to the provider edge in the ehr lane and to NO edge in the conformant lane', () => {
+    expect(edgeForStep(sorStep(), 'ehr')).toBe('src');
+    expect(edgeForStep(sorStep(), 'conformant')).toBeUndefined();
+  });
+  it('ingress→src, validate→val, leg→leg', () => {
+    expect(edgeForStep(ingressStep(), 'conformant')).toBe('src');
+    expect(edgeForStep(validateStep(), 'ehr')).toBe('val');
+    expect(edgeForStep(okLegStep(), 'ehr')).toBe('leg');
+  });
+});
+
+describe('FlowMap — replay run', () => {
+  function stubReducedMotion() {
+    return vi.spyOn(window, 'matchMedia').mockReturnValue({
+      matches: true,
+      media: '',
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as MediaQueryList);
+  }
+
+  it('during replay the story lights progressively: after replayToken fires with reduced motion, all edges/nodes end lit and onReplayEnd was called', async () => {
+    const spy = stubReducedMotion();
+    try {
+      const story: RunStory = {
+        runId: 'run-replay',
+        steps: [sorStep(), validateStep(), okLegStep()],
+        audit: [],
+      };
+      const onReplayEnd = vi.fn();
+      const { rerender } = render(
+        <FlowMap story={story} lane="ehr" onSelectStep={() => {}} replayToken={0} onReplayEnd={onReplayEnd} />,
+      );
+      rerender(
+        <FlowMap story={story} lane="ehr" onSelectStep={() => {}} replayToken={1} onReplayEnd={onReplayEnd} />,
+      );
+
+      await waitFor(() => expect(onReplayEnd).toHaveBeenCalledTimes(1));
+
+      expect(getNode('provider').className).toContain('lit');
+      expect(getNode('gateway').className).toContain('lit');
+      expect(getNode('validator').className).toContain('lit');
+      for (const id of ['hub', 'payer-gateway', 'payer-engine']) {
+        expect(getNode(id).className).toContain('lit');
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('unmount mid-replay still signals onReplayEnd exactly once — the caller never wedges', async () => {
+    // A CONFORMANT-lane sor step is edge-less: replay parks on a real ~300ms
+    // gateway-flash dwell (not a jsdom-instant pulse), so the replay is
+    // genuinely in-flight when we unmount. Reduced motion is deliberately NOT
+    // stubbed here — that would collapse the dwell to 0ms and let the loop
+    // finish before the unmount, which would exercise the normal-completion
+    // path rather than the cleanup path this test is for.
+    const story: RunStory = {
+      runId: 'run-replay-unmount',
+      steps: [sorStep(), sorStep(), sorStep()],
+      audit: [],
+    };
+    const onReplayEnd = vi.fn();
+    const { rerender, unmount } = render(
+      <FlowMap story={story} lane="conformant" onSelectStep={() => {}} replayToken={0} onReplayEnd={onReplayEnd} />,
+    );
+    // Start the replay, then tear the map down before the loop finishes
+    // sequencing every step (the RunInspector loading-early-return case).
+    rerender(
+      <FlowMap story={story} lane="conformant" onSelectStep={() => {}} replayToken={1} onReplayEnd={onReplayEnd} />,
+    );
+    unmount();
+
+    // Wait past the ~300ms dwell so any still-pending loop iteration resolves:
+    // the end must have fired on the unmount cleanup, and must NOT fire again.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(onReplayEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not replay on the initial mount, even when replayToken already carries a value', async () => {
+    const spy = stubReducedMotion();
+    try {
+      const story: RunStory = { runId: 'run-replay-mount', steps: [sorStep()], audit: [] };
+      const onReplayEnd = vi.fn();
+      render(
+        <FlowMap story={story} lane="ehr" onSelectStep={() => {}} replayToken={3} onReplayEnd={onReplayEnd} />,
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(onReplayEnd).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('FlowMap — step selection replays its edge', () => {
+  it('selecting a leg step marks the leg edge sel and dims the others', () => {
+    const story: RunStory = { runId: 'r', steps: [validateStep(), okLegStep()], audit: [] };
+    render(<FlowMap story={story} lane="ehr" selectedStepId="3" onSelectStep={() => {}} />);
+    expect(document.querySelector('path[data-edge="leg"][data-dir="out"]')?.classList.contains('sel')).toBe(true);
+    expect(document.querySelector('path[data-edge="val"][data-dir="out"]')?.classList.contains('dim')).toBe(true);
+  });
+
+  it('selecting a conformant-lane sor step selects NO edge and flashes the gateway node', () => {
+    const story: RunStory = { runId: 'r', steps: [sorStep()], audit: [] };
+    render(<FlowMap story={story} lane="conformant" selectedStepId="9" onSelectStep={() => {}} />);
+    expect(document.querySelector('path.sel')).toBeNull();
+    expect(getNode('gateway').className).toContain('flash');
   });
 });

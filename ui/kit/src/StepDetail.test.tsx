@@ -8,6 +8,8 @@ import {
   OPEN_STEP_NOTE,
   SUBSTRATE_FRAMING,
   VALIDATE_SUBSTRATE_NOTE,
+  SOR_LOCAL_READ_NOTE,
+  directionRows,
 } from './StepDetail';
 import { buildRunStory } from './inspect';
 import type { Step } from './inspect';
@@ -106,6 +108,130 @@ function invalidValidateStep(): Step {
     narration: 'The Smart Gateway found this resource did not validate against its FHIR profile.',
   };
 }
+
+// The following four fixtures (okLegStep/sorStep/validateStep/ingressStep)
+// are duplicated from FlowMap.test.tsx rather than shared via a module —
+// this file already defines its OWN openLegStep()/failedLegStep() (reused
+// below for the directionRows open/failed cases) with different literal
+// field values than FlowMap.test.tsx's same-named helpers, so importing
+// FlowMap's versions would collide. Duplicating just these four keeps the
+// diff smallest without renaming either file's existing fixtures.
+function okLegStep(counterpart = 'payer'): Step {
+  return {
+    id: '3',
+    kind: 'leg',
+    legType: 'pas-claim',
+    status: 'ok',
+    request: {
+      seq: 3,
+      time: '2026-07-03T00:00:00Z',
+      kind: 'leg.originated',
+      legType: 'pas-claim',
+      correlationId: 'c-2',
+      counterpart,
+    },
+    response: {
+      seq: 4,
+      time: '2026-07-03T00:00:01Z',
+      kind: 'leg.response',
+      legType: 'pas-claim',
+      correlationId: 'c-2',
+    },
+    correlationId: 'c-2',
+    counterpart,
+    narration: 'ok leg narration',
+  };
+}
+
+function sorStep(op = 'OpenOrder'): Step {
+  return {
+    id: '9',
+    kind: 'sor',
+    legType: 'sor.read',
+    status: 'ok',
+    request: { seq: 9, time: '2026-07-03T00:00:00Z', kind: 'sor.read', op, detail: 'found' },
+    sorOp: op,
+    sorDetail: 'found',
+    narration: 'sor narration',
+  };
+}
+
+// A sor step whose returned resource bytes are carried on request.payload
+// (the observer frame's payload = the RETURNED resource for a sor.read) — a
+// distinctive marker string proves whether/where those bytes reach the DOM.
+const SOR_RETURNED_MARKER = 'sor-returned-marker';
+function sorStepWithPayload(op = 'OpenOrder'): Step {
+  return {
+    id: '9',
+    kind: 'sor',
+    legType: 'sor.read',
+    status: 'ok',
+    request: {
+      seq: 9,
+      time: '2026-07-03T00:00:00Z',
+      kind: 'sor.read',
+      op,
+      detail: 'found',
+      payload: { resourceType: 'ServiceRequest', id: SOR_RETURNED_MARKER },
+    },
+    sorOp: op,
+    sorDetail: 'found',
+    narration: 'sor narration',
+  };
+}
+
+function validateStep(): Step {
+  return {
+    id: '5',
+    kind: 'validate',
+    legType: 'validate.result',
+    status: 'ok',
+    request: { seq: 7, time: '2026-07-03T00:00:00Z', kind: 'validate.result', detail: 'valid' },
+    validation: 'valid',
+    narration: 'validate narration',
+  };
+}
+
+function ingressStep(): Step {
+  return {
+    id: '1',
+    kind: 'ingress',
+    legType: 'crd-ingress',
+    status: 'ok',
+    request: { seq: 1, time: '2026-07-03T00:00:00Z', kind: 'ingress.received', legType: 'crd-ingress' },
+    response: { seq: 2, time: '2026-07-03T00:00:01Z', kind: 'ingress.responded', legType: 'crd-ingress', detail: '200' },
+    httpStatus: '200',
+    narration: 'ingress narration',
+  };
+}
+
+describe('directionRows', () => {
+  it('ok leg: request out via the Hub, verified response back', () => {
+    const rows = directionRows(okLegStep());
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ arrow: '→', who: 'Smart Gateway → Hub → payer', what: 'pas-claim request' });
+    expect(rows[1].who).toBe('payer → Hub → Smart Gateway');
+    expect(rows[1].what).toMatch(/verified response/);
+  });
+  it('open leg: outbound row only — never claims a response it has not seen', () => {
+    expect(directionRows(openLegStep())).toHaveLength(1);
+  });
+  it('failed leg: back row says no verified response', () => {
+    const rows = directionRows(failedLegStep());
+    expect(rows[1].what).toMatch(/no verified response/);
+  });
+  it('sor step: data-source read, both rows, no Hub/counterparty language', () => {
+    const rows = directionRows(sorStep());
+    expect(rows[0].who).toBe('Smart Gateway → its data source');
+    expect(rows[0].what).toBe('read: OpenOrder');
+    expect(rows[1].what).toBe('found');
+    expect(JSON.stringify(rows)).not.toMatch(/Hub|counterpart/);
+  });
+  it('validate + ingress rows', () => {
+    expect(directionRows(validateStep())[1].what).toBe('result: valid');
+    expect(directionRows(ingressStep())[1].what).toBe('HTTP 200 response');
+  });
+});
 
 describe('StepDetail — clinical view', () => {
   it('renders the narration paragraph and Request/Response JsonView sections from the frames', () => {
@@ -219,7 +345,9 @@ describe('StepDetail — clinical view', () => {
     const step = conformantStory.steps.find((s) => s.kind === 'ingress' && s.httpStatus !== undefined);
     expect(step).toBeDefined();
     render(<StepDetail step={step as Step} view="clinical" />);
-    expect(screen.getByText(/200/)).toBeDefined();
+    // Disambiguated from the dir-rows "HTTP 200 response" row —
+    // this test's own intent is the dedicated `.http-status` paragraph.
+    expect(document.querySelector('.http-status')?.textContent).toMatch(/200/);
   });
 
   it('an open step (no response) shows the pinned open-step sentence instead of a Response payload', () => {
@@ -259,6 +387,28 @@ describe('StepDetail — clinical view', () => {
     expect(screen.queryByText('Response')).toBeNull();
     expect(screen.getByText('Resource')).toBeDefined();
     expect(screen.getByText('Invalid')).toBeDefined();
+  });
+
+  // CRITICAL — shown-never-faked: a `sor` step is a single-frame LOCAL read;
+  // its request.payload holds the RETURNED resource bytes, and it never has a
+  // response. Rendering it as a paired exchange would (a) mislabel the
+  // returned bytes as "Request", and (b) show OPEN_STEP_NOTE ("flow stopped
+  // here") next to a completed read. Both are suppressed; the returned bytes
+  // are labeled for what they are + a local-read note replaces the false
+  // Response pane.
+  it('a sor step with payload labels the returned bytes "Returned resource" (not "Request"), suppresses the Response pane + OPEN_STEP_NOTE, and adds a local-read note', () => {
+    render(<StepDetail step={sorStepWithPayload()} view="clinical" />);
+
+    expect(screen.queryByText(OPEN_STEP_NOTE)).toBeNull();
+    expect(screen.queryByText('Request')).toBeNull();
+    expect(screen.queryByText('Response')).toBeNull();
+    expect(screen.getByText('Returned resource')).toBeDefined();
+    // the returned bytes ARE rendered (clinical view) — the marker is visible
+    expect(document.body.textContent).toContain(SOR_RETURNED_MARKER);
+    expect(screen.getByText(SOR_LOCAL_READ_NOTE)).toBeDefined();
+    expect(SOR_LOCAL_READ_NOTE).toBe(
+      "Read locally from the gateway's configured data source — this step never crosses the Hub.",
+    );
   });
 });
 
@@ -351,5 +501,22 @@ describe('StepDetail — substrate view', () => {
       'validation-detail',
     );
     expect(document.querySelectorAll('.failure-detail')).toHaveLength(0);
+  });
+
+  // CRITICAL — shown-never-faked: a `sor` step never crosses the Hub, so the
+  // substrate view must NOT render SUBSTRATE_FRAMING ("sealed envelope
+  // through the payload-blind Hub") nor the false OPEN_STEP_NOTE. It shows
+  // the honest read facts (op + outcome + returned size) and the local-read
+  // note. The returned resource bytes still never reach the DOM as JSON.
+  it('a sor step suppresses SUBSTRATE_FRAMING + OPEN_STEP_NOTE, shows honest read facts + local-read note, and never renders the returned JSON', () => {
+    render(<StepDetail step={sorStepWithPayload()} view="substrate" />);
+
+    expect(screen.queryByText(SUBSTRATE_FRAMING)).toBeNull();
+    expect(screen.queryByText(OPEN_STEP_NOTE)).toBeNull();
+    expect(screen.getByText(SOR_LOCAL_READ_NOTE)).toBeDefined();
+    // the read op is a fact worth surfacing; the returned bytes are not
+    expect(screen.getByText('OpenOrder')).toBeDefined();
+    expect(screen.getByText('found')).toBeDefined();
+    expect(document.body.textContent).not.toContain(SOR_RETURNED_MARKER);
   });
 });

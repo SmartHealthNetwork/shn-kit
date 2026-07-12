@@ -59,6 +59,75 @@ export const SUBSTRATE_FRAMING =
 export const VALIDATE_SUBSTRATE_NOTE =
   "Checked locally against the Kit's validator — this step never crosses the Hub.";
 
+// Shown-never-faked: a `sor` step is a SINGLE observer frame — one read of
+// the gateway's configured data source. Its request.payload holds the
+// RETURNED resource bytes (never a "request"), and it never has a response,
+// so it never crosses the Hub. Both views borrow this honest local-read line
+// instead of the leg-step "Request/Response" pairing (clinical) or the
+// SUBSTRATE_FRAMING sealed-envelope claim (substrate). Pinned exactly; do not
+// paraphrase. "gateway"/"data source" register — never "substrate".
+export const SOR_LOCAL_READ_NOTE =
+  "Read locally from the gateway's configured data source — this step never crosses the Hub.";
+
+export interface DirectionRow {
+  arrow: '→' | '←';
+  who: string;
+  what: string;
+}
+
+// directionRows: the who-sent-what-to-whom summary above the narration —
+// derived ONLY from what the step observed (an open leg gets no back row;
+// a failed leg's back row says exactly that).
+export function directionRows(step: Step): DirectionRow[] {
+  switch (step.kind) {
+    case 'leg': {
+      const cp = step.counterpart ?? 'the hosted counterparty';
+      const rows: DirectionRow[] = [
+        { arrow: '→', who: `Smart Gateway → Hub → ${cp}`, what: `${step.request?.op ?? step.legType} request` },
+      ];
+      if (step.status === 'ok') {
+        rows.push({ arrow: '←', who: `${cp} → Hub → Smart Gateway`, what: `${step.response?.op ?? 'response'} — verified response` });
+      } else if (step.status === 'failed') {
+        rows.push({ arrow: '←', who: `${cp} → Hub → Smart Gateway`, what: `no verified response — ${step.response?.detail ?? 'the leg did not complete'}` });
+      }
+      return rows;
+    }
+    case 'ingress': {
+      const rows: DirectionRow[] = [
+        { arrow: '→', who: 'Provider system → Smart Gateway', what: `${step.legType} request received` },
+      ];
+      if (step.response !== undefined) {
+        rows.push({ arrow: '←', who: 'Smart Gateway → Provider system', what: `HTTP ${step.httpStatus ?? '?'} response` });
+      }
+      return rows;
+    }
+    case 'validate':
+      return [
+        { arrow: '→', who: 'Smart Gateway → Validator', what: 'resource sent for $validate' },
+        { arrow: '←', who: 'Validator → Smart Gateway', what: `result: ${step.validation ?? 'unknown'}` },
+      ];
+    case 'sor':
+      return [
+        { arrow: '→', who: 'Smart Gateway → its data source', what: `read: ${step.sorOp ?? 'record'}` },
+        { arrow: '←', who: 'its data source → Smart Gateway', what: step.sorDetail ?? 'returned' },
+      ];
+  }
+}
+
+function DirectionRows({ step }: { step: Step }): JSX.Element {
+  return (
+    <div className="dir-rows">
+      {directionRows(step).map((r, i) => (
+        <div key={i} className="dir-row">
+          <span className="arr">{r.arrow}</span>
+          <span className="who">{r.who}</span>
+          <span className="what">{r.what}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function sizeLabel(payload: unknown): string | undefined {
   if (payload === undefined) return undefined;
   const bytes = JSON.stringify(payload).length;
@@ -101,8 +170,37 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
   const rootClassName = `detail step-status-${step.status} step-kind-${step.kind}`;
   const failureDetail = step.status === 'failed' ? step.response?.detail ?? step.request?.detail : undefined;
   const isValidate = step.kind === 'validate';
+  const isSor = step.kind === 'sor';
 
   if (view === 'substrate') {
+    // sor carve-out: a sor read never crosses the Hub, so SUBSTRATE_FRAMING's
+    // "sealed envelope through the payload-blind Hub" claim would be false,
+    // and the generic leg-facts table (correlation id / counterpart /
+    // authority frames) carries none of this single-frame read's facts.
+    // Show the honest read facts (op + outcome + returned size — never the
+    // returned JSON) and the local-read line, mirroring the validate carve-
+    // out above.
+    if (isSor) {
+      const returnedSize = sizeLabel(step.request?.payload);
+      return (
+        <div className={rootClassName} data-view="substrate">
+          <dl className="facts">
+            <dt>Read</dt>
+            <dd>{step.sorOp ?? '—'}</dd>
+            <dt>Outcome</dt>
+            <dd>{step.sorDetail ?? '—'}</dd>
+            {returnedSize && (
+              <>
+                <dt>Returned size</dt>
+                <dd>{returnedSize}</dd>
+              </>
+            )}
+          </dl>
+          <p className="sor-local-read-note">{SOR_LOCAL_READ_NOTE}</p>
+        </div>
+      );
+    }
+
     // Finding 1: validate steps never gate on `!step.response` (they never
     // have one, by design — makeValidateStep is single-frame). Rendering the
     // generic leg-facts dl + SUBSTRATE_FRAMING + OPEN_STEP_NOTE for a
@@ -181,6 +279,7 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
     // step kind that isn't a leg; renamed to "Resource"/"Search resource".
     return (
       <div className={rootClassName} data-view="clinical">
+        <DirectionRows step={step} />
         <p className="narr">{step.narration}</p>
         <label className="json-search-label">
           Search resource
@@ -202,8 +301,43 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
     );
   }
 
+  // sor carve-out: a sor step's request.payload is the RETURNED resource, not
+  // a request, and there is no response — so the leg-step "Request"/"Response"
+  // panes + OPEN_STEP_NOTE would be three false claims (mislabeled bytes, a
+  // phantom empty Response, and a "flow stopped here" note next to a
+  // completed read). Render the returned bytes honestly (only when present)
+  // + a local-read note. Mirrors the validate carve-out above.
+  if (isSor) {
+    const returned = step.request?.payload;
+    return (
+      <div className={rootClassName} data-view="clinical">
+        <DirectionRows step={step} />
+        <p className="narr">{step.narration}</p>
+        {returned !== undefined && (
+          <>
+            <label className="json-search-label">
+              Search returned resource
+              <input
+                type="text"
+                className="json-search-input"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </label>
+            <div className="pane returned-payload">
+              <h4>Returned resource</h4>
+              <JsonView value={returned} search={search} />
+            </div>
+          </>
+        )}
+        <p className="sor-local-read-note">{SOR_LOCAL_READ_NOTE}</p>
+      </div>
+    );
+  }
+
   return (
     <div className={rootClassName} data-view="clinical">
+      <DirectionRows step={step} />
       <p className="narr">{step.narration}</p>
       {step.kind === 'ingress' && step.httpStatus !== undefined && (
         <p className="http-status">HTTP {step.httpStatus}</p>

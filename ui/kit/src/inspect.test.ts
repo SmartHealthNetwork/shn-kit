@@ -63,10 +63,11 @@ describe('buildRunStory — replay against the conformant fixture (run-conforman
     expect(legSteps.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('pairs exactly 6 interleaved steps — 3 ingress + 3 leg (ground truth: hand-traced fixture)', () => {
-    expect(story.steps).toHaveLength(6);
+  it('pairs exactly 12 interleaved steps — 3 ingress + 3 leg + 6 sor (ground truth: hand-traced fixture, re-captured with sor.read frames)', () => {
+    expect(story.steps).toHaveLength(12);
     expect(story.steps.filter((s) => s.kind === 'ingress')).toHaveLength(3);
     expect(story.steps.filter((s) => s.kind === 'leg')).toHaveLength(3);
+    expect(story.steps.filter((s) => s.kind === 'sor')).toHaveLength(6);
   });
 
   it('leaves zero steps stuck open (the drain barrier’s client-visible payoff)', () => {
@@ -278,5 +279,43 @@ describe('parseObserver', () => {
     const frame = parseObserver(e);
     expect(frame?.time).toBe('2026-07-03T23:20:25.923727-04:00');
     expect(frame?.seq).toBe(1);
+  });
+});
+
+describe('sor.read steps', () => {
+  const sorEvent = (seq: number, op: string, detail: string): KitEvent =>
+    evt({
+      seq,
+      runId: 'run-s',
+      type: 'observer',
+      observer: observerFrame({ seq, kind: 'sor.read', direction: 'sor', op, detail }),
+    });
+
+  it('a sor.read frame becomes a single ok step carrying op and detail', () => {
+    const story = buildRunStory('run-s', [sorEvent(10, 'OpenOrder', 'found')]);
+    expect(story.steps).toHaveLength(1);
+    const s = story.steps[0];
+    expect(s.kind).toBe('sor');
+    expect(s.legType).toBe('sor.read');
+    expect(s.status).toBe('ok');
+    expect(s.sorOp).toBe('OpenOrder');
+    expect(s.sorDetail).toBe('found');
+  });
+
+  it('a not-found read is still an ok step (a miss is a normal branch)', () => {
+    const story = buildRunStory('run-s', [sorEvent(11, 'SupplementalReport', 'not found')]);
+    expect(story.steps[0].status).toBe('ok');
+    expect(story.steps[0].sorDetail).toBe('not found');
+  });
+
+  it('sor narration is data-source-flavored, known op', () => {
+    const story = buildRunStory('run-s', [sorEvent(12, 'OpenOrder', 'found')]);
+    expect(story.steps[0].narration).toBe('The gateway read the member’s open order from its data source.');
+  });
+
+  it('sor narration fallback for an unknown op NEVER says "hosted counterparty"', () => {
+    const story = buildRunStory('run-s', [sorEvent(13, 'FutureNewRead', 'found')]);
+    expect(story.steps[0].narration).toBe('The gateway read FutureNewRead from its data source.');
+    expect(story.steps[0].narration).not.toMatch(/hosted counterparty/);
   });
 });

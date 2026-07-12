@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RunInspector } from './RunInspector';
 import { buildRunStory } from './inspect';
@@ -275,6 +275,104 @@ describe('RunInspector — posture forwarding', () => {
         "checked by the Kit's stand-in validator — real conformance validation is off in this development build",
       ),
     ).toBeDefined();
+  });
+});
+
+describe('RunInspector — Replay run button enable rule (source is IRRELEVANT)', () => {
+  it('Replay run is enabled for a history-backed completed story (has terminal)', () => {
+    const summary: HistorySummary = {
+      runId: ehrRunId,
+      lane: 'ehr',
+      uc: 'uc03',
+      branch: 'covered',
+      state: 'passed',
+      detail: 'approved, auth #A1',
+      time: '2026-07-03T00:00:00Z',
+      eventCount: ehrEvents.length,
+    };
+    render(<RunInspector runId={ehrRunId} events={ehrEvents} source="history" results={[]} summary={summary} />);
+
+    const button = screen.getByRole('button', { name: 'Replay run' });
+    expect(button).not.toBeDisabled();
+  });
+
+  it('Replay run is enabled for a live-sourced story whose terminal already arrived — a just-completed run stays source: "live" until ring eviction (useRunEvents.ts:31), so gating on source would disable the button exactly when users most want it', () => {
+    render(<RunInspector runId={ehrRunId} events={ehrEvents} source="live" results={[]} />);
+
+    expect(ehrStory.terminal).toBeDefined();
+    const button = screen.getByRole('button', { name: 'Replay run' });
+    expect(button).not.toBeDisabled();
+  });
+
+  it('Replay run is disabled while the story has no terminal (still streaming)', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started', runId: 'run-streaming', lane: 'ehr', uc: 'uc03' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        runId: 'run-streaming',
+        observer: observerFrame({
+          kind: 'leg.originated',
+          legType: 'pas-claim',
+          correlationId: 'c-1',
+          counterpart: 'payer',
+        }),
+      }),
+      // no run.finished / run.failed — still in flight
+    ];
+    render(<RunInspector runId="run-streaming" events={events} source="live" results={[]} />);
+
+    const button = screen.getByRole('button', { name: 'Replay run' });
+    expect(button).toBeDisabled();
+  });
+});
+
+describe('RunInspector — Replay run button click behavior', () => {
+  it('clicking Replay run increments the replay token passed to FlowMap (does not throw, button stays present)', async () => {
+    const user = userEvent.setup();
+    render(<RunInspector runId={ehrRunId} events={ehrEvents} source="live" results={[]} />);
+
+    const button = screen.getByRole('button', { name: 'Replay run' });
+    expect(button).not.toBeDisabled();
+    await user.click(button);
+
+    expect(screen.getByRole('button', { name: 'Replay run' })).toBeDefined();
+  });
+
+  // Deferred finding 8 regression: the Replay button's disabled -> re-enabled
+  // round trip. Clicking sets `replaying` (disable); FlowMap's onReplayEnd
+  // clears it (re-enable). With FlowMap now ALWAYS signalling its end, the
+  // button can never wedge disabled after a replay. A CONFORMANT-lane sor step
+  // is edge-less (FlowMap flashes the gateway node for a real ~300ms dwell
+  // instead of pulsing a drawn edge), which holds the replay genuinely
+  // in-flight long enough for the disabled state to be observable in jsdom
+  // (a pulsed edge resolves synchronously here, draining before we could
+  // observe it) — so this asserts BOTH halves of the round trip deterministically.
+  it('disables the Replay button while a replay is in flight and re-enables it once the run signals its end', async () => {
+    const user = userEvent.setup();
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started', runId: 'run-replay-rt', lane: 'conformant', uc: 'uc03' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        runId: 'run-replay-rt',
+        observer: observerFrame({ kind: 'sor.read', op: 'ResolvePatient', detail: 'found', seq: 2 }),
+      }),
+      evt({ seq: 3, type: 'run.finished', runId: 'run-replay-rt' }),
+    ];
+    render(<RunInspector runId="run-replay-rt" events={events} source="live" results={[]} />);
+
+    const button = screen.getByRole('button', { name: 'Replay run' });
+    expect(button).not.toBeDisabled();
+
+    await user.click(button);
+    // in flight -> disabled (the edge-less gateway-flash dwell holds it)
+    expect(screen.getByRole('button', { name: 'Replay run' })).toBeDisabled();
+
+    // onReplayEnd fires -> re-enabled (never wedged)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Replay run' })).not.toBeDisabled(),
+    );
   });
 });
 
