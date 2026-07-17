@@ -259,23 +259,19 @@ func ehrUC08(rn *Runner, branch string) (string, error) {
 // amendmentCorr/attested/qrAnswers, decode as zero values here and are
 // unused), so this cribs ehrUC03's own response-handling shape verbatim.
 //
-// When ehrScenario's error is one of the two recognized member-unknown wire
-// shapes, the row names the constraint in plain language instead of
-// relaying the raw status/body — but the two shapes get DIFFERENT
-// sentences (see freeformProviderUnknownMemberSentence and
-// freeformPayerRoutingFailedSentence's docs), because they are not the same
-// claim: the provider shape is a definitive fact about the operator's OWN
-// connected system, while the payer shape is an opaque relay that a payer
-// outage would also produce, so it earns likely-cause phrasing rather than
-// a flat assertion.
+// When ehrScenario's error is the recognized PROVIDER-side member-unknown wire
+// shape — a definitive fact about the operator's OWN connected system — the row
+// names the constraint in plain language (freeformProviderUnknownMemberSentence)
+// instead of relaying the raw status/body. A PAYER-side failure is NOT relabeled:
+// since shn-gateway v0.28.0 the payer's real application answer is relayed
+// verbatim through the sealed message frame (its real status + OperationOutcome),
+// so surfacing that genuine body beats the old likely-cause sentence the runner
+// used to synthesize when the payload-blind Hub discarded the payer's reason.
 func ehrFreeform(rn *Runner, member string) (string, error) {
 	var out uc03Resp
 	if err := ehrScenario(rn, "/scenario/dispatch", map[string]string{"member": member}, &out); err != nil {
 		if isFreeformProviderUnknownMember(err) {
 			return "", fmt.Errorf("runner: ehr/freeform(%s): %s (%v)", member, freeformProviderUnknownMemberSentence, err)
-		}
-		if isFreeformPayerRoutingFailed(err) {
-			return "", fmt.Errorf("runner: ehr/freeform(%s): %s (%v)", member, freeformPayerRoutingFailedSentence, err)
 		}
 		return "", err
 	}
@@ -298,59 +294,21 @@ func ehrFreeform(rn *Runner, member string) (string, error) {
 // framing the payer-side shape below actually needs.
 const freeformProviderUnknownMemberSentence = "this member id isn't in the connected system's data — check the id or refresh the patient list (a browsed patient always has one)"
 
-// freeformPayerRoutingFailedSentence is the plain-language sentence for the
-// PAYER-side wire shape (the realistic bring-your-own case: the member
-// exists in the operator's own connected EHR — originateDispatch's own
-// ResolvePatient already passed — but the payer counterparty may not cover
-// it) — status 502, body {"error":"hub routing failed"}.
-// gateway/engine/gateway.go's OriginateLeg wraps EVERY postEnvelope failure
-// into this one deliberately terse string (its own comment), and
-// internal/hubsvc/hubsvc.go's /route handler (:472/:481) deliberately
-// answers "forward to recipient failed" rather than relay the recipient's
-// real body — the payer's own reason (e.g. its own 400 "unknown member")
-// is visible only in hub/payer SERVER LOGS, never on this wire. Because the
-// payload-blind Hub discards that reason, this exact byte shape is also
-// what a payer OUTAGE produces — so unlike the provider-side sentence
-// above, this one is deliberately LIKELY-CAUSE phrasing, not a definitive
-// assertion: an earlier draft of this sentence asserted the payer cause
-// outright, but that premise proved false on the wire once traced live
-// (twice, at exactly this byte shape, before a persona-seeding fix —
-// `detail="runner: POST /scenario/dispatch: status 502:
-// {\"error\":\"hub routing failed\"}\n"`, from two different pre-fix
-// downstream causes), so a definitive assertion would have over-claimed.
-// It remains what a genuinely arbitrary
-// bring-your-own member produces today — the persona-seeding fix only seeded the
-// two DEMO order-dispatch personas, not arbitrary partner data.
-const freeformPayerRoutingFailedSentence = "the prior authorization couldn't be routed to completion with the payer — when running against your own data, the most common cause is a member id the payer counterparty doesn't cover (see the member requirements note)"
-
 // isFreeformProviderUnknownMember recognizes the PROVIDER-side wire shape
 // (status 400, body {"error":"unknown member"}) — see
 // freeformProviderUnknownMemberSentence's doc for the origin. Every other
-// failure (e.g. a genuine policy denial, "preauthorization not approved" —
-// gateway/engine/pas_tail.go, originate.go) keeps its raw detail unchanged;
-// see TestRun_FreeformPolicyDenial_NotRelabeled.
+// failure keeps its raw detail unchanged: a genuine policy denial
+// ("preauthorization not approved") and — since shn-gateway v0.28.0 relays the
+// payer's application answer verbatim through the sealed message frame — the
+// payer's own real status + OperationOutcome both pass through as-is (the runner
+// no longer synthesizes a likely-cause payer-routing sentence). See
+// TestRun_FreeformPolicyDenial_NotRelabeled.
 func isFreeformProviderUnknownMember(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "status 400") && strings.Contains(msg, `"unknown member"`)
-}
-
-// isFreeformPayerRoutingFailed recognizes the PAYER-side wire shape (status
-// 502, body {"error":"hub routing failed"}) — see
-// freeformPayerRoutingFailedSentence's doc for the origin. Matching
-// requires BOTH the status and the exact body text: a different 502 (e.g.
-// {"error":"preauthorization not approved"}, a genuine policy denial)
-// keeps its raw detail unchanged; see
-// TestRun_FreeformPolicyDenial_NotRelabeled — status alone is not the
-// discriminator.
-func isFreeformPayerRoutingFailed(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "status 502") && strings.Contains(msg, `"hub routing failed"`)
 }
 
 // uc07PatientSurfaceReadBack resolves the UC-07 HCPCS PCI (Config.UC07PCI)

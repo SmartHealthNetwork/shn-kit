@@ -1598,28 +1598,20 @@ func TestRun_FreeformMemberUnknown_ProviderSide(t *testing.T) {
 	}
 }
 
-// TestRun_FreeformMemberUnknown_PayerSide: a freeform dispatch whose PAYER
-// counterparty (reached through the Hub) doesn't resolve the caller-named
-// member — status 502, body {"error":"hub routing failed"} — is the
-// realistic bring-your-own shape: the member exists in the operator's own
-// connected EHR (originateDispatch's own ResolvePatient passed) but not in
-// the payer's persona set, so gateway/engine/gateway.go's OriginateLeg wraps
-// the Hub's forwarding failure into this one bland string (its own comment:
-// "the client-facing 502 is deliberately [terse]" — internal/hubsvc/
-// hubsvc.go:472/481 never relays the recipient's real detail to the
-// caller). Byte-accurate to two independent LIVE traces of this exact shape
-// captured before the persona-census fix:
-//
-//	byo_test.go:833: freeform run (member MBR-PD-UC03): state=failed detail="runner: POST /scenario/dispatch: status 502: {\"error\":\"hub routing failed\"}\n"
-//
-// and reconfirmed (same shape, different downstream cause) in a second
-// pre-fix trace: the failure Detail must name the member-coverage constraint,
-// never relay this bare 502.
-func TestRun_FreeformMemberUnknown_PayerSide(t *testing.T) {
+// TestRun_FreeformPayerSide_RelayedVerbatim: since shn-gateway v0.28.0 the
+// payer's real application answer is relayed verbatim through the sealed message
+// frame, so a freeform dispatch whose PAYER counterparty rejects the caller-named
+// member surfaces the payer's genuine status + OperationOutcome body — the runner
+// no longer synthesizes a likely-cause payer-routing sentence (that relabel was a
+// workaround for the payload-blind Hub discarding the payer's reason, now retired
+// with the frame). The provider-side sentence must NOT be applied here (this is a
+// payer answer, not the operator's own connected-system guard).
+func TestRun_FreeformPayerSide_RelayedVerbatim(t *testing.T) {
+	payerBody := `{"resourceType":"OperationOutcome","issue":[{"severity":"error","code":"not-found","diagnostics":"member not found"}]}`
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /scenario/dispatch", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(`{"error":"hub routing failed"}`))
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(payerBody))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -1637,8 +1629,11 @@ func TestRun_FreeformMemberUnknown_PayerSide(t *testing.T) {
 	if res.State != StateFailed {
 		t.Fatalf("Result.State = %q, want failed", res.State)
 	}
-	if !strings.Contains(res.Detail, freeformPayerRoutingFailedSentence) {
-		t.Errorf("Result.Detail = %q, want it to contain the named payer-side sentence %q", res.Detail, freeformPayerRoutingFailedSentence)
+	if !strings.Contains(res.Detail, "member not found") {
+		t.Errorf("Result.Detail = %q, want the payer's verbatim OperationOutcome body passed through", res.Detail)
+	}
+	if strings.Contains(res.Detail, freeformProviderUnknownMemberSentence) {
+		t.Errorf("Result.Detail = %q, must NOT apply the provider-side sentence to a payer answer", res.Detail)
 	}
 }
 
@@ -1678,9 +1673,6 @@ func TestRun_FreeformPolicyDenial_NotRelabeled(t *testing.T) {
 	}
 	if strings.Contains(res.Detail, freeformProviderUnknownMemberSentence) {
 		t.Errorf("Result.Detail = %q, must NOT contain the provider-side unknown-member sentence for a non-member failure", res.Detail)
-	}
-	if strings.Contains(res.Detail, freeformPayerRoutingFailedSentence) {
-		t.Errorf("Result.Detail = %q, must NOT contain the payer-side routing-failed sentence for a non-member failure", res.Detail)
 	}
 }
 

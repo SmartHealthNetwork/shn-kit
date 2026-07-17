@@ -3,8 +3,8 @@ module github.com/SmartHealthNetwork/shn-kit
 go 1.26
 
 require (
-	github.com/SmartHealthNetwork/shn-gateway v0.26.0
-	github.com/SmartHealthNetwork/shn-sdk v0.29.0
+	github.com/SmartHealthNetwork/shn-gateway v0.28.0
+	github.com/SmartHealthNetwork/shn-sdk v0.30.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/zalando/go-keyring v0.2.8
 	software.sslmate.com/src/go-pkcs12 v0.7.3
