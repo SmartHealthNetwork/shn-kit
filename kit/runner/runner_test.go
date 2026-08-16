@@ -690,6 +690,147 @@ func TestRun_ConformantUC03_UnderBFF_StillDriverMinted(t *testing.T) {
 	}
 }
 
+// TestRun_ConformantUC03_BridgeDemoSelectsMember pins the member switch:
+// branch "" drives MBR-COVERED (byte-unchanged fence) and branch
+// "bridge-demo" drives MBR-BRIDGE-DEMO — observed the same way
+// TestRun_ConformantUC03_UnderBFF_StillDriverMinted observes driver-minted
+// origination: a lexical pin on the ingress CRD request body (member appears
+// as context.patientId/prefetch.patient.id/subject.reference — build.go's
+// BuildCRDRequest), this file's precedent for row-behavior observation.
+func TestRun_ConformantUC03_BridgeDemoSelectsMember(t *testing.T) {
+	for _, tc := range []struct {
+		branch     string
+		wantMember string
+		wantPayer  string // the payer VALUE every leg of the run must route on
+		wrongPayer string
+	}{
+		{"", "MBR-COVERED", shnsdk.CMSPayerIdentity.Value, "SHN-BRIDGE-DEMO"},
+		{"bridge-demo", "MBR-BRIDGE-DEMO", "SHN-BRIDGE-DEMO", shnsdk.CMSPayerIdentity.Value},
+	} {
+		t.Run(tc.branch, func(t *testing.T) {
+			var crdBody, pkgBody, submitBody string
+			ingressMux := http.NewServeMux()
+			ingressMux.HandleFunc("POST /cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				crdBody = string(b)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + shnsdk.QuestionnaireCanonicalLumbarMRI + `"]}}]}`))
+			})
+			ingressMux.HandleFunc("POST /Questionnaire/$questionnaire-package", func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				pkgBody = string(b)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"resourceType":"Bundle","type":"collection","entry":[{"resource":{"resourceType":"Questionnaire","id":"pa-lumbar-mri"}}]}`))
+			})
+			ingressMux.HandleFunc("POST /Claim/$submit", func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				submitBody = string(b)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"resourceType":"ClaimResponse","outcome":"complete","preAuthRef":"AUTH-UC03-BRIDGE"}`))
+			})
+			ingressSrv := httptest.NewServer(ingressMux)
+			defer ingressSrv.Close()
+
+			key, err := rsa.GenerateKey(rand.Reader, 2048)
+			if err != nil {
+				t.Fatalf("generate RSA key: %v", err)
+			}
+
+			bus := event.NewBus(fixedClock)
+			rn := New(Config{
+				Driver: scenariodriver.New(scenariodriver.Config{
+					IngressURL:  ingressSrv.URL,
+					IngressBase: ingressSrv.URL,
+					ClientID:    "kit-runner-test",
+					Key:         key,
+				}),
+				Bus: bus,
+			})
+
+			res, err := rn.Run(context.Background(), Req{Lane: "conformant", UC: "uc03", Branch: tc.branch})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if res.State != StatePassed {
+				t.Fatalf("Result.State = %q, want passed (Detail=%q)", res.State, res.Detail)
+			}
+			if !strings.Contains(crdBody, tc.wantMember) {
+				t.Errorf("CRD request body = %s, want it to carry member %q", crdBody, tc.wantMember)
+			}
+			wrongMember := "MBR-BRIDGE-DEMO"
+			if tc.wantMember == "MBR-BRIDGE-DEMO" {
+				wrongMember = "MBR-COVERED"
+			}
+			if strings.Contains(crdBody, wrongMember) {
+				t.Errorf("CRD request body = %s, must NOT carry %q for branch %q", crdBody, wrongMember, tc.branch)
+			}
+			// Routing is payload-FIRST (AI-G13) — the payer holder comes off
+			// the Coverage in each INBOUND request, so all three legs of one run
+			// must name the SAME payer, and it must be the member's own. Selecting
+			// the member without this is the silent misroute the mixed-version gate
+			// caught (a bridge-demo run quietly talking to the CMS payer holder).
+			for _, leg := range []struct{ name, body string }{
+				{"CRD", crdBody}, {"DTR $questionnaire-package", pkgBody}, {"PAS $submit", submitBody},
+			} {
+				if !strings.Contains(leg.body, tc.wantPayer) {
+					t.Errorf("%s request body = %s, want it to route on payer %q for branch %q", leg.name, leg.body, tc.wantPayer, tc.branch)
+				}
+				if strings.Contains(leg.body, tc.wrongPayer) {
+					t.Errorf("%s request body = %s, must NOT carry payer %q for branch %q", leg.name, leg.body, tc.wrongPayer, tc.branch)
+				}
+			}
+		})
+	}
+}
+
+// TestRun_EHRUC03SendsBranch pins the branch channel: ehrUC03 sends
+// {"branch": branch} the same way ehrUC01 does, so a member selection can
+// reach handleUC03 at all (handleUC03 carries the matching req.Branch
+// switch). This is a request-shape pin, not a full member-selection proof
+// (that lives engine-side, TestHandleUC03_BridgeRefuseSelectsMember in
+// gateway/engine): the fake server here just has to see the branch on the wire.
+func TestRun_EHRUC03SendsBranch(t *testing.T) {
+	for _, branch := range []string{"", "bridge-refuse"} {
+		t.Run(branch, func(t *testing.T) {
+			var gotBody string
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /scenario/uc03", func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				gotBody = string(b)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"paRequired":true,"authNumber":"AUTH-BRANCH-TEST","qrItems":[{"linkId":"1","answer":"x","origin":"auto","sourceRef":"Observation/1"}]}`))
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			bus := event.NewBus(fixedClock)
+			busSrv := httptest.NewServer(bus.Handler())
+			defer busSrv.Close()
+			rn := New(Config{
+				Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+				Bus:    bus,
+			})
+
+			res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc03", Branch: branch})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if res.State != StatePassed {
+				t.Fatalf("Result.State = %q, want passed (Detail=%q)", res.State, res.Detail)
+			}
+			want := `{"branch":"` + branch + `"}`
+			if gotBody != want {
+				t.Errorf("request body = %s, want %s", gotBody, want)
+			}
+
+			startEvents := readSSE(t, busSrv.URL+"/events", 1)
+			if startEvents[0].Type != event.TypeRunStarted || startEvents[0].RunID != res.RunID || startEvents[0].Branch != branch {
+				t.Fatalf("events[0] = %+v, want run.started stamped Branch=%q", startEvents[0], branch)
+			}
+		})
+	}
+}
+
 // ---- Row 6: unknown row -----------------------------------------------------
 
 func TestRun_UnknownRow(t *testing.T) {
@@ -911,6 +1052,44 @@ func TestValidateRow_LaneAwareBranch(t *testing.T) {
 	}
 	if _, err := validateRow(Req{Lane: "conformant", UC: "uc01", Branch: "covered"}); err != nil {
 		t.Fatalf("validateRow(conformant, uc01, covered): unexpected error: %v", err)
+	}
+}
+
+// TestValidateRow_UC03BridgeBranches pins that the two bridge personas are
+// lane-exclusive: the bridge-demo persona is conformant-lane-only, the
+// bridge-refuse persona is ehr-lane-only (the conformant lane's PAS leg would
+// ride the ingress fallback and produce a route refusal, a different species
+// than the gated-refusal mechanism the ehr lane's promoted runCRDThenDTROrder
+// sites fire). Neither lane accepts the other's branch.
+func TestValidateRow_UC03BridgeBranches(t *testing.T) {
+	if _, err := validateRow(Req{Lane: "conformant", UC: "uc03", Branch: ""}); err != nil {
+		t.Fatalf("validateRow(conformant, uc03, \"\"): unexpected error: %v", err)
+	}
+	if _, err := validateRow(Req{Lane: "conformant", UC: "uc03", Branch: "bridge-demo"}); err != nil {
+		t.Fatalf("validateRow(conformant, uc03, bridge-demo): unexpected error: %v", err)
+	}
+	if _, err := validateRow(Req{Lane: "conformant", UC: "uc03", Branch: "bridge-refuse"}); err == nil {
+		t.Fatal("validateRow(conformant, uc03, bridge-refuse): want an error (the refuse branch lives on the ehr lane)")
+	} else if !strings.Contains(err.Error(), "bridge-demo") {
+		t.Fatalf("validateRow(conformant, uc03, bridge-refuse) error = %v, want it to name the allowed branch", err)
+	}
+	if _, err := validateRow(Req{Lane: "conformant", UC: "uc03", Branch: "bogus"}); err == nil {
+		t.Fatal("validateRow(conformant, uc03, bogus): want an error")
+	}
+
+	if _, err := validateRow(Req{Lane: "ehr", UC: "uc03", Branch: ""}); err != nil {
+		t.Fatalf("validateRow(ehr, uc03, \"\"): unexpected error: %v", err)
+	}
+	if _, err := validateRow(Req{Lane: "ehr", UC: "uc03", Branch: "bridge-refuse"}); err != nil {
+		t.Fatalf("validateRow(ehr, uc03, bridge-refuse): unexpected error: %v", err)
+	}
+	if _, err := validateRow(Req{Lane: "ehr", UC: "uc03", Branch: "bridge-demo"}); err == nil {
+		t.Fatal("validateRow(ehr, uc03, bridge-demo): want an error (the demo branch lives on the conformant lane)")
+	} else if !strings.Contains(err.Error(), "bridge-refuse") {
+		t.Fatalf("validateRow(ehr, uc03, bridge-demo) error = %v, want it to name the allowed branch", err)
+	}
+	if _, err := validateRow(Req{Lane: "ehr", UC: "uc03", Branch: "bogus"}); err == nil {
+		t.Fatal("validateRow(ehr, uc03, bogus): want an error")
 	}
 }
 
@@ -1690,6 +1869,8 @@ func TestValidateRow_FreeformMemberAndExternal(t *testing.T) {
 		{"freeform wrong lane", Req{Lane: "conformant", UC: "freeform", Branch: "", Member: "MBR-X"}, false, ""},
 		{"freeform with a branch", Req{Lane: "ehr", UC: "freeform", Branch: "covered", Member: "MBR-X"}, false, ""},
 		{"member on non-freeform uc03", Req{Lane: "ehr", UC: "uc03", Branch: "", Member: "MBR-X"}, false, "member is only valid for freeform"},
+		{"member fence holds on conformant uc03 bridge-demo", Req{Lane: "conformant", UC: "uc03", Branch: "bridge-demo", Member: "MBR-X"}, false, "member is only valid for freeform"},
+		{"member fence holds on ehr uc03 bridge-refuse", Req{Lane: "ehr", UC: "uc03", Branch: "bridge-refuse", Member: "MBR-X"}, false, "member is only valid for freeform"},
 		{"external rejected (watch-only)", Req{Lane: "conformant", UC: "external", Branch: "", Member: ""}, false, ""},
 	}
 	for _, tc := range cases {

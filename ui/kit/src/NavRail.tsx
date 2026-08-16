@@ -7,7 +7,7 @@ import type { JSX } from 'react';
 import type { ChildStatus } from './types';
 import { deriveHealth } from './HealthPill';
 
-export type NavDest = 'scenarios' | 'history' | 'byo' | 'systems';
+export type NavDest = 'scenarios' | 'history' | 'byo' | 'systems' | 'bridging';
 
 interface NavItem {
   dest: NavDest;
@@ -41,8 +41,17 @@ const GridIcon = (
     <path d="M9 9h6v6H9z" />
   </svg>
 );
+// A literal bridge (deck + two supporting pillars) — distinct from every
+// other rail icon and legible at 16px: the Bridging destination's own demo
+// of a compat manifest chain "spanning" two contract lines.
+const BridgeIcon = (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M4 17v-4a8 8 0 0 1 16 0v4" />
+    <path d="M2 20h20M6 20v-3M12 20v-3M18 20v-3" />
+  </svg>
+);
 
-// The two primary destinations, then a "Configure" group over the two
+// The two primary destinations, then a "Configure" group over the three
 // setup destinations. The Scenarios count is the static 8 UCs; Run history
 // carries no count (it is not part of the rail's props).
 const PRIMARY: NavItem[] = [
@@ -52,6 +61,7 @@ const PRIMARY: NavItem[] = [
 const CONFIGURE: NavItem[] = [
   { dest: 'byo', label: 'Bring your own', icon: LinesIcon },
   { dest: 'systems', label: 'Systems', icon: GridIcon },
+  { dest: 'bridging', label: 'Bridging', icon: BridgeIcon },
 ];
 
 export interface NavRailProps {

@@ -6,7 +6,10 @@
 // counterpart, authority frames, approximate sizes).
 import { useState } from 'react';
 import type { JSX } from 'react';
-import type { Step } from './inspect';
+import { isCarryRefusalDetail } from './inspect';
+import type { RouteFrame, Step } from './inspect';
+import type { Register } from './types';
+import { STEP_CLASS_META, type StepClass } from './bridgingmeta';
 import { JsonView } from './JsonView';
 import { TickIcon } from './StatusChip';
 
@@ -22,6 +25,12 @@ export interface StepDetailProps {
   step: Step;
   view: InspectorView;
   posture?: ValidatorPosture;
+  // Overview/Technical detail-level choice (RegisterSwitch, same idiom as
+  // bridgingmeta.ts's Register-keyed copy) driving TransformCard's narration
+  // line. undefined ⇒ 'overview' — the same honest-default idiom `posture`
+  // above uses. Threaded App -> RunInspector -> StepDetail (App's existing
+  // RegisterSwitch state) — no longer test-only.
+  register?: Register;
 }
 
 // Every validation badge carries a posture label verbatim — a partner
@@ -44,6 +53,23 @@ function postureLabel(posture: ValidatorPosture): string {
 
 // The open-step copy — pinned exactly.
 export const OPEN_STEP_NOTE = 'No response observed — the flow stopped here.';
+
+// The leg.downgrade annotation, in partner copy (the raw engine Detail says
+// "frame v1"/"stale-feed downgrade", internal vocabulary a partner cannot
+// act on). One fixed sentence: the engine emits exactly one
+// downgrade cause today, so the copy can be specific without parsing the
+// Detail. Pinned exactly; do not paraphrase.
+export const LEG_DOWNGRADE_NOTE =
+  'The counterparty announced a newer envelope format but answered in the older one; the Smart Gateway processed the answer in the older format.';
+
+// relayedStatusLine: the display-only sentence for a leg whose counterparty
+// answered with a relayed non-2xx application status (ObserverEvent.Status).
+// Display-only by design: the step's own ok/failed logic
+// is deliberately unchanged (the exchange itself completed — the counterparty
+// ANSWERED), but a rejection must never read as silently green.
+export function relayedStatusLine(status: number): string {
+  return `The counterparty’s application answered HTTP ${status} — relayed unchanged as this leg’s response.`;
+}
 
 // The substrate view's fixed framing sentence — pinned exactly.
 export const SUBSTRATE_FRAMING =
@@ -69,6 +95,41 @@ export const VALIDATE_SUBSTRATE_NOTE =
 export const SOR_LOCAL_READ_NOTE =
   "Read locally from the gateway's configured data source — this step never crosses the Hub.";
 
+// ---------------------------------------------------------------------------
+// Bridging content — TransformCard's two pinned empty-content notes
+// + the transform-refusal species' pinned zero-bytes note. Chosen by a
+// LossReport's own shape (TransformCard) or by which RouteFrame fields are
+// populated (RefusalCard) — never by guessing at legType/kind. Pinned
+// exactly; do not paraphrase.
+// ---------------------------------------------------------------------------
+
+// The DTR-fetch case: a leg genuinely crossed a compat-manifest chain, but
+// this run's payload happened to carry nothing the chain needed to carry or
+// synthesize — an honest "nothing to show", not a claim the chain is
+// lossless BY CONSTRUCTION (that's IDENTITY_CHAIN_NOTE below). Pinned
+// exactly; do not paraphrase.
+export const TRANSFORM_EMPTY_CONTENT_NOTE =
+  'no content differences on this leg — transport envelope';
+
+// The CRD-full case: every hop of the routed chain is class `full` —
+// lossless by construction, not merely lossless on this run's payload — so
+// the stronger claim is honest here specifically. Pinned exactly; do not
+// paraphrase.
+export const IDENTITY_CHAIN_NOTE = 'identity chain: bytes unchanged, proven';
+
+// The transform-refusal species (a leg.failed carrying Route.Chain): the
+// gated step refused BEFORE egressAdapt produced anything to send — nothing
+// left the gateway for this leg. Pinned exactly; do not paraphrase.
+export const ZERO_BYTES_NOTE = 'refused before sending — zero bytes crossed the network';
+
+// The carry-integrity refusal species (the third leg.failed + Route
+// producer): a resumed pended request whose own record says content was
+// carried across a version bridge, arriving without that content. NOT a
+// mid-bridge "no honest source" refusal — the payload was refused before the
+// bridge ran at all. Pinned exactly; do not paraphrase.
+export const CARRY_REFUSAL_NOTE =
+  'This resumed request no longer carries content its own record says it must, so the Smart Gateway refused rather than send a request that silently lost it.';
+
 export interface DirectionRow {
   arrow: '→' | '←';
   who: string;
@@ -78,9 +139,17 @@ export interface DirectionRow {
 // directionRows: the who-sent-what-to-whom summary above the narration —
 // derived ONLY from what the step observed (an open leg gets no back row;
 // a failed leg's back row says exactly that).
+//
+// A refused leg (step.refusal set — either species) returns NO
+// rows at all: both leg.refused (no shared contract line) and the
+// egressAdapt transform-refusal leg.failed fire BEFORE anything is sent —
+// the generic leg case's unconditional "→ … request" row below would
+// fabricate an outbound exchange that never happened. RefusalCard (below)
+// carries the honest "nothing was sent" story instead.
 export function directionRows(step: Step): DirectionRow[] {
   switch (step.kind) {
     case 'leg': {
+      if (step.refusal !== undefined) return [];
       const cp = step.counterpart ?? 'the hosted counterparty';
       const rows: DirectionRow[] = [
         { arrow: '→', who: `Smart Gateway → Hub → ${cp}`, what: `${step.request?.op ?? step.legType} request` },
@@ -164,13 +233,415 @@ function ValidationBadge({
   );
 }
 
-export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps): JSX.Element {
+// ---------------------------------------------------------------------------
+// TransformCard — the LossReport story a bridged leg carries.
+// ---------------------------------------------------------------------------
+
+// TRANSFORM_CARD_NARRATION is register-aware copy (RegisterSwitch's
+// Overview/Technical choice, same idiom as bridgingmeta.ts's
+// CONTRACT_LINE_EXPLAINER) but NOT one of the three verbatim-pinned strings
+// above — it's a framing sentence, not a claim StepDetail.test.tsx has to
+// double-assert byte-exact. House register rules still apply: no internal
+// vocabulary — never "substrate"/"arm 3"/"knob", and never
+// "compat-manifest"/"minted" either; "compatibility steps" is the
+// partner-facing name, matching bridgingmeta.ts's CONTRACT_LINE_EXPLAINER.
+export const TRANSFORM_CARD_NARRATION: Record<Register, string> = {
+  overview:
+    'This step crossed a version boundary before it left the gateway. Below is exactly what traveled across unread, and what the network filled in deterministically rather than guessed.',
+  technical:
+    "This leg's payload passed through a chain of compatibility steps before it left the gateway. The loss report below names every element carried across unread for the other side to restore, and every element deterministically synthesized rather than fabricated.",
+};
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+export interface ParsedLossEntry {
+  path: string;
+  detail?: string;
+}
+
+export interface ParsedLossReport {
+  module: string;
+  source: string;
+  target: string;
+  carried?: ParsedLossEntry[];
+  synthesized?: ParsedLossEntry[];
+}
+
+function parseLossEntries(v: unknown): ParsedLossEntry[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: ParsedLossEntry[] = [];
+  for (const item of v) {
+    if (!isRecord(item) || typeof item.path !== 'string') continue;
+    out.push({ path: item.path, detail: typeof item.detail === 'string' ? item.detail : undefined });
+  }
+  return out;
+}
+
+function parseLossReport(v: unknown): ParsedLossReport | undefined {
+  if (!isRecord(v)) return undefined;
+  const { module, source, target } = v;
+  if (typeof module !== 'string' || typeof source !== 'string' || typeof target !== 'string') return undefined;
+  return {
+    module,
+    source,
+    target,
+    carried: parseLossEntries(v.carried),
+    synthesized: parseLossEntries(v.synthesized),
+  };
+}
+
+// SHN_LOSS_REPORT_EXT_URL mirrors sdk/carry.go's LossReportExtURL
+// ("http://smarthealth.network/fhir/StructureDefinition/shn-loss-report")
+// byte-for-byte. ui/kit is a separate module pinned against published
+// shn-gateway/shn-sdk releases (kit/go.mod) — it cannot import the Go sdk to
+// read the constant live, so this is a literal copy, same precedent as
+// kit/kitd/bridgingassets/README.md's hand-regenerated golden copies (Task
+// 13): if sdk/carry.go's LossReportExtURL ever changes, this string goes
+// stale silently — there is no cross-module CI tie — and the parse below
+// just finds no matching extension (degrades to `undefined`, never throws).
+const SHN_LOSS_REPORT_EXT_URL = 'http://smarthealth.network/fhir/StructureDefinition/shn-loss-report';
+
+// parseLossReports reads a transform leg's Provenance JSON (transform.payload
+// — the resource sdk/provenance.go's BuildTransformProvenance built) for its
+// shn-loss-report extension and shape-checks the valueString back into
+// ParsedLossReport[] — the same never-throw idiom as inspect.ts's
+// parseObserver/parseRoute: anything malformed (wrong shape, unparsable
+// JSON, no matching extension) degrades to `undefined`, never an exception.
+export function parseLossReports(payload: unknown): ParsedLossReport[] | undefined {
+  if (!isRecord(payload)) return undefined;
+  const extensions = payload.extension;
+  if (!Array.isArray(extensions)) return undefined;
+  const ext = extensions.find((e) => isRecord(e) && e.url === SHN_LOSS_REPORT_EXT_URL);
+  if (!isRecord(ext) || typeof ext.valueString !== 'string') return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(ext.valueString);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) return undefined;
+  const reports: ParsedLossReport[] = [];
+  for (const item of parsed) {
+    const report = parseLossReport(item);
+    if (report) reports.push(report);
+  }
+  return reports;
+}
+
+function ChainHops({ chain }: { chain: RouteFrame['chain'] }): JSX.Element | null {
+  if (!chain || chain.length === 0) return null;
+  return (
+    <ol className="chain-hops">
+      {chain.map((hop, i) => (
+        <li key={i} className={`chain-hop chain-hop-${hop.class}`}>
+          <span className="chain-hop-line">
+            {hop.from} → {hop.to}
+          </span>
+          <span className="chain-hop-class">{STEP_CLASS_META[hop.class as StepClass]?.label ?? hop.class}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function LossEntryList({ title, entries }: { title: string; entries: ParsedLossEntry[] }): JSX.Element {
+  return (
+    <div className="loss-entries">
+      <h5>{title}</h5>
+      <ul>
+        {entries.map((e, i) => (
+          <li key={i}>
+            <span className="loss-path">{e.path}</span>
+            {e.detail && <span className="loss-detail"> — {e.detail}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// TransformCard: the LossReport story for a step whose leg was bridged
+// across a compat-manifest chain (step.transform present — inspect.ts's
+// joined leg.transformed frame). Content:
+//   - the attempted chain, preferring the PAIRED leg step's own Route
+//     (leg.originated's Chain — the source of truth for what was actually
+//     selected) over transform.route (leg.transformed never sets Route
+//     itself per gateway/engine/gateway.go's transformedObserverEvent, so
+//     this fallback is defensive, not the common path).
+//   - the LossReport rows parsed from the Provenance payload — Carried
+//     entries labeled "carried, not lost" (still travels, unread by the
+//     target line, restored on the way back); Synthesized entries their own
+//     labeled section (deterministically minted, never a guess).
+//   - the empty-content pinned note, chosen by the CHAIN's own class shape
+//     (never by "did this happen to carry nothing this run" alone): every
+//     hop `full` ⇒ IDENTITY_CHAIN_NOTE (lossless BY CONSTRUCTION);
+//     anything else (including an unresolved/empty chain) ⇒
+//     TRANSFORM_EMPTY_CONTENT_NOTE (the honest, weaker "nothing on THIS
+//     leg" claim).
+//   - the raw Provenance, disclosed (never hidden) in a <details>.
+//   - the validator posture label — the same mandatory honesty gate every
+//     other content-bearing card in this file carries, reusing
+//     postureLabel/ValidatorPosture; there's no $validate verdict for a
+//     transform leg, so this renders unconditionally rather than gated on
+//     step.validation (which leg steps never set).
+function TransformCard({
+  step,
+  posture,
+  register,
+}: {
+  step: Step;
+  posture: ValidatorPosture;
+  register: Register;
+}): JSX.Element | null {
+  const transform = step.transform;
+  if (!transform) return null;
+
+  const chain = step.route?.chain ?? transform.route?.chain ?? [];
+  const reports = parseLossReports(transform.payload) ?? [];
+  const hasContent = reports.some(
+    (r) => (r.carried && r.carried.length > 0) || (r.synthesized && r.synthesized.length > 0),
+  );
+  const identityChain = chain.length > 0 && chain.every((h) => h.class === 'full');
+  const emptyNote = identityChain ? IDENTITY_CHAIN_NOTE : TRANSFORM_EMPTY_CONTENT_NOTE;
+
+  return (
+    <div className="transform-card">
+      <h4>Cross-version transform</h4>
+      <p className="transform-narration">{TRANSFORM_CARD_NARRATION[register]}</p>
+      <ChainHops chain={chain} />
+      {hasContent ? (
+        <div className="loss-report-list">
+          {reports.map((r, i) => (
+            <div key={i} className="loss-report">
+              <div className="loss-report-module">
+                {r.module} <span className="loss-report-lines">{r.source} → {r.target}</span>
+              </div>
+              {r.carried && r.carried.length > 0 && <LossEntryList title="Carried, not lost" entries={r.carried} />}
+              {r.synthesized && r.synthesized.length > 0 && (
+                <LossEntryList title="Synthesized" entries={r.synthesized} />
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="transform-empty-note">{emptyNote}</p>
+      )}
+      <p className="validator-posture-label">{postureLabel(posture)}</p>
+      <details className="raw-provenance">
+        <summary>Raw Provenance</summary>
+        <JsonView value={transform.payload} />
+      </details>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// RefusalCard — the three refusal species (transform refusal, route
+// refusal, carry-integrity refusal), never conflated. Species are
+// discriminated ONLY by which RouteFrame fields the refusal carries plus
+// the engine's Detail marker —
+// Route.Chain non-empty + the carry marker (isCarryRefusalDetail) ⇒ the
+// carry-integrity species (guardPendCarry's leg.failed); Route.Chain
+// non-empty otherwise ⇒ the transform-refusal species (egressAdapt's
+// leg.failed); Own/Peer/BridgeIssue populated ⇒ the route-refusal
+// species (leg.refused, no shared contract line) — NEVER by guessing from
+// step.kind/legType/narration (all species produce the same kind:'leg' Step
+// shape; inspect.ts's makeRefusedLegStep and makeTransformRefusedLegStep are
+// otherwise structurally identical).
+// ---------------------------------------------------------------------------
+
+// splitOnTopLevelCommas: a paren-depth-aware comma split — a
+// SemanticChangeError's MissingElements can themselves read like
+// "QuestionnaireResponse.extension:qr-coverage (ambiguous: 2
+// Coverage-referencing qr-context entries, multi-coverage source)"
+// (bridgingassets/README.md's refusal-input-2.1 exhibit) — ONE element
+// whose own parenthesized detail contains a comma. A naive split(',') would
+// cut that single element into two. Depth-tracked so a comma inside
+// parens never splits; only top-level commas (gateway/engine/transform_pas.go's
+// own `strings.Join(e.MissingElements, ", ")` separator) do.
+function splitOnTopLevelCommas(s: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of s) {
+    if (ch === '(') depth++;
+    if (ch === ')') depth--;
+    if (ch === ',' && depth === 0) {
+      parts.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
+}
+
+// parseMissingElements: pulls the "no honest byte-level source for X, Y"
+// tail off a *SemanticChangeError's Error() string (gateway/engine/
+// transform_pas.go's exact format) — undefined (never throws) when the
+// marker isn't present or the tail is empty, so callers fall back to
+// showing the whole Detail text verbatim rather than a mis-parsed list.
+function parseMissingElements(detail: string | undefined): string[] | undefined {
+  if (detail === undefined) return undefined;
+  const marker = 'no honest byte-level source for ';
+  const idx = detail.indexOf(marker);
+  if (idx === -1) return undefined;
+  const tail = detail.slice(idx + marker.length).trim();
+  if (!tail) return undefined;
+  const parts = splitOnTopLevelCommas(tail).filter((p) => p.length > 0);
+  return parts.length > 0 ? parts : undefined;
+}
+
+// parseCarryPath: pulls the missing declared-carry path out of a
+// carry-integrity refusal's Detail (gateway/engine/gateway.go's
+// verifyCarryPresent format: `declared carry "<path>" not found …`) —
+// undefined when the marker isn't present, so the card falls back to the
+// verbatim Detail rather than a mis-parsed fragment (same posture as
+// parseMissingElements).
+function parseCarryPath(detail: string | undefined): string | undefined {
+  if (detail === undefined) return undefined;
+  const marker = 'declared carry "';
+  const start = detail.indexOf(marker);
+  if (start === -1) return undefined;
+  const rest = detail.slice(start + marker.length);
+  const end = rest.indexOf('"');
+  if (end <= 0) return undefined;
+  return rest.slice(0, end);
+}
+
+function TokenChips({ tokens, className }: { tokens: string[] | undefined; className: string }): JSX.Element {
+  if (!tokens || tokens.length === 0) {
+    return <span className="token-chip-none">none declared</span>;
+  }
+  return (
+    <div className="token-chips">
+      {tokens.map((t) => (
+        <span key={t} className={`token-chip ${className}`}>
+          {t}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function RefusalCard({ step }: { step: Step }): JSX.Element | null {
+  const refusal = step.refusal;
+  if (!refusal) return null;
+  const detail = step.response?.detail;
+
+  // Precedence: if both field-sets were somehow populated, the chain-borne
+  // species win — server-side they are mutually exclusive by construction
+  // (routeInfoFor sets Chain, refusalRouteInfo sets Own/Peer/BridgeIssue; a
+  // single RouteInfo value is only ever built by one of the two), so this
+  // ordering is a defensive tie-break, never a path the real gateway
+  // exercises. Within the chain-borne shape, the carry-integrity refusal
+  // (guardPendCarry — the THIRD leg.failed + Route producer)
+  // is discriminated by the engine's Detail marker: rendering it under the
+  // transform species' "no honest source for the target line" headline would
+  // be a false attribution — the payload was refused BEFORE the bridge ran,
+  // for missing previously-carried content, not for an unbridgeable source.
+  const hasChain = (refusal.chain?.length ?? 0) > 0;
+  const isCarryRefusal = hasChain && isCarryRefusalDetail(detail);
+  const isTransformRefusal = hasChain && !isCarryRefusal;
+  const isRouteRefusal =
+    !hasChain &&
+    ((refusal.own?.length ?? 0) > 0 || (refusal.peer?.length ?? 0) > 0 || refusal.bridgeIssue !== undefined);
+
+  if (isCarryRefusal) {
+    const carryPath = parseCarryPath(detail);
+    return (
+      <div className="refusal-card refusal-card-carry">
+        <h4>Refused at resume — previously carried content is missing</h4>
+        <ChainHops chain={refusal.chain} />
+        <p className="carry-refusal-note">{CARRY_REFUSAL_NOTE}</p>
+        {carryPath ? (
+          <div className="refusal-elements">
+            <h5>Missing carried content</h5>
+            <ul>
+              <li>{carryPath}</li>
+            </ul>
+          </div>
+        ) : (
+          detail && <p className="refusal-detail">{detail}</p>
+        )}
+        <p className="zero-bytes-note">{ZERO_BYTES_NOTE}</p>
+      </div>
+    );
+  }
+
+  if (isTransformRefusal) {
+    const elements = parseMissingElements(detail);
+    return (
+      <div className="refusal-card refusal-card-transform">
+        <h4>Refused mid-bridge — no honest source for the target line</h4>
+        <ChainHops chain={refusal.chain} />
+        {elements ? (
+          <div className="refusal-elements">
+            <h5>No honest byte-level source for</h5>
+            <ul>
+              {elements.map((el, i) => (
+                <li key={i}>{el}</li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          detail && <p className="refusal-detail">{detail}</p>
+        )}
+        <p className="zero-bytes-note">{ZERO_BYTES_NOTE}</p>
+      </div>
+    );
+  }
+
+  if (isRouteRefusal) {
+    return (
+      <div className="refusal-card refusal-card-route">
+        <h4>No shared contract line — refused before sending anything</h4>
+        <div className="refusal-tokens">
+          <div className="refusal-token-group">
+            <h5>This gateway declares</h5>
+            <TokenChips tokens={refusal.own} className="own-token" />
+          </div>
+          <div className="refusal-token-group">
+            <h5>The counterparty declares</h5>
+            <TokenChips tokens={refusal.peer} className="peer-token" />
+          </div>
+        </div>
+        {refusal.bridgeIssue && <p className="bridge-issue">{refusal.bridgeIssue}</p>}
+        {detail && <p className="refusal-detail">{detail}</p>}
+      </div>
+    );
+  }
+
+  // Defensive: a Route present on the refusal but shaped like neither
+  // species (e.g. an all-undefined {} — refusalRouteInfo's own doc notes
+  // this is nil-through in practice, never emitted by the real gateway).
+  // Nothing honest to render beyond the raw Detail, if any — still wrapped
+  // in the same `.refusal-card` shell as the two named species for visual
+  // consistency (a refusal is a refusal, even an unclassifiable one).
+  return (
+    <div className="refusal-card refusal-card-unclassified">
+      {detail && <p className="refusal-detail">{detail}</p>}
+    </div>
+  );
+}
+
+export function StepDetail({ step, view, posture = 'stand-in', register = 'overview' }: StepDetailProps): JSX.Element {
   const [search, setSearch] = useState('');
 
   const rootClassName = `detail step-status-${step.status} step-kind-${step.kind}`;
   const failureDetail = step.status === 'failed' ? step.response?.detail ?? step.request?.detail : undefined;
   const isValidate = step.kind === 'validate';
   const isSor = step.kind === 'sor';
+  // isRefused: step.refusal is set on BOTH self-contained failed-
+  // leg species (inspect.ts's makeRefusedLegStep/makeTransformRefusedLegStep)
+  // — neither ever got a request/response pair for an actual exchange (both
+  // fire before anything was sent), so the generic leg-facts/Request-Response
+  // rendering below would show phantom/undefined bytes. Carved out the same
+  // way as isValidate/isSor above, RefusalCard replacing the payload panes.
+  const isRefused = step.refusal !== undefined;
 
   if (view === 'substrate') {
     // sor carve-out: a sor read never crosses the Hub, so SUBSTRATE_FRAMING's
@@ -219,6 +690,27 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
       );
     }
 
+    // Refusal carve-out (all three species): SUBSTRATE_FRAMING's "sealed envelope
+    // through the payload-blind Hub" claim is false for a refusal — nothing
+    // was sent, so nothing was carried through the Hub at all. Show only the
+    // two facts a refusal genuinely has (leg id, counterpart) plus
+    // RefusalCard's own species-specific story; no sizes (no payload ever
+    // existed), no OPEN_STEP_NOTE (that note is for a request awaiting a
+    // response, not a request that was never made).
+    if (isRefused) {
+      return (
+        <div className={rootClassName} data-view="substrate">
+          <dl className="facts">
+            <dt>Leg</dt>
+            <dd>{step.correlationId ?? '—'}</dd>
+            <dt>Counterpart</dt>
+            <dd>{step.counterpart ?? '—'}</dd>
+          </dl>
+          <RefusalCard step={step} />
+        </div>
+      );
+    }
+
     const requestSize = sizeLabel(step.request?.payload);
     const responseSize = sizeLabel(step.response?.payload);
 
@@ -254,12 +746,20 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
               <dd>{step.httpStatus}</dd>
             </>
           )}
+          {step.kind === 'leg' && step.response?.status !== undefined && (
+            <>
+              <dt>Relayed status</dt>
+              <dd>{step.response.status}</dd>
+            </>
+          )}
         </dl>
         {step.validation !== undefined && (
           <ValidationBadge validation={step.validation} posture={posture} />
         )}
         {!step.response && <p className="open-step-note">{OPEN_STEP_NOTE}</p>}
         {failureDetail && <p className="failure-detail">{failureDetail}</p>}
+        {step.downgrade !== undefined && <p className="leg-downgrade-note">{LEG_DOWNGRADE_NOTE}</p>}
+        {step.transform && <TransformCard step={step} posture={posture} register={register} />}
       </div>
     );
   }
@@ -335,12 +835,34 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
     );
   }
 
+  // Refusal carve-out (all three species, clinical view): no species ever
+  // has a request/response payload pair (all fire before anything was
+  // sent), and directionRows() above already returns no rows for a refused
+  // leg — the generic Request/Response panes below would render nothing but
+  // "undefined". RefusalCard carries the honest, species-specific story
+  // instead; its own <h4> is the load-bearing headline here, with the
+  // dedicated refusal narrations (inspect.ts's leg.refused /
+  // leg.transform-refused / leg.carry-refused entries) as the sentence above
+  // it.
+  if (isRefused) {
+    return (
+      <div className={rootClassName} data-view="clinical">
+        <DirectionRows step={step} />
+        <p className="narr">{step.narration}</p>
+        <RefusalCard step={step} />
+      </div>
+    );
+  }
+
   return (
     <div className={rootClassName} data-view="clinical">
       <DirectionRows step={step} />
       <p className="narr">{step.narration}</p>
       {step.kind === 'ingress' && step.httpStatus !== undefined && (
         <p className="http-status">HTTP {step.httpStatus}</p>
+      )}
+      {step.kind === 'leg' && step.response?.status !== undefined && (
+        <p className="relayed-status">{relayedStatusLine(step.response.status)}</p>
       )}
       <label className="json-search-label">
         Search request and response
@@ -367,6 +889,8 @@ export function StepDetail({ step, view, posture = 'stand-in' }: StepDetailProps
         <ValidationBadge validation={step.validation} posture={posture} />
       )}
       {failureDetail && <p className="failure-detail">{failureDetail}</p>}
+      {step.downgrade !== undefined && <p className="leg-downgrade-note">{LEG_DOWNGRADE_NOTE}</p>}
+      {step.transform && <TransformCard step={step} posture={posture} register={register} />}
     </div>
   );
 }

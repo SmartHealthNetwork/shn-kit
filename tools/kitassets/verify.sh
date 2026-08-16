@@ -9,10 +9,19 @@
 # port and the script asserts it still reaches /fhir/metadata ready anyway:
 # the Kit's boot order starts br-provider before the gateway it will call —
 # this row turns that sequencing assumption into a proven fact.
+#
+# Deliberately verifies ONLY line 2.0 (KITASSETS_VALIDATOR_IGS_20/
+# KITASSETS_DATA_IGS_20, the canonical default) — the one line build.sh's
+# prewarm step (validator-h2/data-h2) actually populates. A non-default
+# --validator-line boots cold at runtime (kit/kitd/javachildren.go's
+# javaReadyTimeoutCold) and is proven live by test/kitlive, not this
+# package-time gate.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 DIST="${KIT_ASSETS_DIST:-$REPO/dist/kitassets}"
+# shellcheck source=tools/kitassets/igpins.gen.sh
+. "$REPO/tools/kitassets/igpins.gen.sh"
 case "$(uname -sm)" in
   "Darwin arm64")  HOST_TARGET=darwin-arm64 ;;
   "Darwin x86_64") HOST_TARGET=darwin-amd64 ;;
@@ -68,16 +77,24 @@ igj() { # igj <dir> <key> <name> <ver>
   printf '"hapi.fhir.implementationguides.%s.packageUrl":"file://%s/%s/%s-%s.tgz","hapi.fhir.implementationguides.%s.name":"%s","hapi.fhir.implementationguides.%s.version":"%s"' \
     "$2" "$DIST" "$1" "$3" "$4" "$2" "$3" "$2" "$4"
 }
+igj_join() { # igj_join <dir> <row...> -> comma-joined igj fragments over the rows
+  local dir="$1" row key name version out=""; shift
+  for row in "$@"; do
+    read -r key name version <<<"$row"
+    out="${out:+$out,}$(igj "$dir" "$key" "$name" "$version")"
+  done
+  printf '%s' "$out"
+}
 
 # 1. Validator (8 IGs, single-tenant) on a copy of its prewarmed H2.
 cp -R "$DIST/prewarm/validator-h2" "$WORK/validator-h2"
-VCONF="{\"spring.datasource.url\":\"jdbc:h2:file:$WORK/validator-h2/db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE\",\"spring.datasource.username\":\"sa\",\"spring.datasource.driverClassName\":\"org.h2.Driver\",\"server.port\":\"$VPORT\",$(igj igs-validator uscore hl7.fhir.us.core 6.1.0),$(igj igs-validator crd hl7.fhir.us.davinci-crd 2.0.1),$(igj igs-validator dtr hl7.fhir.us.davinci-dtr 2.0.1),$(igj igs-validator pas hl7.fhir.us.davinci-pas 2.0.1),$(igj igs-validator pdex hl7.fhir.us.davinci-pdex 2.1.0),$(igj igs-validator sdc hl7.fhir.uv.sdc 3.0.0),$(igj igs-validator cdex hl7.fhir.us.davinci-cdex 2.1.0),$(igj igs-validator hrex hl7.fhir.us.davinci-hrex 1.1.0)}"
+VCONF="{\"spring.datasource.url\":\"jdbc:h2:file:$WORK/validator-h2/db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE\",\"spring.datasource.username\":\"sa\",\"spring.datasource.driverClassName\":\"org.h2.Driver\",\"server.port\":\"$VPORT\",$(igj_join igs-validator "${KITASSETS_VALIDATOR_IGS_20[@]}")}"
 boot validator "$DIST/hapi/main.war" "$WORK/validator" "http://127.0.0.1:$VPORT/fhir/metadata" 120 \
   SPRING_APPLICATION_JSON="$VCONF"
 
 # 2. Data server (4 IGs, URL_BASED + partitioning + CR) on a copy of its prewarmed H2.
 cp -R "$DIST/prewarm/data-h2" "$WORK/data-h2"
-DCONF="{\"spring.datasource.url\":\"jdbc:h2:file:$WORK/data-h2/db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE\",\"spring.datasource.username\":\"sa\",\"spring.datasource.driverClassName\":\"org.h2.Driver\",\"server.port\":\"$DPORT\",$(igj igs-data uscore hl7.fhir.us.core 6.1.0),$(igj igs-data cdex hl7.fhir.us.davinci-cdex 2.1.0),$(igj igs-data hrex hl7.fhir.us.davinci-hrex 1.1.0),$(igj igs-data pas hl7.fhir.us.davinci-pas 2.0.1),\"hapi.fhir.tenant_identification_strategy\":\"URL_BASED\",\"hapi.fhir.partitioning.partitioning_include_in_search_hashes\":\"false\",\"hapi.fhir.partitioning.allow_references_across_partitions\":\"false\",\"hapi.fhir.cr.enabled\":\"true\"}"
+DCONF="{\"spring.datasource.url\":\"jdbc:h2:file:$WORK/data-h2/db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE\",\"spring.datasource.username\":\"sa\",\"spring.datasource.driverClassName\":\"org.h2.Driver\",\"server.port\":\"$DPORT\",$(igj_join igs-data "${KITASSETS_DATA_IGS_20[@]}"),\"hapi.fhir.tenant_identification_strategy\":\"URL_BASED\",\"hapi.fhir.partitioning.partitioning_include_in_search_hashes\":\"false\",\"hapi.fhir.partitioning.allow_references_across_partitions\":\"false\",\"hapi.fhir.cr.enabled\":\"true\"}"
 boot data-server "$DIST/hapi/main.war" "$WORK/data" "http://127.0.0.1:$DPORT/fhir/DEFAULT/metadata" 120 \
   SPRING_APPLICATION_JSON="$DCONF"
 

@@ -27,6 +27,7 @@ import { RunHistory } from './RunHistory';
 import { BYOPanel } from './BYOPanel';
 import { FreeFormPanel } from './FreeFormPanel';
 import { WatchPanel } from './WatchPanel';
+import { BridgingPanel } from './BridgingPanel';
 import { TopBar } from './TopBar';
 import { NavRail } from './NavRail';
 import type { NavDest } from './NavRail';
@@ -39,6 +40,7 @@ import './inspector.css';
 import './systems.css';
 import './byo.css';
 import './boot.css';
+import './bridging.css';
 
 // The conformant lane's seeded cards stay LIVE under an EHR swap — "the
 // other lane keeps running seeded WHEN the swap target carries the seeded
@@ -520,8 +522,10 @@ export default function App() {
   const ready = boot.state === 'provisioned' && isGatewayReady(status) && runsLive;
 
   // The persistent inspector rides alongside the run-oriented destinations
-  // ('scenarios' and 'history'); 'byo' and 'systems' span full width.
-  const showInspector = nav === 'scenarios' || nav === 'history';
+  // ('scenarios', 'history', and 'bridging' — its demo runs render in the
+  // SAME shared inspector, enriched, no forked viewer); 'byo' and 'systems'
+  // span full width.
+  const showInspector = nav === 'scenarios' || nav === 'history' || nav === 'bridging';
 
   let phase: Phase;
   if (bootError) {
@@ -796,6 +800,18 @@ export default function App() {
                 onVerified={handleVerified}
               />
             )}
+
+            {nav === 'bridging' && (
+              <BridgingPanel
+                status={status}
+                register={register}
+                onRegister={setRegister}
+                events={reconciledEvents}
+                results={results}
+                disabledReason={disabledReason}
+                onSelectRun={handleSelectRun}
+              />
+            )}
           </section>
 
           {showInspector && (
@@ -819,6 +835,7 @@ export default function App() {
                     summary={history.find((h) => h.runId === selectedRunId)}
                     providerLabel={deriveProviderLabel(selectedRunId, latestRunId, runEvents.events, byo)}
                     posture={status?.validator}
+                    register={register}
                   />
                   <RunInspector
                     runId={compareRunId}
@@ -828,6 +845,7 @@ export default function App() {
                     summary={history.find((h) => h.runId === compareRunId)}
                     providerLabel={deriveProviderLabel(compareRunId, latestRunId, compareEvents.events, byo)}
                     posture={status?.validator}
+                    register={register}
                   />
                 </div>
               ) : (
@@ -840,6 +858,7 @@ export default function App() {
                     summary={history.find((h) => h.runId === selectedRunId)}
                     providerLabel={deriveProviderLabel(selectedRunId, latestRunId, runEvents.events, byo)}
                     posture={status?.validator}
+                    register={register}
                   />
                 </div>
               )}

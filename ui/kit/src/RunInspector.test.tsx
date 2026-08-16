@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RunInspector } from './RunInspector';
 import { buildRunStory } from './inspect';
+import { TRANSFORM_CARD_NARRATION } from './StepDetail';
 import type { HistorySummary, KitEvent, RunResult } from './types';
 import ehrUc03 from './fixtures/run-ehr-uc03.json';
 
@@ -275,6 +276,60 @@ describe('RunInspector — posture forwarding', () => {
         "checked by the Kit's stand-in validator — real conformance validation is off in this development build",
       ),
     ).toBeDefined();
+  });
+});
+
+describe('RunInspector — register forwarding', () => {
+  // A transform step (leg.transformed joined onto a leg.originated/
+  // leg.response pair, same success-path ordering inspect.ts documents:
+  // leg.transformed arrives BEFORE leg.originated for the same
+  // correlationId) — the only step kind whose narration is register-aware
+  // (StepDetail.tsx's TransformCard).
+  const transformEvents: KitEvent[] = [
+    evt({ seq: 1, type: 'run.started', runId: 'run-transform', lane: 'conformant', uc: 'uc03' }),
+    evt({
+      seq: 2,
+      type: 'observer',
+      runId: 'run-transform',
+      observer: observerFrame({ kind: 'leg.transformed', correlationId: 'c-t1', detail: 'pa.dtr 2.2->2.1' }),
+    }),
+    evt({
+      seq: 3,
+      type: 'observer',
+      runId: 'run-transform',
+      observer: observerFrame({
+        kind: 'leg.originated',
+        legType: 'dtr-questionnaire-fetch',
+        correlationId: 'c-t1',
+        counterpart: 'payer',
+      }),
+    }),
+    evt({
+      seq: 4,
+      type: 'observer',
+      runId: 'run-transform',
+      observer: observerFrame({ kind: 'leg.response', legType: 'dtr-questionnaire-fetch', correlationId: 'c-t1' }),
+    }),
+    evt({ seq: 5, type: 'run.finished', runId: 'run-transform' }),
+  ];
+
+  it('register="technical" reaches StepDetail\'s TransformCard — the exported pinned const, byte-exact', () => {
+    render(<RunInspector runId="run-transform" events={transformEvents} source="live" results={[]} register="technical" />);
+
+    // Double-assert per house rule: the const's own literal, and its
+    // rendered presence — never paraphrase either half.
+    expect(TRANSFORM_CARD_NARRATION.technical).toBe(
+      "This leg's payload passed through a chain of compatibility steps before it left the gateway. The loss report below names every element carried across unread for the other side to restore, and every element deterministically synthesized rather than fabricated.",
+    );
+    expect(screen.getByText(TRANSFORM_CARD_NARRATION.technical)).toBeDefined();
+    expect(screen.queryByText(TRANSFORM_CARD_NARRATION.overview)).toBeNull();
+  });
+
+  it('register omitted preserves StepDetail\'s existing default (overview narration, not technical)', () => {
+    render(<RunInspector runId="run-transform" events={transformEvents} source="live" results={[]} />);
+
+    expect(screen.getByText(TRANSFORM_CARD_NARRATION.overview)).toBeDefined();
+    expect(screen.queryByText(TRANSFORM_CARD_NARRATION.technical)).toBeNull();
   });
 });
 

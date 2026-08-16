@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -93,6 +94,10 @@ func main() {
 	uc07PCI := flag.String("uc07-pci", "", `UC-07 patient-surface PCI override ("" => resolve via ResolvePersonaPCI("Nakamura"))`)
 	javaAssets := flag.String("java-assets", os.Getenv("SHN_KIT_JAVA_ASSETS"), `packaged Java trio assets dir (HAPI validator + seeded HAPI data server + br-provider; env SHN_KIT_JAVA_ASSETS) — "" => no trio, today's behavior`)
 	jreDir := flag.String("jre-dir", "", `JRE root for the Java trio (containing bin/java[.exe]) ("" => {java-assets}/jre-{GOOS}-{GOARCH})`)
+	validatorLine := flag.String("validator-line", "", `contract line the packaged validator validates ("2.0", "2.1", or "2.2"; "" => "2.0", the canonical default — the ONLY line that boots from a package-time prewarmed H2; any other line boots cold)`)
+	additionalValidatorLines := flag.String("additional-validator-lines", "", `comma-separated EXTRA contract lines to boot additional validator-only children for, each wired to its own FHIR_VALIDATE_URL_<line> for the gateway child (mirrors gateway/app/app.go's own per-line URLs) — config-gated, "" => today's single-line behavior (do not boot extra validators by default); every extra child boots cold`)
+	bridgeDemoHolder := flag.String("bridge-demo-holder", "bridge-demo", `holder id the "bridge-demo-payer" Verify probe expects on the registrar feed (cross-version bridged-exchange exhibit); "" => that probe is skipped entirely, not reported red`)
+	bridgeDemoRefuseHolder := flag.String("bridge-demo-refuse-holder", "bridge-demo-refuse", `holder id the "bridge-demo-refuse" Verify probe expects on the registrar feed; "" => that probe is skipped entirely, not reported red`)
 	tokenStoreFlag := flag.String("token-store", "", `login token storage backend: "keychain" or "file" ("" => derived: keychain when --java-assets is set, file otherwise)`)
 	manifestPath := flag.String("manifest", "", `path to the package-time versions.json manifest, served verbatim at GET /api/about ("" => 404-with-body, a dev checkout with no packaged manifest)`)
 	releasesURL := flag.String("releases-url", defaultReleasesURL, "GitHub \"latest release\" feed the launch-time update check GETs; overridable so a gate/test can stub it")
@@ -142,6 +147,34 @@ func main() {
 		resolvedJREDir = filepath.Join(*javaAssets, fmt.Sprintf("jre-%s-%s", runtime.GOOS, runtime.GOARCH))
 	}
 
+	// --additional-validator-lines: comma-separated, trimmed, blanks dropped —
+	// same shape convention as SHN_CONTRACT_VERSIONS's own CSV parsing
+	// (shnsdk.ParseDeclaredContractVersions). parsedAdditionalLines feeds BOTH
+	// StackConfig.AdditionalValidatorLines (below) and ClearStaleAssets's
+	// extraValidatorLines sweep — kitd.ResolveValidatorLines is the single
+	// dedup source both share, so the set of validator children BuildStack
+	// actually boots and the set ClearStaleAssets sweeps for staleness can
+	// never diverge.
+	var parsedAdditionalLines []string
+	for _, l := range strings.Split(*additionalValidatorLines, ",") {
+		if l = strings.TrimSpace(l); l != "" {
+			parsedAdditionalLines = append(parsedAdditionalLines, l)
+		}
+	}
+	// extraValidatorLinesForClear is EVERY resolved validator line other than
+	// kitd.DefaultContractLine ("2.0") — including a non-default PRIMARY line,
+	// not only AdditionalValidatorLines entries: a primary Line switched away
+	// from "2.0" boots into its own "validator-<line>" dir (see
+	// kitd.BuildValidatorChildSpec), which the fixed "validator"/"data-server"
+	// sweep inside ClearStaleAssets never names.
+	_, activeValidatorLines := kitd.ResolveValidatorLines(*validatorLine, parsedAdditionalLines)
+	var extraValidatorLinesForClear []string
+	for _, l := range activeValidatorLines {
+		if l != kitd.DefaultContractLine {
+			extraValidatorLinesForClear = append(extraValidatorLinesForClear, l)
+		}
+	}
+
 	// kitd.Serve does not create StateDir; main must, before
 	// wiring anything that writes under it (ingress-clients.json, logs,
 	// session.json).
@@ -184,12 +217,23 @@ func main() {
 	var rlyPtr atomic.Pointer[relay.Relay]
 	sup := supervisor.New(func(n supervisor.Notice) {
 		bus.Emit(event.Event{Type: event.TypeChild, Child: n.Child, Detail: n.State + ": " + n.Detail})
-		if n.Child == "gateway" && n.State == supervisor.StateRestarting { // kitd.gatewayChildName
+		if n.Child == gatewayChild && n.State == supervisor.StateRestarting {
 			if r := rlyPtr.Load(); r != nil {
 				r.ResetCursor() // fresh child = fresh observer seq epoch
 			}
 		}
 	})
+
+	// gwEnvPtr publishes the gateway child's assembled env (kitd.Stack.
+	// GatewayEnv) once the boot goroutine has built the stack — the same
+	// read-through-a-pointer shape as rlyPtr above (newBridgingDemo's doc
+	// explains why the closure can't just capture either by value).
+	// SECURITY: this env is secrets-adjacent (kitd.Stack.GatewayEnv's own
+	// doc) — it stays inside that closure and never reaches a response,
+	// event, or log line.
+	var gwEnvPtr atomic.Pointer[[]string]
+
+	bridgingDemo := newBridgingDemo(sup.RestartWithEnv, bus, &rlyPtr, &gwEnvPtr)
 
 	// tokens is the selected TokenStore: newTokenStore wraps the
 	// file-backed store in a keychain-backed one (falling back to the SAME
@@ -253,6 +297,7 @@ func main() {
 		History:       histStore,
 		BYO:           byoStore,
 		Restarter:     restarterFunc(sup.Restart),
+		BridgingDemo:  bridgingDemo,
 		TokenStorage:  tokenStorage,
 		ManifestPath:  *manifestPath,
 	})
@@ -379,6 +424,9 @@ func main() {
 			GatewayPort:   *gatewayPort,
 			JavaAssetsDir: *javaAssets,
 			JREDir:        resolvedJREDir,
+
+			Line:                     *validatorLine,
+			AdditionalValidatorLines: parsedAdditionalLines,
 		}
 		// byo.json overrides: the EHR lane replaces
 		// the --fhir-data-url demo default and carries its own SMART quad;
@@ -415,7 +463,7 @@ func main() {
 		// cleared before the child specs are built. A no-op when no trio is
 		// configured or the identity already matches. (CopyPrewarmedH2 below
 		// re-copies the H2 and rewrites the marker.)
-		if err := kitd.ClearStaleAssets(*javaAssets, *stateDir, kitVersion, log.Printf); err != nil {
+		if err := kitd.ClearStaleAssets(*javaAssets, *stateDir, kitVersion, log.Printf, extraValidatorLinesForClear...); err != nil {
 			if ctx.Err() != nil {
 				bus.Emit(event.Event{Type: event.TypeChild, Detail: "boot aborted by shutdown"})
 				return
@@ -447,7 +495,14 @@ func main() {
 		// this is what unlocks GET /api/status's
 		// "validator"/"brProviderUrl" fields and POST /api/children/{name}/
 		// restart's pre-boot gate; both were 503/absent before this point.
-		d.SetStackInfo(kitd.StackInfo{Validator: validatorPosture, BRProviderURL: stack.BRProviderURL})
+		d.SetStackInfo(kitd.StackInfo{Validator: validatorPosture, BRProviderURL: stack.BRProviderURL, ObserverURL: stack.ObserverURL})
+
+		// The bridging demo toggle's baseline env — published as soon as
+		// BuildStack has assembled it, so the closure built at kitd.New time
+		// has something to rebuild from. Reachable only through that
+		// closure (kitd.Stack.GatewayEnv's SECURITY note).
+		gwEnv := stack.GatewayEnv
+		gwEnvPtr.Store(&gwEnv)
 
 		// Pre-spawn H2 prewarm copy: MUST run
 		// between BuildStack and the Start loop below — a running HAPI child
@@ -550,17 +605,27 @@ func main() {
 			// recovery action, and a re-probe against a cleared bundle would lie.
 			const detail = "skipped: secrets bundle unavailable (reset during boot)"
 			bus.Emit(event.Event{Type: event.TypeVerify, Detail: "verify " + detail})
-			d.SetVerify([]bootstrap.Probe{
+			degradedProbes := []bootstrap.Probe{
 				{Name: "discovery", Detail: detail},
 				{Name: "registration", Detail: detail},
 				{Name: "hosted-payer", Detail: detail},
-			})
+			}
+			// bridge-demo probes ride the same skip, present iff configured —
+			// mirrors bootstrap.Verify's own BridgeProbes skip semantics.
+			if *bridgeDemoHolder != "" {
+				degradedProbes = append(degradedProbes, bootstrap.Probe{Name: "bridge-demo-payer", Detail: detail})
+			}
+			if *bridgeDemoRefuseHolder != "" {
+				degradedProbes = append(degradedProbes, bootstrap.Probe{Name: "bridge-demo-refuse", Detail: detail})
+			}
+			d.SetVerify(degradedProbes)
 			return
 		}
 		holderID := b.Manifest.ID
 		verifyFn := func(vctx context.Context) []bootstrap.Probe {
 			// One probe set for boot and re-probe by construction.
-			probes := bootstrap.Verify(vctx, nil, *discoveryURL, holderID, bus)
+			probes := bootstrap.Verify(vctx, nil, *discoveryURL, holderID,
+				bootstrap.BridgeProbes{DemoHolder: *bridgeDemoHolder, RefuseHolder: *bridgeDemoRefuseHolder}, bus)
 			// byo-ehr: only when an EHR swap is applied — byoCfg/byoHC are
 			// boot-time facts (what this process actually applied), never
 			// re-read from a possibly-since-edited byo.json, so a re-probe
@@ -643,6 +708,111 @@ func main() {
 	}
 	sup.StopAll()
 	os.Exit(exitCode)
+}
+
+// gatewayChild is the supervised gateway child's name — kitd.gatewayChildName
+// (unexported there), mirrored here for the two places main needs it: the
+// relay's crash fence in the supervisor notify closure, and the bridging demo
+// toggle's RestartWithEnv target. Pinned against kitd.BuildStack's own
+// gateway child in main_test.go, since the mirror has no compile-time link.
+const gatewayChild = "gateway"
+
+// demoEgressNativeLine is the single contract line the bridging demo narrows
+// the gateway's egress-native view to (FIXED — there is deliberately no
+// operator picker; the toggle is on/off).
+//
+// CROSS-MODULE PIN WITH NO COMPILE-TIME LINK: this string has to name a line
+// the GATEWAY's own native contract set knows (shnsdk.NativeContractVersions,
+// via SHN_DEMO_EGRESS_NATIVE_LINES's boot parser), and nothing here fails to
+// build if that set ever drops "2.0" — the gateway would refuse to boot with
+// the knob set, surfacing as a failed toggle. Retire the canonical line and
+// this constant moves with it.
+const demoEgressNativeLine = "2.0"
+
+// envRestarter is the supervisor seam newBridgingDemo drives —
+// supervisor.Supervisor.RestartWithEnv's exact shape, taken as a func so a
+// test can inject a recorder instead of spawning a real gateway child (the
+// same test-seam-by-func-shape posture as restarterFunc below).
+type envRestarter func(ctx context.Context, name string, env []string, preSpawn func()) error
+
+// newBridgingDemo builds kitd.Config.BridgingDemo's closure: it flips the
+// gateway child's bridging demo mode by restarting it with (enabled) or
+// without (disabled) the SHN_DEMO_EGRESS_NATIVE_LINES knob. A PURPOSE-BUILT
+// gateway restart — same spec, same port, same driver keypair, same runner
+// wiring, only the env differs — which is why it does not reopen kitd's
+// generic per-child restart seam, which still refuses the gateway outright.
+//
+// The relay's ResetCursor rides RestartWithEnv's preSpawn hook, NEVER a call
+// after the restart returns: the new child serves a fresh observer seq epoch,
+// and a cursor reset landing after it is already up can strand a relay
+// connection redialed inside the restart window as stale-gen forever
+// (supervisor.RestartWithEnv's doc carries the full wedge analysis).
+//
+// rlyPtr and gwEnvPtr are read through on every call rather than captured by
+// value: this closure must exist at kitd.New time (a nil Config.BridgingDemo
+// means "this Kit has no demo mode at all", a fact that must not flicker
+// mid-boot), while both the relay and the baseline env only come into being
+// later, inside the boot goroutine.
+//
+// The returned closure SERIALIZES itself: two concurrent toggles both clear
+// the handler's in-flight gate (it is a plain atomic read, not a lock), and
+// two overlapping RestartWithEnv calls could interleave their stop/respawn
+// arcs so the env actually running disagrees with the state kitd records.
+// One toggle at a time; the second simply waits its turn.
+//
+// TOGGLE REVERTS — a failed toggle must leave no half-applied env behind: a
+// failed restart has ALREADY registered the new env on the child before the
+// ready probe gave up, so a later crash-respawn would come back in a mode the
+// recorded demoMode denies.
+// On failure the closure runs ONE more restart arc with the env of the last
+// successful toggle (the bare baseline before any), re-registering it via the
+// supervisor's recovers-a-failed-child contract; a revert that itself fails is
+// error-joined so the operator sees both. Either way the toggle still reports
+// failure and kitd's recorded demoMode stays put — which after a successful
+// revert is once again the truth.
+func newBridgingDemo(restart envRestarter, bus *event.Bus, rlyPtr *atomic.Pointer[relay.Relay], gwEnvPtr *atomic.Pointer[[]string]) func(context.Context, bool) error {
+	var mu sync.Mutex
+	// prev is the env the last SUCCESSFUL toggle registered — the revert
+	// target. nil until a toggle succeeds; the recorded demoMode is then still
+	// its boot value (false), whose env is the bare baseline.
+	var prev []string
+	return func(ctx context.Context, enabled bool) error {
+		mu.Lock()
+		defer mu.Unlock()
+
+		base := gwEnvPtr.Load()
+		if base == nil {
+			return fmt.Errorf("bridging demo unavailable: the gateway stack has not been built yet")
+		}
+		// Clone before append: the loaded baseline is shared with the Stack
+		// (and with whatever env a previous toggle registered), so an append
+		// landing in a shared backing array could rewrite a live child's spec.
+		env := append([]string(nil), *base...)
+		if enabled {
+			env = append(env, "SHN_DEMO_EGRESS_NATIVE_LINES="+demoEgressNativeLine)
+		}
+		var preSpawn func()
+		if r := rlyPtr.Load(); r != nil {
+			preSpawn = r.ResetCursor
+		}
+		if err := restart(ctx, gatewayChild, env, preSpawn); err != nil {
+			revertEnv := prev
+			if revertEnv == nil {
+				revertEnv = append([]string(nil), *base...)
+			}
+			// The revert respawn serves a fresh observer seq epoch too, so the
+			// cursor reset rides its preSpawn hook exactly like the main arc's.
+			if rerr := restart(ctx, gatewayChild, revertEnv, preSpawn); rerr != nil {
+				return errors.Join(err,
+					fmt.Errorf("revert restart also failed — gateway child left down with its prior env registered: %w", rerr))
+			}
+			return fmt.Errorf("toggle failed (gateway child reverted to its prior env): %w", err)
+		}
+		prev = env
+		bus.Emit(event.Event{Type: event.TypeChild, Child: gatewayChild,
+			Detail: "demo-mode: " + map[bool]string{true: "enabled", false: "disabled"}[enabled]})
+		return nil
+	}
 }
 
 // restarterFunc adapts a plain func to kitd.Restarter's RestartChild(ctx,

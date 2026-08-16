@@ -45,6 +45,8 @@ describe('buildArgs', () => {
       jreDir: '/opt/shn/java/jre-darwin-arm64',
       manifest: '/opt/shn/versions.json',
       releasesUrl: 'https://api.github.com/repos/SmartHealthNetwork/shn-kit/releases/latest',
+      bridgeDemoHolder: 'bridge-demo',
+      bridgeDemoRefuseHolder: 'bridge-demo-refuse',
       apiAddr: '127.0.0.1:5555',
     };
     const args = buildArgs(cfg, '/state');
@@ -61,6 +63,8 @@ describe('buildArgs', () => {
       '--jre-dir', '/opt/shn/java/jre-darwin-arm64',
       '--manifest', '/opt/shn/versions.json',
       '--releases-url', 'https://api.github.com/repos/SmartHealthNetwork/shn-kit/releases/latest',
+      '--bridge-demo-holder', 'bridge-demo',
+      '--bridge-demo-refuse-holder', 'bridge-demo-refuse',
       '--ui-dir', '/opt/shn/ui',
       '--api-addr', '127.0.0.1:5555',
       '--state-dir', '/state',
@@ -82,6 +86,12 @@ describe('buildArgs', () => {
     expect(args).not.toContain('--jre-dir');
     expect(args).not.toContain('--manifest');
     expect(args).not.toContain('--releases-url');
+  });
+
+  it('omits --bridge-demo-holder/--bridge-demo-refuse-holder when unset (shnkitd defaults them)', () => {
+    const args = buildArgs(cfgBase, '/state');
+    expect(args).not.toContain('--bridge-demo-holder');
+    expect(args).not.toContain('--bridge-demo-refuse-holder');
   });
 
   it('throws naming the field when gatewayBin/uiDir is missing (resolved upstream by main.ts, not defaulted here)', () => {

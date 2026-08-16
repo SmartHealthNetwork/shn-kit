@@ -81,7 +81,18 @@ func assetIdentityMatches(stateDir, identity string) (bool, error) {
 // the link, never the bundle target. A no-op when assetsDir == "" (no trio) or
 // when the identity already matches. CopyPrewarmedH2 (post-BuildStack) then
 // re-copies the H2 and rewrites the marker with the new identity.
-func ClearStaleAssets(assetsDir, stateDir, identity string, logf func(string, ...any)) error {
+//
+// extraValidatorLines names any additional/non-default
+// validator lines currently configured (StackConfig.Line when it isn't
+// defaultContractLine, plus every StackConfig.AdditionalValidatorLines entry —
+// same set kitd.ResolveValidatorLines[1:] computes for BuildStack, passed by
+// the caller so the two never diverge). Each one's OWN
+// {stateDir}/validator-<line>/h2 + main.war are swept on an identity mismatch
+// too — those directories are never prewarmed (see validatorChildDirName), so
+// skipping them here would let a stale prior-version H2 linger indefinitely,
+// silently mismatched against the new version's IG pins. Variadic so every
+// existing call site (no trio-line config in play) compiles unchanged.
+func ClearStaleAssets(assetsDir, stateDir, identity string, logf func(string, ...any), extraValidatorLines ...string) error {
 	if assetsDir == "" {
 		return nil
 	}
@@ -102,6 +113,10 @@ func ClearStaleAssets(assetsDir, stateDir, identity string, logf func(string, ..
 		filepath.Join(stateDir, dataServerChildName, "main.war"),
 		filepath.Join(stateDir, brProviderChildName, "main.war"),
 		filepath.Join(stateDir, prewarmMarkerName),
+	}
+	for _, line := range extraValidatorLines {
+		name := validatorChildDirName(line)
+		stale = append(stale, filepath.Join(stateDir, name, "h2"), filepath.Join(stateDir, name, "main.war"))
 	}
 	for _, p := range stale {
 		if err := os.RemoveAll(p); err != nil {

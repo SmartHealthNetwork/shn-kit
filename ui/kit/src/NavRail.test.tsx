@@ -11,12 +11,27 @@ function children(): ChildStatus[] {
 }
 
 describe('NavRail', () => {
-  it('renders the four destinations', () => {
+  it('renders the five destinations', () => {
     render(<NavRail nav="scenarios" onNav={() => {}} children={children()} />);
     expect(screen.getByRole('button', { name: /scenarios/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /run history/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /bring your own/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /^systems$/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /^bridging$/i })).toBeDefined();
+  });
+
+  it('marks the bridging destination active when nav is "bridging"', () => {
+    render(<NavRail nav="bridging" onNav={() => {}} children={children()} />);
+    expect(screen.getByRole('button', { name: /^bridging$/i }).getAttribute('aria-current')).toBe(
+      'true',
+    );
+  });
+
+  it('fires onNav("bridging") when the bridging item is clicked', () => {
+    const onNav = vi.fn();
+    render(<NavRail nav="scenarios" onNav={onNav} children={children()} />);
+    fireEvent.click(screen.getByRole('button', { name: /^bridging$/i }));
+    expect(onNav).toHaveBeenCalledWith('bridging');
   });
 
   it('marks the active destination with aria-current="true", and non-active items carry none', () => {

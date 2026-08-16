@@ -41,12 +41,22 @@
 # WORKDIR /app): the process working dir MUST contain main.war (a symlink works).
 # /app/extra-classes is a tolerated-missing loader.path entry — NEITHER pinned
 # image actually ships the directory; do not create it.
+#
+# ── KNOWN GAP ──────────────────────────────────────────────────────────────
+# This script's live packaging (build.sh through verify.sh, i.e. an actual
+# WAR extraction + IG-tgz download + H2 prewarm + boot-verify) is UNPROVEN on
+# this branch — recent work touched the tri-line IG pin set (FR-G49/G50) but
+# did not run a live kit build. Load-bearing before the next kit release: run
+# build.sh + verify.sh for real and fix whatever the tri-line pin widening
+# broke before cutting a release.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 DIST="${KIT_ASSETS_DIST:-$REPO/dist/kitassets}"
 # shellcheck source=tools/kitassets/pins.env
 . "$REPO/tools/kitassets/pins.env"
+# shellcheck source=tools/kitassets/igpins.gen.sh
+. "$REPO/tools/kitassets/igpins.gen.sh"
 PORT="${KIT_ASSETS_PORT:-18080}"
 READY_BOUND_FIRST=1200   # 20-min bound on first (indexing) boots
 READY_BOUND_WARM=90      # the I3 gate: prewarmed second boot must be ready inside this
@@ -140,36 +150,111 @@ fi
 strip_mac_natives_from_war "$DIST/hapi/main.war"
 strip_mac_natives_from_war "$DIST/brprovider/main.war"
 
-# ── (c) IG packages, exact URLs from the two offline-bake Dockerfiles ─────────
-# gateway/deploy/validator/Dockerfile (8) + deploy/multiprocess/hapi.offline.Dockerfile (4)
+# ── (c) IG packages, from the manifest-generated PER-LINE pin tables
+# (igpins.gen.sh) ──────────────────────────────────────────────────────────
+# tools/contracts/manifest.json is the single source now (tools/contractsgen).
+# The kit ships EVERY line's IG tgz set (validator-sidecar for 2.0/2.1,
+# validator-sidecar-ext — the extensions-closure superset — for 2.2), not just
+# line 2.0's, so kitd.BuildValidatorChildSpec can boot its validator at an
+# operator-configured line, at an accepted download/notarization size cost.
+# All lines' packages land in the SAME two subdirectories
+# (igs-validator/igs-data) — filenames already disambiguate by version, and
+# shared packages (e.g. cdex, pinned identically across every line) download
+# exactly ONCE thanks to ig()'s existing "skip if already present" guard, so
+# the union costs less than a naive per-line-subdirectory layout would.
 ig() { # ig <dir> <file> <simplifier-path> — download-to-tmp + atomic mv (see above)
   if [ ! -s "$DIST/$1/$2" ]; then
-    log "IG download: $2"
-    curl -fLSso "$DIST/$1/$2.tmp" "https://packages.simplifier.net/$3"
-    mv "$DIST/$1/$2.tmp" "$DIST/$1/$2"
+    case "$3" in
+      shn.fhir.carry/*)
+        # shn.fhir.carry is SHN-authored, never published to Simplifier — every
+        # OTHER row in igpins.gen.sh is a real Simplifier package, so this is
+        # the ONE name that must never hit the curl branch below. Sourced from
+        # the LOCALLY built package (tools/shnig, deterministic tgz) instead,
+        # same posture as gateway/deploy/validator/Dockerfile's COPY solve. A
+        # fresh checkout (incl. the nightly CI runner) has no dist/ yet, so
+        # build it here if missing — `make shnig-build` does the same thing
+        # by hand. If tools/shnig itself is absent (a kit-repo snapshot
+        # checkout does not mirror tools/shnig or
+        # tools/contracts/manifest.json today), fail LOUDLY naming the fix
+        # rather than falling through to a 404 curl.
+        local_src="$REPO/dist/shnig/$2"
+        if [ ! -s "$local_src" ]; then
+          if [ ! -d "$REPO/tools/shnig" ]; then
+            die "shn.fhir.carry: no local source (tools/shnig absent — a kit-repo snapshot checkout?) and no pre-built $local_src. Build from a full monorepo checkout ('make shnig-build'), or ship a pre-built shn.fhir.carry-*.tgz at that path."
+          fi
+          log "shn.fhir.carry not yet built locally — building via tools/shnig (see 'make shnig-build')"
+          ( cd "$REPO" && go run ./tools/shnig ) || die "tools/shnig build failed — run 'make shnig-build' manually and retry"
+        fi
+        [ -s "$local_src" ] || die "tools/shnig ran but did not produce $local_src"
+        log "IG (local build): $2"
+        cp "$local_src" "$DIST/$1/$2.tmp"
+        mv "$DIST/$1/$2.tmp" "$DIST/$1/$2"
+        ;;
+      *)
+        log "IG download: $2"
+        curl --retry 5 --retry-delay 5 --retry-all-errors -fLSso "$DIST/$1/$2.tmp" "https://packages.simplifier.net/$3"
+        mv "$DIST/$1/$2.tmp" "$DIST/$1/$2"
+        ;;
+    esac
   fi
 }
-ig igs-validator hl7.fhir.us.core-6.1.0.tgz         hl7.fhir.us.core/6.1.0
-ig igs-validator hl7.fhir.us.davinci-crd-2.0.1.tgz  hl7.fhir.us.davinci-crd/2.0.1
-ig igs-validator hl7.fhir.us.davinci-dtr-2.0.1.tgz  hl7.fhir.us.davinci-dtr/2.0.1
-ig igs-validator hl7.fhir.us.davinci-pas-2.0.1.tgz  hl7.fhir.us.davinci-pas/2.0.1
-ig igs-validator hl7.fhir.us.davinci-pdex-2.1.0.tgz hl7.fhir.us.davinci-pdex/2.1.0
-ig igs-validator hl7.fhir.uv.sdc-3.0.0.tgz          hl7.fhir.uv.sdc/3.0.0
-ig igs-validator hl7.fhir.us.davinci-cdex-2.1.0.tgz hl7.fhir.us.davinci-cdex/2.1.0
-ig igs-validator hl7.fhir.us.davinci-hrex-1.1.0.tgz hl7.fhir.us.davinci-hrex/1.1.0
-ig igs-data hl7.fhir.us.core-6.1.0.tgz              hl7.fhir.us.core/6.1.0
-ig igs-data hl7.fhir.us.davinci-cdex-2.1.0.tgz      hl7.fhir.us.davinci-cdex/2.1.0
-ig igs-data hl7.fhir.us.davinci-hrex-1.1.0.tgz      hl7.fhir.us.davinci-hrex/1.1.0
-ig igs-data hl7.fhir.us.davinci-pas-2.0.1.tgz       hl7.fhir.us.davinci-pas/2.0.1
+for line in "${KITASSETS_LINES[@]}"; do
+  suffix="${line//./}"
+  validator_var="KITASSETS_VALIDATOR_IGS_${suffix}[@]"
+  data_var="KITASSETS_DATA_IGS_${suffix}[@]"
+  for row in "${!validator_var}"; do
+    read -r _ name version <<<"$row"
+    ig igs-validator "$name-$version.tgz" "$name/$version"
+  done
+  for row in "${!data_var}"; do
+    read -r _ name version <<<"$row"
+    ig igs-data "$name-$version.tgz" "$name/$version"
+  done
+done
 ( cd "$DIST" && shasum -a 256 igs-validator/*.tgz igs-data/*.tgz ) | tee "$DIST/igs.sha256"
 
+# Size-delta note (the delta is recorded in the kit manifest) —
+# unique tgz file counts, all-lines union vs. the single-line-2.0 baseline;
+# computed from the pin tables (not `du` on the downloaded bytes), so it is
+# stable and reviewable independent of package sizes changing upstream.
+# manifest.sh recomputes + writes the SAME note into versions.json (its own
+# copy, from the same igpins.gen.sh source — no dependency on this file
+# having run first).
+IGS_20_COUNT=$(( ${#KITASSETS_VALIDATOR_IGS_20[@]} + ${#KITASSETS_DATA_IGS_20[@]} ))
+IGS_ALL_UNIQUE=$(
+  for line in "${KITASSETS_LINES[@]}"; do
+    suffix="${line//./}"
+    validator_var="KITASSETS_VALIDATOR_IGS_${suffix}[@]"
+    data_var="KITASSETS_DATA_IGS_${suffix}[@]"
+    for row in "${!validator_var}" "${!data_var}"; do
+      read -r _ name version <<<"$row"
+      printf '%s-%s\n' "$name" "$version"
+    done
+  done | sort -u | wc -l | tr -d ' '
+)
+log "IG set size: line 2.0 alone = $IGS_20_COUNT rows; all ${#KITASSETS_LINES[@]} lines' union = $IGS_ALL_UNIQUE unique tgz files (accepted size cost)"
+
 # ── IG config JSON fragments (the spike-certified nested-map shape) ───────────
+# The package-time PREWARM boot below stays scoped to line 2.0 ONLY — the
+# canonical default, the one line this pipeline pays the 10-15-min IG-indexing
+# cost for so a user's machine never has to (any other line boots cold, at
+# runtime, only if an operator explicitly configures it — --validator-line /
+# --additional-validator-lines; kit/kitd/javachildren.go's
+# javaReadyTimeoutCold reflects that). Do NOT triple-boot the prewarm here.
 ig_json() { # ig_json <dir> <key> <name> <version> -> three JSON k/v lines
   printf '"hapi.fhir.implementationguides.%s.packageUrl":"file://%s/%s/%s-%s.tgz","hapi.fhir.implementationguides.%s.name":"%s","hapi.fhir.implementationguides.%s.version":"%s"' \
     "$2" "$DIST" "$1" "$3" "$4" "$2" "$3" "$2" "$4"
 }
-VALIDATOR_IGS="$(ig_json igs-validator uscore hl7.fhir.us.core 6.1.0),$(ig_json igs-validator crd hl7.fhir.us.davinci-crd 2.0.1),$(ig_json igs-validator dtr hl7.fhir.us.davinci-dtr 2.0.1),$(ig_json igs-validator pas hl7.fhir.us.davinci-pas 2.0.1),$(ig_json igs-validator pdex hl7.fhir.us.davinci-pdex 2.1.0),$(ig_json igs-validator sdc hl7.fhir.uv.sdc 3.0.0),$(ig_json igs-validator cdex hl7.fhir.us.davinci-cdex 2.1.0),$(ig_json igs-validator hrex hl7.fhir.us.davinci-hrex 1.1.0)"
-DATA_IGS="$(ig_json igs-data uscore hl7.fhir.us.core 6.1.0),$(ig_json igs-data cdex hl7.fhir.us.davinci-cdex 2.1.0),$(ig_json igs-data hrex hl7.fhir.us.davinci-hrex 1.1.0),$(ig_json igs-data pas hl7.fhir.us.davinci-pas 2.0.1)"
+VALIDATOR_IGS=""
+for row in "${KITASSETS_VALIDATOR_IGS_20[@]}"; do
+  read -r key name version <<<"$row"
+  VALIDATOR_IGS="${VALIDATOR_IGS:+$VALIDATOR_IGS,}$(ig_json igs-validator "$key" "$name" "$version")"
+done
+DATA_IGS=""
+for row in "${KITASSETS_DATA_IGS_20[@]}"; do
+  read -r key name version <<<"$row"
+  DATA_IGS="${DATA_IGS:+$DATA_IGS,}$(ig_json igs-data "$key" "$name" "$version")"
+done
 
 # Validator: single-tenant $validate only (mirrors gateway/deploy/validator/Dockerfile).
 validator_config() { # $1=h2dir

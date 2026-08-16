@@ -538,7 +538,7 @@ func (r *Runner) execute(ctx context.Context, runID, lane, uc, branch string, ro
 			r.cfg.Relay.ClearStamp()
 		}()
 	}
-	r.cfg.Bus.Emit(event.Event{Type: event.TypeRunStarted, RunID: runID, Lane: lane, UC: uc})
+	r.cfg.Bus.Emit(event.Event{Type: event.TypeRunStarted, RunID: runID, Lane: lane, UC: uc, Branch: branch})
 
 	// The audit merge is load-bearing when configured: both the
 	// pre- and post-fetch must succeed, or the RUN fails regardless of the
@@ -657,7 +657,9 @@ func (r *Runner) fail(runID, lane, uc, branch string, err error) Result {
 // validateRow checks req against this package's row shape (package doc;
 // branches: uc01 covered|notcovered (both lanes); uc05 lane "conformant"
 // takes no branch, lane "ehr" takes ""|consent|noconsent; uc07 lane
-// "conformant" takes no branch, lane "ehr" takes ""|hcpcs; every other UC
+// "conformant" takes no branch, lane "ehr" takes ""|hcpcs; uc03 lane
+// "conformant" takes ""|bridge-demo, lane "ehr" takes ""|bridge-refuse
+// (the two bridge personas are lane-exclusive); every other UC
 // takes no branch) and returns the row func to execute. An
 // unknown lane/UC/branch is an error and the run is never created (no lock
 // taken, no bus events emitted) — the "unknown row" contract.
@@ -726,6 +728,20 @@ func validateRow(req Req) (rowFunc, error) {
 			}
 		} else if branch != "" && branch != "hcpcs" {
 			return nil, fmt.Errorf("runner: uc07 branch must be \"\"|hcpcs, got %q", branch)
+		}
+	case "uc03":
+		// The two bridge personas are lane-exclusive: the bridge-demo
+		// persona is conformant-lane-only (its PAS leg rides the ingress
+		// fallback, a route refusal, a different species than the gated
+		// refusal); the bridge-refuse persona is ehr-lane-only (its
+		// promoted runCRDThenDTROrder sites fire the gated chain + the typed
+		// refusal). Neither lane takes the other's branch.
+		if lane == "conformant" {
+			if branch != "" && branch != "bridge-demo" {
+				return nil, fmt.Errorf("runner: conformant uc03 branch must be \"\"|bridge-demo, got %q", branch)
+			}
+		} else if branch != "" && branch != "bridge-refuse" {
+			return nil, fmt.Errorf("runner: ehr uc03 branch must be \"\"|bridge-refuse, got %q", branch)
 		}
 	default:
 		if branch != "" {

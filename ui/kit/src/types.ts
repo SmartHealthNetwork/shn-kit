@@ -36,6 +36,13 @@ export interface StatusResponse {
   validator?: 'stand-in' | 'packaged';
   brProviderUrl?: string;
   update?: { available: boolean; latest: string; url: string };
+  // bridging mirrors kitd.go's bridgingStatus: the KEY ITSELF
+  // is present iff Config.BridgingDemo is configured at all — an absent key
+  // means "this Kit build has no bridging demo mode," never "off" (that's
+  // demoMode:false). peer/refusePeer are each further-optional (present iff
+  // the matching bootstrap.Verify BridgeProbes holder id was configured) —
+  // never a fabricated red for a probe that didn't run.
+  bridging?: { demoMode: boolean; peer?: Probe; refusePeer?: Probe };
 }
 
 // AboutManifest mirrors GET /api/about's body byte-for-byte — the
@@ -53,6 +60,14 @@ export interface AboutManifest {
   temurin: string;
   igsValidator: string[];
   igsData: string[];
+  // igLines/igSizeNote are ADDITIVE — an older manifest written before these
+  // fields existed (or by a future manifest.sh that dropped them) simply
+  // omits them, and the About panel degrades to showing only the flat
+  // igsValidator/igsData fields (line 2.0's, unchanged meaning). Keyed by
+  // contract line ("2.0" | "2.1" | "2.2" today, but not narrowed to that
+  // union — a manifest line the UI doesn't know about yet must still render).
+  igLines?: Record<string, { igsValidator: string[]; igsData: string[] }>;
+  igSizeNote?: string;
   build: {
     timestamp: string;
     commit: string;
@@ -82,6 +97,7 @@ export interface KitEvent {
   runId?: string;
   lane?: string;
   uc?: string;
+  branch?: string;
   child?: string;
   detail?: string;
   observer?: unknown;
@@ -158,6 +174,38 @@ export interface BYOStatus {
   ingress: BYOIngress | null; // json:"ingress"
   loadError?: string; // json:"loadError,omitempty"
 }
+
+// Bridging engine-exhibit wire shapes — mirror kit/kitd/bridging.go's
+// bridgingLossEntry/bridgingLossReport/bridgingExhibitCarryResponse/
+// bridgingExhibitRefusalResponse exactly (json tags quoted per field below).
+// POST /api/bridging/exhibit's body is {"kind":"carry"|"refusal"}; the 200
+// response is one of the two shapes below, discriminated by `kind`.
+export interface BridgingLossEntry {
+  path: string; // json:"path"
+  detail?: string; // json:"detail,omitempty"
+}
+
+export interface BridgingLossReport {
+  module: string; // json:"module" — e.g. "pa.dtr 2.1->2.2"
+  source: string; // json:"source"
+  target: string; // json:"target"
+  carried?: BridgingLossEntry[]; // json:"carried,omitempty"
+  synthesized?: BridgingLossEntry[]; // json:"synthesized,omitempty"
+}
+
+export interface BridgingExhibitCarryResponse {
+  kind: 'carry'; // json:"kind"
+  lossReports: BridgingLossReport[]; // json:"lossReports"
+  restored: boolean; // json:"restored"
+}
+
+export interface BridgingExhibitRefusalResponse {
+  kind: 'refusal'; // json:"kind"
+  refusal: string; // json:"refusal" — the typed refusal text
+  semanticChange: boolean; // json:"semanticChange"
+}
+
+export type BridgingExhibitResponse = BridgingExhibitCarryResponse | BridgingExhibitRefusalResponse;
 
 // PatientSummary/PatientContext mirror kit/byo/browse.go's wire shapes
 // exactly (json tags quoted per field below) — GET /api/byo/patients and

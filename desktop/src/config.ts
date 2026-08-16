@@ -28,6 +28,8 @@ export interface KitConfig {
   jreDir?: string; // --jre-dir; "" / unset => shnkitd's own per-arch default ({java-assets}/jre-{GOOS}-{GOARCH})
   manifest?: string; // --manifest (versions.json path); default <resourcesPath>/versions.json when packaged
   releasesUrl?: string; // --releases-url; "" / unset => shnkitd's own default feed
+  bridgeDemoHolder?: string; // --bridge-demo-holder; "" / unset => shnkitd's own default ("bridge-demo")
+  bridgeDemoRefuseHolder?: string; // --bridge-demo-refuse-holder; "" / unset => shnkitd's own default ("bridge-demo-refuse")
 }
 
 const REQUIRED_STRING_FIELDS = ['discoveryUrl'] as const;
@@ -49,6 +51,8 @@ const OPTIONAL_STRING_FIELDS = [
   'jreDir',
   'manifest',
   'releasesUrl',
+  'bridgeDemoHolder',
+  'bridgeDemoRefuseHolder',
 ] as const;
 
 /** Every packaged-only path the app ships under Resources (electron-builder.yml's

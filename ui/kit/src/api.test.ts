@@ -165,6 +165,127 @@ describe('postRun (freeform member)', () => {
   });
 });
 
+describe('postBridgingDemo', () => {
+  it('POSTs /api/bridging/demo with an EXPLICIT body {enabled:true}', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    const stub = makeFetch(true, 200, { demoMode: true });
+    vi.stubGlobal('fetch', stub);
+
+    const { postBridgingDemo } = await freshApi();
+    const result = await postBridgingDemo(true);
+
+    const [url, init] = stub.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/bridging/demo');
+    expect(init.method).toBe('POST');
+    // Explicit body always, even for false — kitd's demoRequest decodes a
+    // MISSING "enabled" key as false ("turn it off"), so an empty/omitted
+    // body would silently mean "disable," never a harmless no-op.
+    expect(JSON.parse(init.body as string)).toEqual({ enabled: true });
+    expect(result.demoMode).toBe(true);
+  });
+
+  it('POSTs {enabled:false} explicitly (never an empty body)', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    const stub = makeFetch(true, 200, { demoMode: false });
+    vi.stubGlobal('fetch', stub);
+
+    const { postBridgingDemo } = await freshApi();
+    await postBridgingDemo(false);
+
+    const [, init] = stub.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe('{"enabled":false}');
+  });
+
+  it('404 (feature not configured) -> ApiError(404)', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    vi.stubGlobal('fetch', makeFetch(false, 404, { error: 'bridging demo not configured' }));
+
+    const { postBridgingDemo, ApiError } = await freshApi();
+    try {
+      await postBridgingDemo(true);
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as InstanceType<typeof ApiError>).status).toBe(404);
+    }
+  });
+
+  it('409 (a run or watch is in flight) -> ApiError(409)', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    vi.stubGlobal('fetch', makeFetch(false, 409, { error: 'a run or watch is in flight' }));
+
+    const { postBridgingDemo, ApiError } = await freshApi();
+    try {
+      await postBridgingDemo(true);
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as InstanceType<typeof ApiError>).status).toBe(409);
+    }
+  });
+});
+
+describe('postBridgingExhibit', () => {
+  it('POSTs /api/bridging/exhibit with body {kind:"carry"}; 200 -> the carry response shape', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    const body = {
+      kind: 'carry',
+      lossReports: [
+        {
+          module: 'pa.dtr 2.2->2.1',
+          source: '2.2',
+          target: '2.1',
+          carried: [{ path: 'item.answer.extension:itemWeight', detail: 'moved to shn-carried-content' }],
+        },
+      ],
+      restored: true,
+    };
+    const stub = makeFetch(true, 200, body);
+    vi.stubGlobal('fetch', stub);
+
+    const { postBridgingExhibit } = await freshApi();
+    const result = await postBridgingExhibit('carry');
+
+    const [url, init] = stub.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/bridging/exhibit');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ kind: 'carry' });
+    expect(result).toEqual(body);
+  });
+
+  it('POSTs body {kind:"refusal"}; 200 -> the refusal response shape', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    const body = {
+      kind: 'refusal',
+      refusal: 'semantic-change refusal: ambiguous multi-coverage source',
+      semanticChange: true,
+    };
+    const stub = makeFetch(true, 200, body);
+    vi.stubGlobal('fetch', stub);
+
+    const { postBridgingExhibit } = await freshApi();
+    const result = await postBridgingExhibit('refusal');
+
+    const [, init] = stub.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ kind: 'refusal' });
+    expect(result).toEqual(body);
+  });
+
+  it('503 (observer listener not known yet) -> ApiError(503)', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    vi.stubGlobal('fetch', makeFetch(false, 503, { error: 'stack not started' }));
+
+    const { postBridgingExhibit, ApiError } = await freshApi();
+    try {
+      await postBridgingExhibit('carry');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as InstanceType<typeof ApiError>).status).toBe(503);
+    }
+  });
+});
+
 describe('getBYOPatients', () => {
   it('GETs /api/byo/patients with the resolved bearer token and parses PatientSummary[]', async () => {
     sessionStorage.setItem('kitToken', 't-1');

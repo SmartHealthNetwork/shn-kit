@@ -45,8 +45,25 @@ const (
 	dataServerChildName = "data-server"
 	brProviderChildName = "br-provider"
 
+	// defaultContractLine is the canonical default: the ONE line
+	// tools/kitassets/build.sh's package-time prewarm step bakes (the
+	// validator-h2/data-h2 H2 stores under assetsDir/prewarm/), so it is also
+	// the only line that gets the fast (javaReadyTimeout) boot. Any OTHER
+	// line — StackConfig.Line switched away from it, or an
+	// AdditionalValidatorLines entry — boots cold (javaReadyTimeoutCold), into
+	// its OWN, never-prewarmed, {stateDir}/validator-<line>/h2 ("do not boot
+	// extra validators by default" — the fast path stays exactly this one
+	// line).
+	defaultContractLine = "2.0"
+
 	javaReadyTimeout = 120 * time.Second
 	javaRestartMax   = 3
+	// javaReadyTimeoutCold matches tools/kitassets/build.sh's
+	// READY_BOUND_FIRST — a validator child at a line OTHER than
+	// defaultContractLine has no prewarmed H2 to boot from, so it pays the
+	// same from-scratch IG-indexing cost the package-time prewarm step
+	// exists to avoid for the default line.
+	javaReadyTimeoutCold = 20 * time.Minute
 
 	// JVM heap constants: validator/data-server share the pinned
 	// prewarm boot budget; br-provider is a leaner single-purpose BFF.
@@ -54,6 +71,12 @@ const (
 	dataServerHeapMB = 768
 	brProviderHeapMB = 512
 )
+
+// DefaultContractLine exports defaultContractLine for callers outside this
+// package (kit/cmd/shnkitd/main.go, filtering ResolveValidatorLines' output
+// down to the lines ClearStaleAssets' extraValidatorLines sweep actually
+// needs) that would otherwise have to duplicate the literal "2.0".
+const DefaultContractLine = defaultContractLine
 
 // ig is one implementation guide baked into the asset pipeline
 // (tools/kitassets/build.sh), keyed the same way as the
@@ -64,26 +87,18 @@ type ig struct {
 	key, dir, name, version string
 }
 
-// validatorIGs is the validator's full 8-IG set (single-tenant $validate
-// only), byte-identical to tools/kitassets/build.sh's VALIDATOR_IGS list.
-var validatorIGs = []ig{
-	{"uscore", "igs-validator", "hl7.fhir.us.core", "6.1.0"},
-	{"crd", "igs-validator", "hl7.fhir.us.davinci-crd", "2.0.1"},
-	{"dtr", "igs-validator", "hl7.fhir.us.davinci-dtr", "2.0.1"},
-	{"pas", "igs-validator", "hl7.fhir.us.davinci-pas", "2.0.1"},
-	{"pdex", "igs-validator", "hl7.fhir.us.davinci-pdex", "2.1.0"},
-	{"sdc", "igs-validator", "hl7.fhir.uv.sdc", "3.0.0"},
-	{"cdex", "igs-validator", "hl7.fhir.us.davinci-cdex", "2.1.0"},
-	{"hrex", "igs-validator", "hl7.fhir.us.davinci-hrex", "1.1.0"},
-}
-
-// dataIGs is the data server's 4-IG set, byte-identical to
-// tools/kitassets/build.sh's DATA_IGS list.
-var dataIGs = []ig{
-	{"uscore", "igs-data", "hl7.fhir.us.core", "6.1.0"},
-	{"cdex", "igs-data", "hl7.fhir.us.davinci-cdex", "2.1.0"},
-	{"hrex", "igs-data", "hl7.fhir.us.davinci-hrex", "1.1.0"},
-	{"pas", "igs-data", "hl7.fhir.us.davinci-pas", "2.0.1"},
+// validatorChildDirName returns the state-dir child name a validator booting
+// line uses: the FIXED, unqualified validatorChildName ("validator") for
+// defaultContractLine — the ONE line CopyPrewarmedH2/ClearStaleAssets ever
+// touch, and the one build.sh's package-time prewarm populates — or
+// "validator-<line>" for any other line, so each non-default line gets its
+// own never-shared, never-prewarmed H2 directory (never collides with, and is
+// never mistaken for, the prewarmed default's).
+func validatorChildDirName(line string) string {
+	if line == defaultContractLine {
+		return validatorChildName
+	}
+	return validatorChildName + "-" + line
 }
 
 // javaCommand returns the java binary path under jreDir for goos — a
@@ -191,12 +206,24 @@ func javaEnv(springJSON string) []string {
 	return env
 }
 
-// BuildValidatorChildSpec assembles the validator child's ChildSpec:
-// single-tenant $validate-only HAPI carrying all 8 IGs. h2Dir
-// ({stateDir}/validator/h2) is populated by seed.CopyPrewarmedH2 BEFORE this
-// child is ever spawned.
-func BuildValidatorChildSpec(assetsDir, jreDir, stateDir string, port int, goos string) (supervisor.ChildSpec, error) {
-	workDir := filepath.Join(stateDir, validatorChildName)
+// BuildValidatorChildSpec assembles ONE validator child's ChildSpec at line
+// (single-tenant $validate-only HAPI carrying that line's full IG set — 9 IGs
+// for 2.0/2.1 (validator-sidecar + shnig), 10 for 2.2's
+// extensions-closure superset (validator-sidecar-ext + shnig)). An unrecognized line
+// (kitdIGPinsValidator returns nil) is a fail-loud config error, never a
+// silent empty-IG boot. h2Dir ({stateDir}/{validatorChildDirName(line)}/h2)
+// is populated by seed.CopyPrewarmedH2 BEFORE this child is ever spawned —
+// but ONLY for defaultContractLine; any other line's h2Dir starts empty and
+// the child indexes its IGs from scratch (ReadyTimeout reflects that: the
+// fast javaReadyTimeout for the prewarmed default line, the cold
+// javaReadyTimeoutCold otherwise).
+func BuildValidatorChildSpec(assetsDir, jreDir, stateDir string, port int, goos, line string) (supervisor.ChildSpec, error) {
+	igs := kitdIGPinsValidator(line)
+	if igs == nil {
+		return supervisor.ChildSpec{}, fmt.Errorf("kitd: no validator IG pin set for line %q (kitdIGPinsValidator, tools/contracts/manifest.json)", line)
+	}
+	name := validatorChildDirName(line)
+	workDir := filepath.Join(stateDir, name)
 	h2Dir := filepath.Join(workDir, "h2")
 	warLink, err := ensureWarLink(workDir, filepath.Join(assetsDir, "hapi", "main.war"))
 	if err != nil {
@@ -206,19 +233,23 @@ func BuildValidatorChildSpec(assetsDir, jreDir, stateDir string, port int, goos 
 	if err := os.MkdirAll(tmpDir, 0700); err != nil {
 		return supervisor.ChildSpec{}, fmt.Errorf("kitd: create java child tmp dir %s: %w", tmpDir, err)
 	}
-	springJSON, err := hapiSpringConfig(assetsDir, h2Dir, port, validatorIGs, false)
+	springJSON, err := hapiSpringConfig(assetsDir, h2Dir, port, igs, false)
 	if err != nil {
-		return supervisor.ChildSpec{}, fmt.Errorf("kitd: validator config: %w", err)
+		return supervisor.ChildSpec{}, fmt.Errorf("kitd: validator config (line %s): %w", line, err)
+	}
+	readyTimeout := javaReadyTimeout
+	if line != defaultContractLine {
+		readyTimeout = javaReadyTimeoutCold
 	}
 	return supervisor.ChildSpec{
-		Name:         validatorChildName,
+		Name:         name,
 		Command:      javaCommand(jreDir, goos),
 		Args:         javaArgs(validatorHeapMB, tmpDir, warLink),
 		Env:          javaEnv(springJSON),
 		Dir:          workDir,
-		LogPath:      filepath.Join(stateDir, "validator.log"),
+		LogPath:      filepath.Join(stateDir, name+".log"),
 		ReadyURLs:    []string{fmt.Sprintf("http://127.0.0.1:%d/fhir/metadata", port)},
-		ReadyTimeout: javaReadyTimeout,
+		ReadyTimeout: readyTimeout,
 		RestartMax:   javaRestartMax,
 	}, nil
 }
@@ -233,7 +264,17 @@ func BuildValidatorChildSpec(assetsDir, jreDir, stateDir string, port int, goos 
 // /fhir/metadata: HAPI special-cases the untenanted metadata route to 200
 // even under URL_BASED partitioning, so it cannot discriminate tenancy —
 // only a data route (or the DEFAULT-tenanted metadata route) can.
+//
+// The data server is NOT line-configurable (unlike the validator): it always
+// boots at defaultContractLine, mirroring the gateway's
+// own single FHIR_DATA_URL (no per-line variant exists there either) — its
+// job is serving synthetic provider EHR data + operated CQL, not exercising a
+// declared contract line's IG conformance. kitdIGPinsData still takes a line
+// parameter (reconciling its formerly line-less signature with
+// kitdIGPinsValidator's), but this is the one call site, and it is always
+// pinned to defaultContractLine.
 func BuildDataServerChildSpec(assetsDir, jreDir, stateDir string, port int, goos string) (supervisor.ChildSpec, error) {
+	igs := kitdIGPinsData(defaultContractLine)
 	workDir := filepath.Join(stateDir, dataServerChildName)
 	h2Dir := filepath.Join(workDir, "h2")
 	warLink, err := ensureWarLink(workDir, filepath.Join(assetsDir, "hapi", "main.war"))
@@ -244,7 +285,7 @@ func BuildDataServerChildSpec(assetsDir, jreDir, stateDir string, port int, goos
 	if err := os.MkdirAll(tmpDir, 0700); err != nil {
 		return supervisor.ChildSpec{}, fmt.Errorf("kitd: create java child tmp dir %s: %w", tmpDir, err)
 	}
-	springJSON, err := hapiSpringConfig(assetsDir, h2Dir, port, dataIGs, true)
+	springJSON, err := hapiSpringConfig(assetsDir, h2Dir, port, igs, true)
 	if err != nil {
 		return supervisor.ChildSpec{}, fmt.Errorf("kitd: data server config: %w", err)
 	}

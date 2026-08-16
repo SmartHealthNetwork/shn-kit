@@ -69,7 +69,7 @@ CACHE="$DIST/.jmods/$TARGET"
 if [ ! -f "$CACHE/.extracted" ]; then
   rm -rf "$CACHE"; mkdir -p "$CACHE"
   echo "[jlink] fetching $ARCHIVE"
-  curl -fLSso "$CACHE/$ARCHIVE" "$BASE_URL/$ARCHIVE"
+  curl --retry 5 --retry-delay 5 --retry-all-errors -fLSso "$CACHE/$ARCHIVE" "$BASE_URL/$ARCHIVE"
   echo "$SHA256  $CACHE/$ARCHIVE" | shasum -a 256 -c - >/dev/null \
     || { echo "[jlink] FAIL: sha256 mismatch for $ARCHIVE" >&2; exit 1; }
   case "$ARCHIVE" in

@@ -13,6 +13,7 @@ import type {
   BYOStatus,
   PatientContext,
   PatientSummary,
+  BridgingExhibitResponse,
 } from './types';
 import { resolveToken } from './bridge';
 
@@ -215,6 +216,29 @@ export function supportBundleUrl(): string {
 // SeedYourServerBlock (BYOPanel.tsx) does exactly that.
 export function seedBundleUrl(lane: 'ehr' | 'conformant'): string {
   return `/api/byo/seed-bundle/${lane}`;
+}
+
+// postBridgingDemo serves POST /api/bridging/demo: flips the gateway
+// child's bridging demo mode (a full stop/respawn restart under the
+// hood) — 404 when the Kit build has no bridging feature at all
+// (StatusResponse.bridging stays absent, never conflated with off), 409
+// while a run or watch is in flight, 503 before the stack has started.
+// `enabled` is ALWAYS sent explicitly in the body: kitd's demoRequest
+// decodes a missing "enabled" key as false ("turn it off", the safe
+// direction) — an empty body would silently mean "disable," never a no-op.
+export function postBridgingDemo(enabled: boolean): Promise<{ demoMode: boolean }> {
+  return postJSON<{ demoMode: boolean }>('/api/bridging/demo', { enabled });
+}
+
+// postBridgingExhibit serves POST /api/bridging/exhibit: runs the matching
+// embedded reference fixture through the gateway child's real transform
+// modules (kit/kitd/bridging.go) — "carry" for the DTR content round trip,
+// "refusal" for the crafted multi-coverage semantic-change refusal. Neither
+// kind is a wire exchange (no run is created, nothing crosses the network
+// beyond the loopback proxy call) — 503 before the gateway child's observer
+// listener is known.
+export function postBridgingExhibit(kind: 'carry' | 'refusal'): Promise<BridgingExhibitResponse> {
+  return postJSON<BridgingExhibitResponse>('/api/bridging/exhibit', { kind });
 }
 
 export function getHistoryRecord(runId: string): Promise<HistoryRecord> {

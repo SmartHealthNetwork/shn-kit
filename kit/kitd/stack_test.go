@@ -305,6 +305,46 @@ func TestBuildStack_ObserverHealthURL(t *testing.T) {
 	}
 }
 
+// TestBuildStack_GatewayEnvMirrorsSpec pins Stack.GatewayEnv as the exact
+// baseline the bridging demo toggle rebuilds the gateway env from: it is
+// value-identical to the gateway ChildSpec's Env, and it is an INDEPENDENT
+// slice — appending to it (what the toggle does) must never be able to reach
+// the registered spec's own backing array.
+func TestBuildStack_GatewayEnvMirrorsSpec(t *testing.T) {
+	cfg := StackConfig{
+		GatewayBinary:     "/bin/true",
+		StateDir:          t.TempDir(),
+		SecretsDir:        "/secrets/provider",
+		DiscoveryURL:      "http://127.0.0.1:9001/discovery",
+		FHIRTokenURL:      "https://ehr.example/token",
+		FHIRClientID:      "kit-client",
+		FHIRClientKeyPath: "/secrets/ehr.key",
+		FHIRClientAlg:     "RS384",
+	}
+	stack, err := BuildStack(cfg)
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	spec := stack.Children[0]
+	if spec.Name != gatewayChildName {
+		t.Fatalf("Children[0] = %q, want the gateway child", spec.Name)
+	}
+	if strings.Join(stack.GatewayEnv, "\x00") != strings.Join(spec.Env, "\x00") {
+		t.Fatalf("GatewayEnv = %v, want the gateway spec's own env %v", stack.GatewayEnv, spec.Env)
+	}
+	// The BACKING ARRAY, not just the contents: an append onto a shared array
+	// with spare capacity would rewrite the registered spec's env in place.
+	// Comparing appended contents alone does NOT catch that (the append
+	// usually lands in fresh capacity and the bug hides) — the pointer
+	// identity check is the one that actually fails on a shared array.
+	if len(spec.Env) > 0 && &stack.GatewayEnv[0] == &spec.Env[0] {
+		t.Fatal("GatewayEnv shares its backing array with the gateway ChildSpec's Env — the demo toggle's append could rewrite a live child's env")
+	}
+	if len(spec.Env) == 0 {
+		t.Fatal("gateway spec env is empty; the backing-array check above proved nothing")
+	}
+}
+
 // ---- Row 6: SMART quad env emission ---------------------------------------------
 
 // TestBuildStack_QuadEnv_FullySet proves the FHIR SMART quad is emitted
@@ -778,5 +818,175 @@ func TestBuildStack_TrioPresent_IngressClientsAndPFX(t *testing.T) {
 	certPub, ok := cert.PublicKey.(*rsa.PublicKey)
 	if !ok || !certPub.Equal(rsaPub) {
 		t.Error("PFX's certificate public key does not match the ingress-clients.json entry's public key")
+	}
+}
+
+// ---- line-configurable validator ---------------------------------------------
+
+// TestResolveValidatorLines_Table pins the dedup/default rules
+// BuildStack and shnkitd's ClearStaleAssets call both rely on.
+func TestResolveValidatorLines_Table(t *testing.T) {
+	cases := []struct {
+		name        string
+		line        string
+		additional  []string
+		wantPrimary string
+		wantAll     []string
+	}{
+		{"empty line defaults to 2.0, no additional", "", nil, "2.0", []string{"2.0"}},
+		{"explicit 2.0, no additional", "2.0", nil, "2.0", []string{"2.0"}},
+		{"non-default primary", "2.1", nil, "2.1", []string{"2.1"}},
+		{"primary plus one additional", "2.0", []string{"2.2"}, "2.0", []string{"2.0", "2.2"}},
+		{"additional duplicates primary — deduped", "2.0", []string{"2.0", "2.2"}, "2.0", []string{"2.0", "2.2"}},
+		{"additional repeats itself — deduped", "2.0", []string{"2.1", "2.1"}, "2.0", []string{"2.0", "2.1"}},
+		{"additional carries an empty entry — skipped", "2.0", []string{"", "2.1"}, "2.0", []string{"2.0", "2.1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			primary, all := ResolveValidatorLines(tc.line, tc.additional)
+			if primary != tc.wantPrimary {
+				t.Errorf("primary = %q, want %q", primary, tc.wantPrimary)
+			}
+			if len(all) != len(tc.wantAll) {
+				t.Fatalf("all = %q, want %q", all, tc.wantAll)
+			}
+			for i := range tc.wantAll {
+				if all[i] != tc.wantAll[i] {
+					t.Errorf("all[%d] = %q, want %q (full: %q)", i, all[i], tc.wantAll[i], all)
+				}
+			}
+		})
+	}
+}
+
+// TestFHIRValidateEnvName_Table pins the exact env-name mirror of
+// gateway/app/app.go's FHIR_VALIDATE_URL/_2_1/_2_2 triad.
+func TestFHIRValidateEnvName_Table(t *testing.T) {
+	cases := map[string]string{
+		"2.0": "FHIR_VALIDATE_URL",
+		"2.1": "FHIR_VALIDATE_URL_2_1",
+		"2.2": "FHIR_VALIDATE_URL_2_2",
+	}
+	for line, want := range cases {
+		if got := fhirValidateEnvName(line); got != want {
+			t.Errorf("fhirValidateEnvName(%q) = %q, want %q", line, got, want)
+		}
+	}
+}
+
+// TestBuildStack_LineUnset_ByteIdenticalToSingleLine is the regression
+// pin: leaving StackConfig.Line/AdditionalValidatorLines at their zero values
+// must reproduce EXACTLY today's trio shape — 4 children (never a 5th), the
+// bare FHIR_VALIDATE_URL name (never a suffixed one), and no
+// AdditionalValidatorURLs.
+func TestBuildStack_LineUnset_ByteIdenticalToSingleLine(t *testing.T) {
+	stack, err := BuildStack(trioCfg(t, nil))
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	if len(stack.Children) != 4 {
+		t.Fatalf("Children = %d, want 4 (no extra validators boot by default)", len(stack.Children))
+	}
+	if stack.Children[1].Name != "validator" {
+		t.Errorf("Children[1].Name = %q, want validator (unqualified default line)", stack.Children[1].Name)
+	}
+	if !hasEnv(stack.Children[0].Env, "FHIR_VALIDATE_URL="+stack.ValidatorURL+"/fhir") {
+		t.Errorf("gateway Env = %q, want the bare FHIR_VALIDATE_URL name", stack.Children[0].Env)
+	}
+	for _, e := range stack.Children[0].Env {
+		if strings.Contains(e, "FHIR_VALIDATE_URL_") {
+			t.Errorf("gateway Env contains a suffixed FHIR_VALIDATE_URL_* var (%q), want none when Line/AdditionalValidatorLines are unset", e)
+		}
+	}
+	if len(stack.AdditionalValidatorURLs) != 0 {
+		t.Errorf("AdditionalValidatorURLs = %v, want empty", stack.AdditionalValidatorURLs)
+	}
+}
+
+// TestBuildStack_NonDefaultLine_SuffixedEnvNoDoubleBoot proves setting Line to
+// a non-default value (alone, no AdditionalValidatorLines) still boots
+// exactly ONE validator child — at that line — and wires the SUFFIXED env
+// name, never the bare FHIR_VALIDATE_URL (gateway/app/app.go's canonical lane
+// is fixed at "2.0"; wiring FHIR_VALIDATE_URL to a 2.1 validator would silently
+// mislabel it as the canonical lane).
+func TestBuildStack_NonDefaultLine_SuffixedEnvNoDoubleBoot(t *testing.T) {
+	stack, err := BuildStack(trioCfg(t, func(c *StackConfig) { c.Line = "2.1" }))
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	if len(stack.Children) != 4 {
+		t.Fatalf("Children = %d, want 4 (Line alone must not add a child)", len(stack.Children))
+	}
+	if stack.Children[1].Name != "validator-2.1" {
+		t.Errorf("Children[1].Name = %q, want validator-2.1", stack.Children[1].Name)
+	}
+	if stack.Children[1].ReadyTimeout != javaReadyTimeoutCold {
+		t.Errorf("Children[1].ReadyTimeout = %v, want the cold bound (2.1 is never prewarmed)", stack.Children[1].ReadyTimeout)
+	}
+	if !hasEnv(stack.Children[0].Env, "FHIR_VALIDATE_URL_2_1="+stack.ValidatorURL+"/fhir") {
+		t.Errorf("gateway Env = %q, want FHIR_VALIDATE_URL_2_1", stack.Children[0].Env)
+	}
+	for _, e := range stack.Children[0].Env {
+		if strings.HasPrefix(e, "FHIR_VALIDATE_URL=") {
+			t.Errorf("gateway Env contains bare FHIR_VALIDATE_URL (%q) — line 2.1 must NOT be wired as the canonical lane", e)
+		}
+	}
+}
+
+// TestBuildStack_AdditionalValidatorLines_ExtraChildrenAndEnv is the positive
+// case for the config-gated feature: one additional line boots exactly one
+// more child (5 total), ordered AFTER the core four, with its own port/URL
+// and its own suffixed env var — while the primary line's wiring (bare
+// FHIR_VALIDATE_URL) is untouched.
+func TestBuildStack_AdditionalValidatorLines_ExtraChildrenAndEnv(t *testing.T) {
+	stack, err := BuildStack(trioCfg(t, func(c *StackConfig) {
+		c.AdditionalValidatorLines = []string{"2.2"}
+	}))
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	wantNames := []string{"gateway", "validator", "data-server", "br-provider", "validator-2.2"}
+	if len(stack.Children) != len(wantNames) {
+		t.Fatalf("Children = %d, want %d: %+v", len(stack.Children), len(wantNames), stack.Children)
+	}
+	for i, want := range wantNames {
+		if stack.Children[i].Name != want {
+			t.Errorf("Children[%d].Name = %q, want %q", i, stack.Children[i].Name, want)
+		}
+	}
+	extraURL, ok := stack.AdditionalValidatorURLs["2.2"]
+	if !ok || extraURL == "" {
+		t.Fatalf("AdditionalValidatorURLs[2.2] missing or empty: %v", stack.AdditionalValidatorURLs)
+	}
+	if extraURL == stack.ValidatorURL {
+		t.Errorf("AdditionalValidatorURLs[2.2] = %q, want a DIFFERENT port than the primary validator's %q", extraURL, stack.ValidatorURL)
+	}
+	if !hasEnv(stack.Children[0].Env, "FHIR_VALIDATE_URL_2_2="+extraURL+"/fhir") {
+		t.Errorf("gateway Env = %q, want FHIR_VALIDATE_URL_2_2=%s/fhir", stack.Children[0].Env, extraURL)
+	}
+	if !hasEnv(stack.Children[0].Env, "FHIR_VALIDATE_URL="+stack.ValidatorURL+"/fhir") {
+		t.Errorf("gateway Env = %q, want the primary line's bare FHIR_VALIDATE_URL untouched", stack.Children[0].Env)
+	}
+	if stack.Children[4].ReadyTimeout != javaReadyTimeoutCold {
+		t.Errorf("Children[4] (validator-2.2) ReadyTimeout = %v, want the cold bound", stack.Children[4].ReadyTimeout)
+	}
+}
+
+// TestBuildStack_AdditionalValidatorLines_DuplicateOfPrimary_NoExtraChild
+// proves an AdditionalValidatorLines entry equal to the resolved primary line
+// is deduped away — never a second child for the same line, never a stray
+// AdditionalValidatorURLs entry either.
+func TestBuildStack_AdditionalValidatorLines_DuplicateOfPrimary_NoExtraChild(t *testing.T) {
+	stack, err := BuildStack(trioCfg(t, func(c *StackConfig) {
+		c.AdditionalValidatorLines = []string{"2.0"} // same as the (defaulted) primary
+	}))
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	if len(stack.Children) != 4 {
+		t.Fatalf("Children = %d, want 4 (an AdditionalValidatorLines entry equal to the primary must not add a child)", len(stack.Children))
+	}
+	if len(stack.AdditionalValidatorURLs) != 0 {
+		t.Errorf("AdditionalValidatorURLs = %v, want empty", stack.AdditionalValidatorURLs)
 	}
 }

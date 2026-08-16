@@ -3078,3 +3078,375 @@ func TestAbout_AbsentManifest404sWithBody(t *testing.T) {
 		t.Fatalf("GET /api/about (unreadable manifest path) = %d, want 404 (body=%s)", status, body)
 	}
 }
+
+// fakeDemo is Config.BridgingDemo's test double: records every enabled flag
+// it was called with and answers callErr (nil ⇒ success) — never restarts a
+// real child.
+type fakeDemo struct {
+	mu      sync.Mutex
+	calls   []bool
+	callErr error
+}
+
+func (f *fakeDemo) toggle(_ context.Context, enabled bool) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, enabled)
+	err := f.callErr
+	f.mu.Unlock()
+	return err
+}
+
+func (f *fakeDemo) snapshot() []bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]bool{}, f.calls...)
+}
+
+// statusBridging GETs /api/status and returns the raw "bridging" value —
+// nil (with ok=false) when the key is absent entirely, which is the
+// key-presence contract for an unconfigured demo seam.
+func statusBridging(t *testing.T, apiBase, token string) (map[string]any, bool) {
+	t.Helper()
+	status, body := doJSON(t, http.MethodGet, apiBase+"/api/status", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/status = %d (body=%s)", status, body)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	v, ok := resp["bridging"]
+	if !ok {
+		return nil, false
+	}
+	m, isMap := v.(map[string]any)
+	if !isMap {
+		t.Fatalf("status \"bridging\" = %v, want an object", v)
+	}
+	return m, true
+}
+
+// TestBridgingDemo_Toggle proves the happy path both ways: the closure is
+// called with the requested flag and GET /api/status's bridging.demoMode
+// follows it — including the initial false BEFORE any toggle (the block is
+// present as soon as the seam is configured, not only once enabled).
+func TestBridgingDemo_Toggle(t *testing.T) {
+	const token = "bridging-toggle-token"
+	bus := event.NewBus(fixedClock)
+	demo := &fakeDemo{}
+	cfg := Config{
+		APIAddr:      "127.0.0.1:0",
+		StateDir:     t.TempDir(),
+		Token:        token,
+		Bus:          bus,
+		Sup:          supervisor.New(nil),
+		Runner:       runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		BridgingDemo: demo.toggle,
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	if b, ok := statusBridging(t, apiBase, token); !ok || b["demoMode"] != false {
+		t.Fatalf("pre-toggle status bridging = %v (present=%v), want {demoMode:false}", b, ok)
+	}
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/bridging/demo", token, map[string]bool{"enabled": true})
+	if status != http.StatusOK {
+		t.Fatalf("POST /api/bridging/demo enabled=true = %d, want 200 (body=%s)", status, body)
+	}
+	var resp struct {
+		DemoMode bool `json:"demoMode"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || !resp.DemoMode {
+		t.Fatalf("enable response = %s, want {\"demoMode\":true} (err=%v)", body, err)
+	}
+	if got := demo.snapshot(); len(got) != 1 || !got[0] {
+		t.Fatalf("closure calls = %v, want exactly one call with true", got)
+	}
+	if b, _ := statusBridging(t, apiBase, token); b["demoMode"] != true {
+		t.Fatalf("post-enable status bridging = %v, want demoMode true", b)
+	}
+
+	status, body = doJSON(t, http.MethodPost, apiBase+"/api/bridging/demo", token, map[string]bool{"enabled": false})
+	if status != http.StatusOK {
+		t.Fatalf("POST /api/bridging/demo enabled=false = %d, want 200 (body=%s)", status, body)
+	}
+	if got := demo.snapshot(); len(got) != 2 || got[1] {
+		t.Fatalf("closure calls = %v, want a second call with false", got)
+	}
+	if b, _ := statusBridging(t, apiBase, token); b["demoMode"] != false {
+		t.Fatalf("post-disable status bridging = %v, want demoMode false", b)
+	}
+}
+
+// TestStatus_BridgingPeerProbes proves the "bridging" block's peer/
+// refusePeer keys track SetVerify's published bootstrap.Probe results
+// absent (omitempty) before any SetVerify call or when a
+// probe didn't run, present verbatim (name/ok/detail) once it did — and that
+// the exhibit's two probes are surfaced independently of one another.
+func TestStatus_BridgingPeerProbes(t *testing.T) {
+	const token = "bridging-peer-probes-token"
+	bus := event.NewBus(fixedClock)
+	demo := &fakeDemo{}
+	cfg := Config{
+		APIAddr:      "127.0.0.1:0",
+		StateDir:     t.TempDir(),
+		Token:        token,
+		Bus:          bus,
+		Sup:          supervisor.New(nil),
+		Runner:       runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		BridgingDemo: demo.toggle,
+	}
+	d, apiBase := startDaemon(t, cfg)
+
+	// Before any SetVerify call: peer/refusePeer both absent.
+	if b, ok := statusBridging(t, apiBase, token); !ok {
+		t.Fatalf("bridging block absent before any SetVerify call")
+	} else if _, has := b["peer"]; has {
+		t.Fatalf("bridging.peer present before any SetVerify call: %v", b)
+	} else if _, has := b["refusePeer"]; has {
+		t.Fatalf("bridging.refusePeer present before any SetVerify call: %v", b)
+	}
+
+	// Only bridge-demo-payer ran (RefuseHolder was unconfigured): peer
+	// present, refusePeer still absent.
+	d.SetVerify([]bootstrap.Probe{
+		{Name: "discovery", OK: true, Detail: "reachable"},
+		{Name: "bridge-demo-payer", OK: true, Detail: "bridge-demo publishes a payer identity and declares pa.crd@2.1"},
+	})
+	b, ok := statusBridging(t, apiBase, token)
+	if !ok {
+		t.Fatalf("bridging block absent after SetVerify")
+	}
+	peer, isMap := b["peer"].(map[string]any)
+	if !isMap {
+		t.Fatalf("bridging.peer = %v, want an object", b["peer"])
+	}
+	if peer["name"] != "bridge-demo-payer" || peer["ok"] != true {
+		t.Fatalf("bridging.peer = %v, want name=bridge-demo-payer ok=true", peer)
+	}
+	if _, has := b["refusePeer"]; has {
+		t.Fatalf("bridging.refusePeer present when bridge-demo-refuse didn't run: %v", b)
+	}
+
+	// Both probes ran, refuse-peer red: both surfaced independently.
+	d.SetVerify([]bootstrap.Probe{
+		{Name: "bridge-demo-payer", OK: true, Detail: "bridge-demo publishes a payer identity and declares pa.crd@2.1"},
+		{Name: "bridge-demo-refuse", OK: false, Detail: `holder "bridge-demo-refuse" not found in registrar feed`},
+	})
+	b, ok = statusBridging(t, apiBase, token)
+	if !ok {
+		t.Fatalf("bridging block absent after second SetVerify")
+	}
+	peer, isMap = b["peer"].(map[string]any)
+	if !isMap || peer["ok"] != true {
+		t.Fatalf("bridging.peer = %v, want ok=true", b["peer"])
+	}
+	refusePeer, isMap := b["refusePeer"].(map[string]any)
+	if !isMap {
+		t.Fatalf("bridging.refusePeer = %v, want an object", b["refusePeer"])
+	}
+	if refusePeer["name"] != "bridge-demo-refuse" || refusePeer["ok"] != false {
+		t.Fatalf("bridging.refusePeer = %v, want name=bridge-demo-refuse ok=false", refusePeer)
+	}
+	if !strings.Contains(fmt.Sprint(refusePeer["detail"]), "not found in registrar feed") {
+		t.Fatalf("bridging.refusePeer.detail = %v, want containing %q", refusePeer["detail"], "not found in registrar feed")
+	}
+}
+
+// TestBridgingDemo_TokenGated pins the 401 row for POST /api/bridging/demo
+// explicitly (it rides the shared authMiddleware, but every gated route gets
+// its own explicit row) — and proves the gate precedes the nil-seam 404, so
+// an unauthenticated caller can't even probe whether this Kit HAS a demo
+// mode.
+func TestBridgingDemo_TokenGated(t *testing.T) {
+	const token = "bridging-token-gate-token"
+	bus := event.NewBus(fixedClock)
+	demo := &fakeDemo{}
+	cfg := Config{
+		APIAddr:      "127.0.0.1:0",
+		StateDir:     t.TempDir(),
+		Token:        token,
+		Bus:          bus,
+		Sup:          supervisor.New(nil),
+		Runner:       runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		BridgingDemo: demo.toggle,
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	status, _ := doJSON(t, http.MethodPost, apiBase+"/api/bridging/demo", "", map[string]bool{"enabled": true})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("POST /api/bridging/demo without token = %d, want 401", status)
+	}
+	if got := demo.snapshot(); len(got) != 0 {
+		t.Fatalf("closure called %v by an unauthenticated request, want 0 calls", got)
+	}
+}
+
+// TestBridgingDemo_NotConfigured404 proves the nil-seam contract, mirroring
+// the Boot/History/BYO nil-Config-field pattern: the route 404s AND
+// GET /api/status omits the "bridging" key entirely (key-presence
+// semantics), so a client can tell "feature absent" from "demo off".
+func TestBridgingDemo_NotConfigured404(t *testing.T) {
+	const token = "bridging-absent-token"
+	bus := event.NewBus(fixedClock)
+	cfg := Config{
+		APIAddr:  "127.0.0.1:0",
+		StateDir: t.TempDir(),
+		Token:    token,
+		Bus:      bus,
+		Sup:      supervisor.New(nil),
+		Runner:   runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		// BridgingDemo intentionally nil.
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/bridging/demo", token, map[string]bool{"enabled": true})
+	if status != http.StatusNotFound {
+		t.Fatalf("POST /api/bridging/demo with no seam = %d, want 404 (body=%s)", status, body)
+	}
+	if b, ok := statusBridging(t, apiBase, token); ok {
+		t.Fatalf("status carried a bridging block (%v) with no demo seam configured", b)
+	}
+}
+
+// TestBridgingDemo_PreBoot503 proves the daemon-first gate: the seam is
+// configured but the stack has not started (no Runner), so the toggle
+// answers 503 and the closure is never reached — the same posture as the
+// per-child restart route.
+func TestBridgingDemo_PreBoot503(t *testing.T) {
+	const token = "bridging-preboot-token"
+	bus := event.NewBus(fixedClock)
+	demo := &fakeDemo{}
+	cfg := Config{
+		APIAddr:      "127.0.0.1:0",
+		StateDir:     t.TempDir(),
+		Token:        token,
+		Bus:          bus,
+		Sup:          supervisor.New(nil),
+		BridgingDemo: demo.toggle,
+		// Runner intentionally nil: the stack has not started.
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/bridging/demo", token, map[string]bool{"enabled": true})
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("POST /api/bridging/demo pre-boot = %d, want 503 (body=%s)", status, body)
+	}
+	if got := demo.snapshot(); len(got) != 0 {
+		t.Fatalf("closure called %v times pre-boot, want 0", got)
+	}
+}
+
+// TestBridgingDemo_InFlight409 proves a run in flight blocks the toggle
+// (Runner.InFlight(), the same best-effort gate the per-child restart route
+// uses — the toggle restarts the gateway, which would tear an in-flight
+// run's own transport out from under it) and that the closure is never
+// reached while blocked.
+func TestBridgingDemo_InFlight409(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /scenario/uc01", func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"covered":true,"reason":"active coverage"}`))
+	})
+	gwSrv := httptest.NewServer(mux)
+	defer gwSrv.Close()
+
+	const token = "bridging-inflight-token"
+	bus := event.NewBus(fixedClock)
+	rn := runner.New(runner.Config{
+		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		Bus:    bus,
+	})
+	demo := &fakeDemo{}
+	cfg := Config{
+		APIAddr:      "127.0.0.1:0",
+		StateDir:     t.TempDir(),
+		Token:        token,
+		Bus:          bus,
+		Sup:          supervisor.New(nil),
+		Runner:       rn,
+		BridgingDemo: demo.toggle,
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/runs", token,
+		map[string]string{"lane": "ehr", "uc": "uc01", "branch": "covered"})
+	if status != http.StatusAccepted {
+		t.Fatalf("POST /api/runs = %d, want 202 (body=%s)", status, body)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fake gateway never received the /scenario/uc01 request")
+	}
+
+	status, body = doJSON(t, http.MethodPost, apiBase+"/api/bridging/demo", token, map[string]bool{"enabled": true})
+	if status != http.StatusConflict {
+		t.Fatalf("POST /api/bridging/demo while a run is in flight = %d, want 409 (body=%s)", status, body)
+	}
+	if got := demo.snapshot(); len(got) != 0 {
+		t.Fatalf("closure called %v while a run is in flight, want 0 calls", got)
+	}
+	if b, _ := statusBridging(t, apiBase, token); b["demoMode"] != false {
+		t.Fatalf("status flipped (%v) on a refused toggle", b)
+	}
+
+	close(release)
+	waitRunnerIdle(t, rn)
+}
+
+// TestBridgingDemo_BadBodyAndClosureFailure covers the two error paths: a
+// malformed body is a 400 that never reaches the closure, and a closure
+// failure (the restart itself failing) is a 500 that leaves the recorded
+// demo state UNCHANGED — status must never claim a mode the gateway isn't
+// actually running.
+func TestBridgingDemo_BadBodyAndClosureFailure(t *testing.T) {
+	const token = "bridging-errors-token"
+	bus := event.NewBus(fixedClock)
+	demo := &fakeDemo{callErr: fmt.Errorf("supervisor: gateway not ready within 30s")}
+	cfg := Config{
+		APIAddr:      "127.0.0.1:0",
+		StateDir:     t.TempDir(),
+		Token:        token,
+		Bus:          bus,
+		Sup:          supervisor.New(nil),
+		Runner:       runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		BridgingDemo: demo.toggle,
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	req, err := http.NewRequest(http.MethodPost, apiBase+"/api/bridging/demo", strings.NewReader("{not json"))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST malformed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("POST /api/bridging/demo with a malformed body = %d, want 400", resp.StatusCode)
+	}
+	if got := demo.snapshot(); len(got) != 0 {
+		t.Fatalf("closure called %v on a malformed body, want 0 calls", got)
+	}
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/bridging/demo", token, map[string]bool{"enabled": true})
+	if status != http.StatusInternalServerError {
+		t.Fatalf("POST /api/bridging/demo with a failing closure = %d, want 500 (body=%s)", status, body)
+	}
+	var errBody struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &errBody); err != nil || !strings.Contains(errBody.Error, "not ready") {
+		t.Fatalf("500 body = %s, want the closure's own error text (err=%v)", body, err)
+	}
+	if b, _ := statusBridging(t, apiBase, token); b["demoMode"] != false {
+		t.Fatalf("status = %v after a FAILED toggle, want demoMode still false", b)
+	}
+}

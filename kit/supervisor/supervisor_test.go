@@ -6,6 +6,7 @@ package supervisor
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -77,6 +78,14 @@ func TestHelperProcess(t *testing.T) {
 	mux.HandleFunc("POST /exit", func(http.ResponseWriter, *http.Request) {
 		fmt.Println("stub: exiting on cue")
 		os.Exit(2)
+	})
+	// STUB_MARK is echoed verbatim by GET /env: the LIVE child's own view of
+	// its env, read out of the running process rather than inferred from the
+	// supervisor's bookkeeping — how a test proves RestartWithEnv's swap
+	// actually reached the new OS process.
+	mark := os.Getenv("STUB_MARK")
+	mux.HandleFunc("GET /env", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, mark)
 	})
 	fmt.Println("stub: listening", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
@@ -1000,6 +1009,368 @@ func TestSupervisor_StopRacesRestart(t *testing.T) {
 		}
 	default:
 		t.Fatalf("unexpected terminal state %q after Stop-races-Restart (want stopped or ready)", st.State)
+	}
+}
+
+// envMark reads the live child's GET /env — its own view of STUB_MARK, so a
+// test asserts against the env the RUNNING process was spawned with, never
+// the supervisor's record of it.
+func envMark(t *testing.T, addr string) string {
+	t.Helper()
+	resp, err := http.Get("http://" + addr + "/env")
+	if err != nil {
+		t.Fatalf("GET /env: %v", err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read /env: %v", err)
+	}
+	return string(b)
+}
+
+// specOf reads a registered child's ChildSpec under the supervisor's lock
+// (white-box: only this package can prove the NON-env fields of the spec
+// survived a RestartWithEnv untouched).
+func (s *Supervisor) specOf(name string) (ChildSpec, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.children[name]
+	if !ok {
+		return ChildSpec{}, false
+	}
+	return c.spec, true
+}
+
+// RestartWithEnv row 1: the swap actually reaches the new OS process (the
+// live child echoes the NEW mark), every other spec field — name, port
+// (ReadyURLs), dir, log path — is preserved, and the notice stream is a
+// deliberate restart's stopped->starting->ready with NO restarting notice
+// (that state is reserved for crash bounces; it is the relay's crash fence).
+func TestSupervisor_RestartWithEnv(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	spec, addr := stubSpec(t, "envswap1", true, 2)
+	spec.Dir = t.TempDir()
+	spec.Env = append(spec.Env, "STUB_MARK=before")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.StopAll()
+
+	if got := envMark(t, addr); got != "before" {
+		t.Fatalf("pre-restart /env = %q, want before", got)
+	}
+	before, _ := statusOf(s.Status(), "envswap1")
+
+	newEnv := append(append([]string{}, spec.Env[:len(spec.Env)-1]...), "STUB_MARK=after")
+	if err := s.RestartWithEnv(ctx, "envswap1", newEnv, nil); err != nil {
+		t.Fatalf("RestartWithEnv: %v", err)
+	}
+
+	if got := envMark(t, addr); got != "after" {
+		t.Fatalf("post-restart /env = %q, want after (the swapped env never reached the child)", got)
+	}
+	after, ok := statusOf(s.Status(), "envswap1")
+	if !ok || after.State != "ready" {
+		t.Fatalf("status after RestartWithEnv = %+v, want ready", after)
+	}
+	if after.PID <= 0 || after.PID == before.PID {
+		t.Fatalf("expected a NEW pid, before=%d after=%d", before.PID, after.PID)
+	}
+
+	got, ok := s.specOf("envswap1")
+	if !ok {
+		t.Fatal("child disappeared from the supervisor after RestartWithEnv")
+	}
+	if got.Name != spec.Name || got.Dir != spec.Dir || got.LogPath != spec.LogPath ||
+		got.Command != spec.Command || len(got.ReadyURLs) != 1 || got.ReadyURLs[0] != spec.ReadyURLs[0] {
+		t.Fatalf("RestartWithEnv changed a non-env spec field: got %+v, want name/dir/log/command/readyURLs of %+v", got, spec)
+	}
+	if strings.Join(got.Env, "\x00") != strings.Join(newEnv, "\x00") {
+		t.Fatalf("registered Env = %v, want the replacement %v", got.Env, newEnv)
+	}
+
+	states := statesOf(nc.snapshot(), "envswap1")
+	if !containsInOrder(states, []string{"stopped", "starting", "ready"}) {
+		t.Fatalf("expected a stopped->starting->ready subsequence, got %v", states)
+	}
+	if countState(states, "restarting") != 0 {
+		t.Fatalf("a deliberate RestartWithEnv must never emit a restarting notice (crash-only), got %v", states)
+	}
+}
+
+// RestartWithEnv row 2 — THE ORDERING PIN. preSpawn must run after the old
+// process is fully gone and BEFORE the replacement is spawned. This is the
+// wedge fence: kitd hands ResetCursor here, and a cursor reset that landed
+// after the new child was already serving could bump the relay's generation
+// out from under a connection redialed inside the restart window, stranding
+// it stale-gen forever (lastSeq pinned at 0, every Drain to timeout).
+func TestSupervisor_RestartWithEnvPreSpawnOrdering(t *testing.T) {
+	s := New(nil)
+	spec, addr := stubSpec(t, "prespawn1", true, 2)
+	pidFile := filepath.Join(t.TempDir(), "pids")
+	spec.Env = append(spec.Env, "STUB_PID_FILE="+pidFile, "STUB_MARK=before")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.StopAll()
+
+	before, _ := statusOf(s.Status(), "prespawn1")
+	if !waitFor(3*time.Second, func() bool { return len(bootPIDs(t, pidFile)) == 1 }) {
+		t.Fatalf("expected exactly 1 recorded boot before the restart, got %v", bootPIDs(t, pidFile))
+	}
+
+	var (
+		hookCalls   int
+		oldAliveAt  bool
+		bootsAtHook int
+		pidAtHook   int
+	)
+	newEnv := append(append([]string{}, spec.Env[:len(spec.Env)-1]...), "STUB_MARK=after")
+	err := s.RestartWithEnv(ctx, "prespawn1", newEnv, func() {
+		hookCalls++
+		oldAliveAt = isAlive(before.PID)
+		bootsAtHook = len(bootPIDs(t, pidFile))
+		// The supervisor's OWN record of the current process: spawn
+		// overwrites c.cmd, so a PID that has already moved on means the
+		// hook ran after cmd.Start. This pins the late edge with no
+		// dependence on how fast the child gets around to writing its pid
+		// file (which the boot count above is subject to).
+		if st, ok := statusOf(s.Status(), "prespawn1"); ok {
+			pidAtHook = st.PID
+		}
+	})
+	if err != nil {
+		t.Fatalf("RestartWithEnv: %v", err)
+	}
+
+	if hookCalls != 1 {
+		t.Fatalf("preSpawn called %d times, want exactly 1", hookCalls)
+	}
+	if oldAliveAt {
+		t.Fatalf("preSpawn ran while the old process (%d) was still alive — the hook must follow full quiescence", before.PID)
+	}
+	if bootsAtHook != 1 {
+		t.Fatalf("preSpawn observed %d recorded boots, want 1 — the replacement had already spawned (LATE hook = the stale-gen wedge)", bootsAtHook)
+	}
+	if pidAtHook != before.PID {
+		t.Fatalf("preSpawn observed pid %d, want the OLD %d — c.cmd had already been replaced, so the hook ran after cmd.Start (LATE hook = the stale-gen wedge)", pidAtHook, before.PID)
+	}
+	if got := envMark(t, addr); got != "after" {
+		t.Fatalf("post-restart /env = %q, want after", got)
+	}
+}
+
+// bootPIDs reads the stub's STUB_PID_FILE boot history (one pid per boot);
+// a missing file reads as no boots yet.
+func bootPIDs(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+}
+
+// RestartWithEnv row 3: the crash fence still works AFTER a deliberate
+// env-swap restart — an unexpected exit of the replacement child emits
+// StateRestarting, so the relay's crash-driven ResetCursor is untouched by
+// the demo toggle's purpose-built path.
+func TestSupervisor_RestartWithEnvThenCrashStillRestarting(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	spec, addr := stubSpec(t, "envcrash1", true, 2)
+	spec.Env = append(spec.Env, "STUB_MARK=before")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.StopAll()
+
+	newEnv := append(append([]string{}, spec.Env[:len(spec.Env)-1]...), "STUB_MARK=after")
+	if err := s.RestartWithEnv(ctx, "envcrash1", newEnv, nil); err != nil {
+		t.Fatalf("RestartWithEnv: %v", err)
+	}
+	if countState(statesOf(nc.snapshot(), "envcrash1"), "restarting") != 0 {
+		t.Fatal("the deliberate restart itself emitted a restarting notice")
+	}
+
+	postExit(addr)
+	if !waitFor(10*time.Second, func() bool {
+		return countState(statesOf(nc.snapshot(), "envcrash1"), "restarting") == 1
+	}) {
+		t.Fatalf("a crash after RestartWithEnv must still emit restarting, got %v", statesOf(nc.snapshot(), "envcrash1"))
+	}
+	// The crash bounce respawns the SWAPPED env, not the original spec's.
+	if !waitFor(10*time.Second, func() bool {
+		st, ok := statusOf(s.Status(), "envcrash1")
+		return ok && st.State == "ready"
+	}) {
+		t.Fatal("child never came back ready after the crash bounce")
+	}
+	if got := envMark(t, addr); got != "after" {
+		t.Fatalf("post-crash-bounce /env = %q, want after (the swap must be the registered spec)", got)
+	}
+}
+
+// RestartWithEnv row 3b — regression pin for the c.spec.Env data race:
+// spawn must read the WHOLE spec under s.mu
+// (spawn's own doc carries the window analysis) because a crash monitor
+// already past its post-backoff stale/stopping re-check reads c.spec with no
+// further checkpoint while RestartWithEnv's swap rewrites c.spec.Env. This
+// row makes the two genuinely concurrent: each round crashes the stub (which
+// puts a monitor respawn in flight, 500ms behind its backoff) and then times
+// one RestartWithEnv to land around the respawn's post-backoff re-check,
+// sweeping across that edge round by round. Honesty note (row 5b precedent):
+// this exercises the real wire-level combination end-to-end, but the
+// unsynchronized-read window is microseconds wide, so it does NOT reliably
+// flip red on a reverted fix — row 3c below is the deterministic
+// red-on-revert pin. Individual call errors are ignored deliberately —
+// racing a crash means some restarts legitimately fail; the row's assertions
+// are the race detector itself plus the closing single-live-process check
+// (I6).
+func TestSupervisor_RestartWithEnvRacesCrashRespawn(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	spec, addr := stubSpec(t, "envrace1", true, 50)
+	pidFile := filepath.Join(t.TempDir(), "envrace1.pids")
+	spec.Env = append(spec.Env, "STUB_PID_FILE="+pidFile)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	if err := s.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.StopAll()
+
+	// One crash per round; the RestartWithEnv is then TIMED to land around the
+	// crash monitor's post-backoff re-check (500ms × restarts=1), sweeping a
+	// few ms per round across that edge. A toggle landing BEFORE the re-check
+	// makes the monitor exit stale/stopping (harmless — this is why a
+	// free-running toggler loop can never catch the race: every gen bump
+	// staleness-cancels the respawn before its spec read); a toggle landing
+	// AFTER it puts the env swap concurrent with the respawn's spec read —
+	// the exact window spawn's doc describes. The sweep is amplification, not
+	// determinism: rounds that miss the window are harmless.
+	for round := 0; round < 6; round++ {
+		postExit(addr)
+		time.Sleep(490*time.Millisecond + time.Duration(round)*5*time.Millisecond)
+		env := append(append([]string(nil), spec.Env...), fmt.Sprintf("TOGGLE_ROUND=%d", round))
+		_ = s.RestartWithEnv(ctx, "envrace1", env, nil)
+		// Let the winning generation settle ready before the next crash, so
+		// each round's postExit reliably kills a live child.
+		waitFor(3*time.Second, func() bool {
+			st, ok := statusOf(s.Status(), "envrace1")
+			return ok && st.State == "ready"
+		})
+	}
+
+	// Settle deterministically, then the I6 invariant must still hold: however
+	// the races interleaved, exactly one live process across every generation.
+	if err := s.Restart(ctx, "envrace1"); err != nil {
+		t.Fatalf("settling Restart: %v", err)
+	}
+	st, ok := statusOf(s.Status(), "envrace1")
+	if !ok || st.State != "ready" {
+		t.Fatalf("expected ready after settling, got %+v (ok=%v)", st, ok)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read pidfile: %v", err)
+	}
+	aliveCount := 0
+	for _, l := range strings.Fields(strings.TrimSpace(string(data))) {
+		pid, err := strconv.Atoi(l)
+		if err != nil {
+			continue
+		}
+		if isAlive(pid) {
+			aliveCount++
+		}
+	}
+	if aliveCount != 1 {
+		t.Fatalf("expected exactly one live process across all spawned generations, got %d (status pid=%d)", aliveCount, st.PID)
+	}
+}
+
+// RestartWithEnv row 3c — the white-box twin of row 3b, and the row that
+// DOES flip red on revert. Row 3b exercises the real wire-level combination,
+// but the unsynchronized-read window it would need to hit is microseconds
+// wide (spawn's second mu acquire at the c.cmd/c.exited commit closes the
+// happens-before hole for every later swap), so — like row 5b's honesty note
+// — it cannot reliably catch a reverted fix. This row pins the invariant
+// itself deterministically: spawn's ENTIRE spec read happens under s.mu.
+// The writer goroutine performs exactly the write restart() performs at its
+// env-swap line (c.spec.Env replaced under s.mu — same field, same lock);
+// spawn runs concurrently in a loop. Under -race, moving any of spawn's
+// c.spec reads back outside the lock makes this row report the race within a
+// few iterations (verified red on revert). The spawned command is this test
+// binary with no helper env, which exits immediately; each cmd is reaped so
+// the loop leaks no zombies.
+func TestSupervisor_SpawnReadsSpecUnderLock(t *testing.T) {
+	s := New(nil)
+	c := &child{spec: ChildSpec{
+		Name:    "specrace1",
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestHelperProcess"},
+		Env:     []string{"A=0"},
+	}}
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			// The exact shape of restart()'s swap: a whole-slice replacement
+			// of c.spec.Env under s.mu.
+			s.mu.Lock()
+			c.spec.Env = []string{fmt.Sprintf("A=%d", i)}
+			s.mu.Unlock()
+		}
+	}()
+
+	for i := 0; i < 6; i++ {
+		cmd, exited, err := s.spawn(c)
+		if err != nil {
+			t.Fatalf("spawn %d: %v", i, err)
+		}
+		_ = cmd.Wait()
+		close(exited)
+	}
+	close(done)
+	wg.Wait()
+}
+
+// RestartWithEnv row 4: an unknown child errors (naming it) and never
+// invokes preSpawn — a hook with side effects must not fire for a restart
+// that never happened.
+func TestSupervisor_RestartWithEnvUnknownChild(t *testing.T) {
+	s := New(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	called := false
+	err := s.RestartWithEnv(ctx, "nosuchchild", []string{"A=1"}, func() { called = true })
+	if err == nil || !strings.Contains(err.Error(), "nosuchchild") {
+		t.Fatalf("RestartWithEnv on an unknown child = %v, want an error naming the child", err)
+	}
+	if called {
+		t.Fatal("preSpawn fired for a child that was never restarted")
 	}
 }
 

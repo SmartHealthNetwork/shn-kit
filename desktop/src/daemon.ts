@@ -38,6 +38,8 @@ export function buildArgs(cfg: KitConfig, stateDir: string): string[] {
   if (cfg.jreDir) args.push('--jre-dir', cfg.jreDir);
   if (cfg.manifest) args.push('--manifest', cfg.manifest);
   if (cfg.releasesUrl) args.push('--releases-url', cfg.releasesUrl);
+  if (cfg.bridgeDemoHolder) args.push('--bridge-demo-holder', cfg.bridgeDemoHolder);
+  if (cfg.bridgeDemoRefuseHolder) args.push('--bridge-demo-refuse-holder', cfg.bridgeDemoRefuseHolder);
   args.push('--ui-dir', cfg.uiDir);
   args.push('--api-addr', cfg.apiAddr ?? '127.0.0.1:0');
   args.push('--state-dir', stateDir);

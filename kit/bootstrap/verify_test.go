@@ -205,8 +205,9 @@ func TestVerify_AllGreen(t *testing.T) {
 	go func() { resultCh <- readVerifyEvents(t, busSrv.URL+"/events", 3) }()
 
 	// hc deliberately nil — pins Verify's internal http.DefaultClient default
-	// (shnsdk.FetchHolders has no nil-guard of its own).
-	probes := Verify(context.Background(), nil, disc.URL, "kit-h1", bus)
+	// (shnsdk.FetchHolders has no nil-guard of its own). BridgeProbes{} zero
+	// value: both bridge probes absent (unconfigured).
+	probes := Verify(context.Background(), nil, disc.URL, "kit-h1", BridgeProbes{}, bus)
 
 	if len(probes) != 3 {
 		t.Fatalf("len(probes) = %d, want 3: %+v", len(probes), probes)
@@ -246,7 +247,7 @@ func TestVerify_HolderMissingFromFeed(t *testing.T) {
 	reg := fakeRegistrarSrv(t, holders)
 	disc := fakeDiscoverySrv(t, reg.URL)
 
-	probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", nil)
+	probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", BridgeProbes{}, nil)
 
 	discP, _ := probeByName(probes, "discovery")
 	if !discP.OK {
@@ -278,7 +279,7 @@ func TestVerify_NoRoutablePayer(t *testing.T) {
 	reg := fakeRegistrarSrv(t, holders)
 	disc := fakeDiscoverySrv(t, reg.URL)
 
-	probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", nil)
+	probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", BridgeProbes{}, nil)
 
 	regP, _ := probeByName(probes, "registration")
 	if !regP.OK {
@@ -303,7 +304,7 @@ func TestVerify_DiscoveryUnreachable(t *testing.T) {
 	closedURL := closedSrv.URL
 	closedSrv.Close() // now unreachable
 
-	probes := Verify(context.Background(), http.DefaultClient, closedURL, "kit-h1", nil)
+	probes := Verify(context.Background(), http.DefaultClient, closedURL, "kit-h1", BridgeProbes{}, nil)
 
 	if len(probes) != 3 {
 		t.Fatalf("len(probes) = %d, want 3: %+v", len(probes), probes)
@@ -347,7 +348,7 @@ func TestVerify_FetchHoldersFails(t *testing.T) {
 
 	disc := fakeDiscoverySrv(t, registrarURL)
 
-	probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", nil)
+	probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", BridgeProbes{}, nil)
 
 	if len(probes) != 3 {
 		t.Fatalf("len(probes) = %d, want 3: %+v", len(probes), probes)
@@ -369,3 +370,267 @@ func TestVerify_FetchHoldersFails(t *testing.T) {
 		}
 	}
 }
+
+// --- Row 6: bridge-demo probes ---------------------------------------------
+
+// demoHolder/refuseHolder are the fixture holder ids the bridge-probe rows below use.
+const (
+	demoHolder   = "bridge-demo"
+	refuseHolder = "bridge-demo-refuse"
+)
+
+func TestVerify_BridgeProbes(t *testing.T) {
+	tests := []struct {
+		name         string
+		holders      []shnsdk.Holder
+		bp           BridgeProbes
+		wantProbes   []string // probe names expected present, in any order
+		wantPayerOK  *bool
+		wantRefuseOK *bool
+		wantDetail   map[string]string // probe name -> substring expected in Detail
+	}{
+		{
+			name: "both unconfigured: neither probe present",
+			holders: []shnsdk.Holder{
+				{ID: "kit-h1", Role: "provider"},
+			},
+			bp:         BridgeProbes{},
+			wantProbes: nil,
+		},
+		{
+			name: "green: demo payer exists with PayerIDs and a non-2.0 line",
+			holders: []shnsdk.Holder{
+				{ID: "kit-h1", Role: "provider"},
+				{
+					ID:               demoHolder,
+					Role:             "payer",
+					PayerIDs:         []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity},
+					ContractVersions: []string{"pa.crd@2.1"},
+				},
+			},
+			bp:          BridgeProbes{DemoHolder: demoHolder},
+			wantProbes:  []string{"bridge-demo-payer"},
+			wantPayerOK: boolPtr(true),
+		},
+		{
+			name: "absent: demo holder not on the feed",
+			holders: []shnsdk.Holder{
+				{ID: "kit-h1", Role: "provider"},
+			},
+			bp:          BridgeProbes{DemoHolder: demoHolder},
+			wantProbes:  []string{"bridge-demo-payer"},
+			wantPayerOK: boolPtr(false),
+			wantDetail:  map[string]string{"bridge-demo-payer": "not found in registrar feed"},
+		},
+		{
+			name: "red: demo holder is not a payer",
+			holders: []shnsdk.Holder{
+				{ID: demoHolder, Role: "provider", ContractVersions: []string{"pa.crd@2.1"}},
+			},
+			bp:          BridgeProbes{DemoHolder: demoHolder},
+			wantProbes:  []string{"bridge-demo-payer"},
+			wantPayerOK: boolPtr(false),
+			wantDetail:  map[string]string{"bridge-demo-payer": "is not a payer"},
+		},
+		{
+			name: "red: demo holder publishes no PayerIDs",
+			holders: []shnsdk.Holder{
+				{ID: demoHolder, Role: "payer", ContractVersions: []string{"pa.crd@2.1"}},
+			},
+			bp:          BridgeProbes{DemoHolder: demoHolder},
+			wantProbes:  []string{"bridge-demo-payer"},
+			wantPayerOK: boolPtr(false),
+			wantDetail:  map[string]string{"bridge-demo-payer": "publishes no payer identity"},
+		},
+		{
+			name: "red: demo holder stuck at the 2.0 baseline",
+			holders: []shnsdk.Holder{
+				{
+					ID:               demoHolder,
+					Role:             "payer",
+					PayerIDs:         []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity},
+					ContractVersions: []string{"pa.crd@2.0", "pa.pas@2.0"},
+				},
+			},
+			bp:          BridgeProbes{DemoHolder: demoHolder},
+			wantProbes:  []string{"bridge-demo-payer"},
+			wantPayerOK: boolPtr(false),
+			wantDetail:  map[string]string{"bridge-demo-payer": "no CRD or DTR contract-version line beyond the 2.0 baseline"},
+		},
+		{
+			// A pa.pas@2.1-only holder must NOT read
+			// GREEN while the demo's bridged CRD/DTR legs would show no
+			// transform at all — the probe must demand a non-2.0 CRD or DTR
+			// line specifically, matching the refuse probe's hardening.
+			name: "red: demo holder skewed only on PAS (no CRD/DTR line beyond 2.0)",
+			holders: []shnsdk.Holder{
+				{
+					ID:               demoHolder,
+					Role:             "payer",
+					PayerIDs:         []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity},
+					ContractVersions: []string{"pa.pas@2.1"},
+				},
+			},
+			bp:          BridgeProbes{DemoHolder: demoHolder},
+			wantProbes:  []string{"bridge-demo-payer"},
+			wantPayerOK: boolPtr(false),
+			wantDetail:  map[string]string{"bridge-demo-payer": "no CRD or DTR contract-version line beyond the 2.0 baseline"},
+		},
+		{
+			name: "green: refuse holder shares a CRD/DTR line at pa.pas non-2.0",
+			holders: []shnsdk.Holder{
+				{
+					ID:               refuseHolder,
+					Role:             "payer",
+					PayerIDs:         []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity},
+					ContractVersions: []string{"pa.pas@2.1", "pa.crd@2.0"},
+				},
+			},
+			bp:           BridgeProbes{RefuseHolder: refuseHolder},
+			wantProbes:   []string{"bridge-demo-refuse"},
+			wantRefuseOK: boolPtr(true),
+		},
+		{
+			name: "red: refuse holder declares pa.pas only — no shared CRD/DTR line (the exhibit precondition)",
+			holders: []shnsdk.Holder{
+				{
+					ID:               refuseHolder,
+					Role:             "payer",
+					PayerIDs:         []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity},
+					ContractVersions: []string{"pa.pas@2.1"},
+				},
+			},
+			bp:           BridgeProbes{RefuseHolder: refuseHolder},
+			wantProbes:   []string{"bridge-demo-refuse"},
+			wantRefuseOK: boolPtr(false),
+			wantDetail:   map[string]string{"bridge-demo-refuse": "shares no CRD/DTR line"},
+		},
+		{
+			name: "red: refuse holder has no non-2.0 pa.pas line",
+			holders: []shnsdk.Holder{
+				{
+					ID:               refuseHolder,
+					Role:             "payer",
+					PayerIDs:         []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity},
+					ContractVersions: []string{"pa.pas@2.0", "pa.crd@2.0"},
+				},
+			},
+			bp:           BridgeProbes{RefuseHolder: refuseHolder},
+			wantProbes:   []string{"bridge-demo-refuse"},
+			wantRefuseOK: boolPtr(false),
+			wantDetail:   map[string]string{"bridge-demo-refuse": "no pa.pas line beyond the 2.0 baseline"},
+		},
+		{
+			name: "red: refuse holder publishes no PayerIDs",
+			holders: []shnsdk.Holder{
+				{ID: refuseHolder, Role: "payer", ContractVersions: []string{"pa.pas@2.1", "pa.crd@2.0"}},
+			},
+			bp:           BridgeProbes{RefuseHolder: refuseHolder},
+			wantProbes:   []string{"bridge-demo-refuse"},
+			wantRefuseOK: boolPtr(false),
+			wantDetail:   map[string]string{"bridge-demo-refuse": "publishes no payer identity"},
+		},
+		{
+			name: "both configured: both probes present independently",
+			holders: []shnsdk.Holder{
+				{
+					ID:               demoHolder,
+					Role:             "payer",
+					PayerIDs:         []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity},
+					ContractVersions: []string{"pa.crd@2.1"},
+				},
+				// refuseHolder deliberately absent from the feed.
+			},
+			bp:           BridgeProbes{DemoHolder: demoHolder, RefuseHolder: refuseHolder},
+			wantProbes:   []string{"bridge-demo-payer", "bridge-demo-refuse"},
+			wantPayerOK:  boolPtr(true),
+			wantRefuseOK: boolPtr(false),
+			wantDetail:   map[string]string{"bridge-demo-refuse": "not found in registrar feed"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := fakeRegistrarSrv(t, tt.holders)
+			disc := fakeDiscoverySrv(t, reg.URL)
+
+			probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", tt.bp, nil)
+
+			if _, ok := probeByName(probes, "bridge-demo-payer"); ok != contains(tt.wantProbes, "bridge-demo-payer") {
+				t.Fatalf("bridge-demo-payer presence = %v, want %v (bp=%+v probes=%+v)", ok, contains(tt.wantProbes, "bridge-demo-payer"), tt.bp, probes)
+			}
+			if _, ok := probeByName(probes, "bridge-demo-refuse"); ok != contains(tt.wantProbes, "bridge-demo-refuse") {
+				t.Fatalf("bridge-demo-refuse presence = %v, want %v (bp=%+v probes=%+v)", ok, contains(tt.wantProbes, "bridge-demo-refuse"), tt.bp, probes)
+			}
+
+			if tt.wantPayerOK != nil {
+				p, ok := probeByName(probes, "bridge-demo-payer")
+				if !ok {
+					t.Fatalf("missing bridge-demo-payer probe: %+v", probes)
+				}
+				if p.OK != *tt.wantPayerOK {
+					t.Errorf("bridge-demo-payer OK = %v, want %v (detail %q)", p.OK, *tt.wantPayerOK, p.Detail)
+				}
+			}
+			if tt.wantRefuseOK != nil {
+				p, ok := probeByName(probes, "bridge-demo-refuse")
+				if !ok {
+					t.Fatalf("missing bridge-demo-refuse probe: %+v", probes)
+				}
+				if p.OK != *tt.wantRefuseOK {
+					t.Errorf("bridge-demo-refuse OK = %v, want %v (detail %q)", p.OK, *tt.wantRefuseOK, p.Detail)
+				}
+			}
+			for name, want := range tt.wantDetail {
+				p, ok := probeByName(probes, name)
+				if !ok {
+					t.Fatalf("missing probe %q: %+v", name, probes)
+				}
+				if !strings.Contains(p.Detail, want) {
+					t.Errorf("probe %q Detail = %q, want containing %q", name, p.Detail, want)
+				}
+			}
+		})
+	}
+}
+
+// TestVerify_BridgeProbes_SkippedWithDiscoveryFailure proves the bridge
+// probes ride the SAME "skipped: discovery failed" / "skipped: fetch holder
+// feed failed" branches as registration/hosted-payer — present (not
+// silently dropped) whenever configured, absent whenever not, regardless of
+// which branch Verify takes.
+func TestVerify_BridgeProbes_SkippedWithDiscoveryFailure(t *testing.T) {
+	closedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	closedURL := closedSrv.URL
+	closedSrv.Close()
+
+	probes := Verify(context.Background(), http.DefaultClient, closedURL, "kit-h1",
+		BridgeProbes{DemoHolder: demoHolder, RefuseHolder: refuseHolder}, nil)
+
+	if len(probes) != 5 {
+		t.Fatalf("len(probes) = %d, want 5: %+v", len(probes), probes)
+	}
+	for _, name := range []string{"bridge-demo-payer", "bridge-demo-refuse"} {
+		p, ok := probeByName(probes, name)
+		if !ok {
+			t.Fatalf("missing probe %q: %+v", name, probes)
+		}
+		if p.OK {
+			t.Errorf("probe %q OK = true, want false (dependent on failed discovery)", name)
+		}
+		if p.Detail != "skipped: discovery failed" {
+			t.Errorf("probe %q Detail = %q, want %q", name, p.Detail, "skipped: discovery failed")
+		}
+	}
+}
+
+func contains(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func boolPtr(b bool) *bool { return &b }

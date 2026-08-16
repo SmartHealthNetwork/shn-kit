@@ -104,6 +104,35 @@ export function AboutPanel(): JSX.Element {
           ))}
         </ul>
       </details>
+      {m.igLines && Object.keys(m.igLines).length > 0 && (
+        <details className="about-igs about-ig-lines">
+          <summary>Contract lines shipped ({Object.keys(m.igLines).length})</summary>
+          {Object.entries(m.igLines)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([line, sets]) => (
+              <div className="about-ig-line" key={line}>
+                <h3>Line {line}</h3>
+                <details className="about-igs">
+                  <summary>Validator IGs ({sets.igsValidator.length})</summary>
+                  <ul>
+                    {sets.igsValidator.map((ig) => (
+                      <li key={ig}>{ig}</li>
+                    ))}
+                  </ul>
+                </details>
+                <details className="about-igs">
+                  <summary>Data server IGs ({sets.igsData.length})</summary>
+                  <ul>
+                    {sets.igsData.map((ig) => (
+                      <li key={ig}>{ig}</li>
+                    ))}
+                  </ul>
+                </details>
+              </div>
+            ))}
+          {m.igSizeNote && <p className="about-ig-size-note">{m.igSizeNote}</p>}
+        </details>
+      )}
     </div>
   );
 }

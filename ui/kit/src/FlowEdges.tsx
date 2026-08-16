@@ -5,9 +5,8 @@
 // edgeStatesFor pure derivation) — an open leg shows an outbound arrow and
 // nothing back. The ehr lane's un-instrumented-gateway fallback
 // (`src: 'static'`) draws ONE dashed path plus the `.src-label` honesty
-// caption instead of a lying lit pair. Arrows are PERSISTENT (Bo's decision
-// 2 in the mockup notes) — always
-// attached via CSS `marker-end`, not only on selection.
+// caption instead of a lying lit pair. Arrows are PERSISTENT by design —
+// always attached via CSS `marker-end`, not only on selection.
 import {
   forwardRef,
   useCallback,

@@ -237,7 +237,15 @@ func (s *Supervisor) spawnAndWatch(ctx context.Context, c *child, gen int) error
 	}
 	s.emit(Notice{Child: c.spec.Name, State: StateReady})
 
-	go s.monitor(c, cmd, gen)
+	// monitor receives THIS generation's exited channel by value — the same
+	// never-re-read-c.exited rule spawn's doc states for spawnAndWatch's own
+	// closes. A monitor that re-read c.exited at wake time (a bug fixed
+	// here) could wake late — its process long since killed by a deliberate
+	// restart — and close the channel a NEWER generation's spawn had since
+	// published, double-closing it under the newer spawnAndWatch (panic:
+	// close of closed channel; reproduced by
+	// TestSupervisor_RestartWithEnvRacesCrashRespawn under GOMAXPROCS=2).
+	go s.monitor(c, cmd, gen, exited)
 	return nil
 }
 
@@ -256,12 +264,23 @@ func (s *Supervisor) staleGeneration(c *child, gen int) bool {
 // returned exited channel is this spawn's own reference: callers must close
 // it directly rather than re-reading c.exited, which a newer generation's
 // own spawn call may have since overwritten (CRITICAL).
+//
+// EVERY c.spec read happens under s.mu, not just c.logF (CRITICAL, and NOT
+// merely defensive): RestartWithEnv rewrites c.spec.Env, and a crash monitor
+// that is already past its post-backoff stale/stopping re-check is en route
+// into this function with no further checkpoint — a window Stop cannot close,
+// since Stop returns immediately in it (it can grab the OLD generation's
+// already-closed exited channel; see Stop's last doc paragraph). Reading the
+// spec outside the lock is therefore a genuine data race between that
+// monitor's respawn and the toggle's swap, reproduced under -race in review.
+// The lock is the whole fix: the swap and the generation bump share one
+// critical section, so this read either precedes both (old env, and the
+// generation bump then supersedes the spawn) or follows both (new env).
 func (s *Supervisor) spawn(c *child) (*exec.Cmd, chan struct{}, error) {
+	s.mu.Lock()
 	cmd := exec.Command(c.spec.Command, c.spec.Args...)
 	cmd.Env = c.spec.Env
 	cmd.Dir = c.spec.Dir
-
-	s.mu.Lock()
 	cmd.Stdout = c.logF
 	cmd.Stderr = c.logF
 	s.mu.Unlock()
@@ -343,11 +362,13 @@ func get2xx(hc *http.Client, url string) bool {
 // without touching any further state — the fresh Restart-driven
 // spawnAndWatch call already owns the child's fate, so the stale monitor
 // must not clobber it in either order the race resolves.
-func (s *Supervisor) monitor(c *child, cmd *exec.Cmd, gen int) {
+// exited is THIS generation's channel, passed by its launching spawnAndWatch
+// (never re-read from c.exited, which a newer generation's spawn may have
+// since overwritten — the double-close hazard spawn's doc names).
+func (s *Supervisor) monitor(c *child, cmd *exec.Cmd, gen int, exited chan struct{}) {
 	waitErr := cmd.Wait()
 
 	s.mu.Lock()
-	exited := c.exited
 	stopping := c.stopping
 	if stopping {
 		c.state = StateStopped
@@ -541,6 +562,41 @@ func (s *Supervisor) Stop(name string) error {
 // stopping and goes terminal), THEN under s.mu clears stopping, bumps
 // generation, resets restarts to 0, and re-runs the shared spawn arc.
 func (s *Supervisor) Restart(ctx context.Context, name string) error {
+	return s.restart(ctx, name, nil, false, nil)
+}
+
+// RestartWithEnv is a deliberate same-spec restart with a REPLACEMENT env:
+// same child, same command, same port, same dir, same log — only ChildSpec.
+// Env changes, and it changes for good (the registered spec is rewritten, so
+// a later crash bounce respawns the swapped env, not the original). It
+// reuses Restart's stop→respawn path exactly, including its
+// no-StateRestarting contract: this is not a crash.
+//
+// preSpawn (nil ⇒ no hook) runs AFTER the old child is fully stopped and
+// BEFORE the replacement is spawned — mirroring the crash path's ordering,
+// where monitor emits StateRestarting (and the SSE relay resets its cursor
+// off that notice) synchronously before the respawn. That ordering is
+// load-bearing, not stylistic: the Kit hands ResetCursor in here, and a
+// cursor reset that lands AFTER the new child is already serving is a
+// PERMANENT wedge — the relay can redial inside the restart window and
+// reconnect with the stale Last-Event-ID, and the late gen bump then strands
+// that otherwise-healthy connection as stale-gen forever (relay.go's gen
+// fence only ever advances lastSeq for r.gen == connGen, so lastSeq pins at
+// 0 and every Drain runs to its timeout).
+//
+// This is a PURPOSE-BUILT path for the bridging demo toggle, not a
+// relaxation of kitd's generic per-child restart seam (which still refuses
+// the gateway): it holds only because nothing the gateway's port, driver
+// keypair, or runner wiring is derived from changes across it.
+func (s *Supervisor) RestartWithEnv(ctx context.Context, name string, env []string, preSpawn func()) error {
+	return s.restart(ctx, name, env, true, preSpawn)
+}
+
+// restart is the single stop→respawn arc behind Restart and RestartWithEnv
+// (one path, so the two can never copy-paste-diverge). swapEnv gates the
+// spec rewrite: false leaves ChildSpec.Env exactly as registered, so
+// Restart's behavior is bit-for-bit what it always was.
+func (s *Supervisor) restart(ctx context.Context, name string, env []string, swapEnv bool, preSpawn func()) error {
 	s.mu.Lock()
 	c, ok := s.children[name]
 	s.mu.Unlock()
@@ -574,6 +630,18 @@ func (s *Supervisor) Restart(ctx context.Context, name string) error {
 	}
 
 	s.mu.Lock()
+	// The env swap rides the SAME critical section as the generation bump,
+	// and spawn reads the whole spec under this same mutex (see its doc).
+	// Both halves are needed: a crash monitor CAN still be on its way into
+	// spawn here — its post-backoff stale/stopping re-check may have passed
+	// before Stop set stopping, and Stop returns immediately in that window
+	// — so the lock is what makes the two orderings the only two possible.
+	// It sees either the old env (and is then superseded by the generation
+	// bump, killing its process in spawnAndWatch's stale branch) or the new
+	// one; never a torn read.
+	if swapEnv {
+		c.spec.Env = env
+	}
 	c.logF = logF
 	c.stopping = false
 	c.generation++
@@ -588,6 +656,13 @@ func (s *Supervisor) Restart(ctx context.Context, name string) error {
 	// keys on to detect an unexpected crash — a deliberate operator Restart
 	// must not trip that crash-fence, so it stays out of this path entirely.
 	s.emit(Notice{Child: name, State: StateStarting})
+
+	// The hook's window: the old process is fully gone (Stop blocked on its
+	// exited channel above) and the replacement has not been spawned yet.
+	// Never after spawnAndWatch — see RestartWithEnv's wedge note.
+	if preSpawn != nil {
+		preSpawn()
+	}
 
 	return s.spawnAndWatch(ctx, c, gen)
 }

@@ -107,6 +107,31 @@ describe('resolveConfig', () => {
     expect(cfg.manifest).toBe('/opt/shn/versions.json');
     expect(cfg.releasesUrl).toBe('https://api.github.com/repos/SmartHealthNetwork/shn-kit/releases/latest');
   });
+
+  // bridgeDemoHolder/bridgeDemoRefuseHolder are the first NAMED-HOLDER config
+  // fields — they parse exactly like the other pass-through knobs above;
+  // unset (the common case) leaves shnkitd's own flag defaults
+  // ("bridge-demo"/"bridge-demo-refuse") in effect.
+  it('parses bridgeDemoHolder/bridgeDemoRefuseHolder when present', () => {
+    const path = '/kit.config.json';
+    const fields = {
+      ...baseFields,
+      bridgeDemoHolder: 'bridge-demo',
+      bridgeDemoRefuseHolder: 'bridge-demo-refuse',
+    };
+    const readFile = fakeReadFile({ [path]: JSON.stringify(fields) });
+    const cfg = resolveConfig(readFile, {}, path);
+    expect(cfg.bridgeDemoHolder).toBe('bridge-demo');
+    expect(cfg.bridgeDemoRefuseHolder).toBe('bridge-demo-refuse');
+  });
+
+  it('tolerates bridgeDemoHolder/bridgeDemoRefuseHolder missing (shnkitd defaults them)', () => {
+    const path = '/kit.config.json';
+    const readFile = fakeReadFile({ [path]: JSON.stringify(baseFields) });
+    const cfg = resolveConfig(readFile, {}, path);
+    expect(cfg.bridgeDemoHolder).toBeUndefined();
+    expect(cfg.bridgeDemoRefuseHolder).toBeUndefined();
+  });
 });
 
 // Packaged-mode defaults: gatewayBin resolves exactly as

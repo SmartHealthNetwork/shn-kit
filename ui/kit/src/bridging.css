@@ -1,0 +1,245 @@
+/* bridging.css — the Bridging destination's guided panel (BridgingPanel.tsx).
+   No mockup equivalent (new destination) — authored on theme.css's tokens,
+   following scenarios.css's `.col`/`.col-head`/`.mode-caption` porting
+   convention for the column shell, and systems.css's `.verify-probe`/
+   `.probe-name`/`.probe-detail` idiom for the demo-peer probe rows (reused
+   directly rather than re-declared — `.bridging-probe-absent` is the only
+   NEW probe-row modifier, for the "not configured" state neither ok nor
+   failed represents honestly). `.toggle`/`.sw` (inspector.css) is reused
+   verbatim for the demo-mode switch. */
+
+.bridging-panel {
+  overflow: auto;
+}
+
+.bridging-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.bridging-body h2 {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.bridging-body h3 {
+  margin: 0 0 3px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.bridging-body .card {
+  padding: 14px 16px;
+}
+
+.bridging-unavailable {
+  margin: 16px 18px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+/* ── explainer cards: contract lines caption (`.mode-caption`, reused from
+   scenarios.css) + the three step-class cards ─────────────────────────── */
+
+.bridging-step-class-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.bridging-step-class {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 10px 12px;
+}
+
+.bridging-step-class p {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+
+.bridging-step-class-label {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--r);
+  padding: 2px 7px;
+}
+
+.bridging-step-class-gated .bridging-step-class-label {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border-color: var(--amber-border);
+}
+
+/* ── demo status strip ──────────────────────────────────────────────── */
+
+.bridging-probe-list {
+  margin-bottom: 12px;
+}
+
+.verify-probe.bridging-probe-absent {
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
+.verify-probe.bridging-probe-absent .probe-detail {
+  color: var(--muted);
+}
+
+.bridging-demo-toggle {
+  margin-bottom: 6px;
+}
+
+.bridging-toggle-note {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.bridging-disabled-reason {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.bridging-toggle-error,
+.bridging-exhibit-error {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--red);
+}
+
+.demo-mode-badge {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  padding: 8px 12px;
+}
+
+.bridging-remote-caption {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* ── run actions + refusal exhibit rows ─────────────────────────────── */
+
+.bridging-action-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.bridging-run-actions .bridging-action-row:first-of-type,
+.bridging-refusal-exhibit .bridging-action-row:first-of-type {
+  border-top: none;
+  padding-top: 4px;
+}
+
+.bridging-action-copy p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.bridging-action-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.refusal-exhibit-framing {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.bridging-exhibit-result {
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+.exhibit-framing {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.bridging-refusal-text {
+  margin: 0 0 4px;
+  font: 12px var(--mono);
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.bridging-refusal-semantic,
+.bridging-carry-restored {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* Neither exhibit result should ever render restored:false / semanticChange:
+   false — kitd's bridging.go returns 500 (never a 200) when its own fixtures
+   don't behave as documented, so this is a defensive flag for an outcome
+   that should be unreachable, not an expected alternate state. Reuses the
+   existing red token, same severity as `.bridging-toggle-error`. */
+.bridging-exhibit-unexpected {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.bridging-carry-paths {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* ── static route-refusal grammar block ─────────────────────────────── */
+
+.bridging-refusal-grammar p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.bridging-refusal-grammar-example {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 11.5px var(--mono);
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

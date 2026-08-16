@@ -17,7 +17,7 @@
 // inside StepDetail's DOM would fake a precision the substrate doesn't emit.
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import type { HistorySummary, KitEvent, Lane, RunResult } from './types';
+import type { HistorySummary, KitEvent, Lane, Register, RunResult } from './types';
 import type { RunSource } from './useRunEvents';
 import { buildRunStory } from './inspect';
 import { FlowMap } from './FlowMap';
@@ -40,6 +40,11 @@ export interface RunInspectorProps {
   // StepDetail's own 'stand-in' fallback (the honest default for an old
   // daemon or a boot-window race).
   posture?: ValidatorPosture;
+  // Overview/Technical register (App's RegisterSwitch state) — pure
+  // passthrough to StepDetail's TransformCard narration.
+  // undefined ⇒ StepDetail's own 'overview' default, the same
+  // not-yet-wired-up posture this prop replaces.
+  register?: Register;
 }
 
 function laneFromEvent(v: string | undefined): Lane {
@@ -54,6 +59,7 @@ export function RunInspector({
   summary,
   providerLabel,
   posture,
+  register,
 }: RunInspectorProps): JSX.Element {
   const story = runId !== undefined ? buildRunStory(runId, events) : undefined;
   const steps = story?.steps ?? [];
@@ -212,7 +218,7 @@ export function RunInspector({
 
         <div className="insp-detail">
           {selectedStep ? (
-            <StepDetail step={selectedStep} view={view} posture={posture} />
+            <StepDetail step={selectedStep} view={view} posture={posture} register={register} />
           ) : (
             <p className="no-steps-note">No steps recorded for this run yet.</p>
           )}

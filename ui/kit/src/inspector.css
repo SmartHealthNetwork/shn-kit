@@ -319,11 +319,32 @@
   margin: 0 2px 1px;
 }
 
+/* The map-level relayed non-2xx status marker — reuses the
+   `.relayed-status` class name StepDetail's own paragraph carries, but the
+   ancestor combinator here outranks that bare rule's specificity, so this
+   context gets its own amber treatment instead of inheriting StepDetail's
+   deliberately amber-free ink styling (that file's own comment explains why
+   amber would misread there — no such collision at map level: the marker
+   sits inside `.remote`, well away from any failed-edge affordance). Display-
+   only: the leg still counts as lit/ok (the honesty rule) — this is a small
+   amber note, not a failure treatment. */
+.remote .relayed-status {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  padding: 3px 7px;
+  cursor: default;
+}
+
 /* ── directional edge overlay (FlowEdges.tsx) ─────────────────────── */
 /* Ported from the approved mockup's `.rail svg`/`.edge`/`.pulse*`/
    `.src-label` rules (2026-07-11-flowmap-direction-mockup.html) onto
    inspector.css's `.flow` container (the mockup's `.rail`). Arrows are
-   PERSISTENT (Bo's decision 2) — every edge always carries a `marker-end`,
+   PERSISTENT by design — every edge always carries a `marker-end`,
    never only on selection. */
 .flow-edges {
   position: absolute;
@@ -410,6 +431,7 @@
   padding: 6px 9px;
   cursor: pointer;
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 8px;
 }
@@ -422,6 +444,16 @@
 .step .cp {
   font-size: 11px;
   color: var(--muted);
+}
+
+/* .step-route-tag — the routed-line chip: reuses `.provenance-tag`
+   (scenarios.css) for its surface/border/type treatment, forced onto its
+   own row below the lt/cp pair via `flex-basis: 100%` on the now-wrapping
+   `.step` flex row (rather than restyling `.provenance-tag` itself, which
+   other callers still use inline). */
+.step .step-route-tag {
+  flex: 1 0 100%;
+  margin-top: 2px;
 }
 
 .step.ok {
@@ -512,6 +544,17 @@
   margin: 0;
   font-size: 12px;
   color: var(--ink-2);
+}
+
+/* The relayed non-2xx application status on a completed leg (StepDetail's
+   relayedStatusLine — display-only; the step itself stays ok). Amber-free:
+   this file has no warn tokens, and red would misread as a failed step, so
+   it leans on weight + ink like .http-status but bolder. */
+.relayed-status {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink);
 }
 
 .substrate-framing {
@@ -713,6 +756,299 @@
   font-size: 11px;
   color: var(--muted);
   font-style: italic;
+}
+
+/* ── leg downgrade note (StepDetail) ──────────────────────────────── */
+/* No mockup equivalent — a small, honest annotation line (leg.downgrade's
+   raw Detail text, verbatim) synthesized on the amber tokens already used
+   for an in-flight/degraded state elsewhere in this file. */
+.leg-downgrade-note {
+  margin: 0;
+  padding: 6px 9px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  font-size: 12px;
+}
+
+/* ── cross-version transform card (StepDetail's TransformCard) ─────────
+   No mockup equivalent — synthesized on this file's existing card/fact/badge
+   tokens. Chain hops reuse the `.chip`-adjacent pill idiom colored by class
+   severity (full/carry/gated — green/amber/red, matching the validation
+   badge's own ok/failed palette). */
+.transform-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+}
+
+.transform-card h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.transform-narration {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.chain-hops {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chain-hop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+}
+
+.chain-hop-line {
+  font: 600 11px var(--mono);
+  color: var(--ink-2);
+}
+
+.chain-hop-class {
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 10px;
+}
+
+.chain-hop-full {
+  border-color: var(--green-border);
+}
+
+.chain-hop-full .chain-hop-class {
+  color: var(--green);
+}
+
+.chain-hop-carry {
+  border-color: var(--amber-border);
+}
+
+.chain-hop-carry .chain-hop-class {
+  color: var(--amber);
+}
+
+.chain-hop-gated {
+  border-color: var(--red-border);
+}
+
+.chain-hop-gated .chain-hop-class {
+  color: var(--red);
+}
+
+.loss-report-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.loss-report {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.loss-report-module {
+  font: 600 11.5px var(--mono);
+  color: var(--ink);
+}
+
+.loss-report-lines {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.loss-entries {
+  margin-top: 6px;
+}
+
+.loss-entries h5 {
+  margin: 0 0 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.loss-entries ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.loss-path {
+  font: 500 11.5px var(--mono);
+  color: var(--ink-2);
+  word-break: break-all;
+}
+
+.loss-detail {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.transform-empty-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.raw-provenance summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+/* ── refusal card, three species (StepDetail's RefusalCard: transform,
+   route, and carry-integrity refusals) ────
+   No mockup equivalent — synthesized on the red tokens already used for
+   failure states in this file, matching `.run-terminal-detail`'s idiom. */
+.refusal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--red-border);
+  border-radius: var(--r-lg);
+  background: var(--red-bg);
+}
+
+.refusal-card h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--red);
+}
+
+.refusal-card h5 {
+  margin: 0 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.refusal-elements ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.refusal-elements li {
+  font: 500 11.5px var(--mono);
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.refusal-detail {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  word-break: break-word;
+}
+
+.zero-bytes-note {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--red);
+}
+
+/* The carry-integrity refusal's explanatory line (third species) — prose,
+   not an error dump: same register as .refusal-detail but in the UI font,
+   since it is a written sentence rather than engine detail text. */
+.carry-refusal-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.refusal-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.refusal-token-group {
+  min-width: 140px;
+}
+
+.token-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.token-chip {
+  font: 600 11px var(--mono);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink-2);
+}
+
+.token-chip.own-token {
+  border-color: var(--accent-border);
+  color: var(--accent-ink);
+  background: var(--accent-bg);
+}
+
+.token-chip.peer-token {
+  border-color: var(--red-border);
+  color: var(--red);
+  background: var(--surface);
+}
+
+.token-chip-none {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.bridge-issue {
+  margin: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--red-border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 /* ── audit anchors strip (run-scoped — never per-step) ────────────── */

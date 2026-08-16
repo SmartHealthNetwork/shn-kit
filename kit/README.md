@@ -78,6 +78,8 @@ Dev builds default to the file store; either is selectable explicitly via
 | `--manifest` | `""` | Path to the package-time `versions.json`, served verbatim at `GET /api/about`; `""` ⇒ 404 with an honest "development build" body |
 | `--releases-url` | GitHub `shn-kit` latest-release feed | The update-check feed GETed once at launch — see "Phone-home honesty" below |
 | `--uc07-pci` | `""` | Patient-surface PCI override for the UC-07 demo persona; `""` ⇒ resolved live |
+| `--bridge-demo-holder` | `"bridge-demo"` | Holder id the `"bridge-demo-payer"` Verify probe expects on the registrar feed (the bridging demo's bridged-exchange exhibit); `""` ⇒ that probe is skipped entirely, not reported red |
+| `--bridge-demo-refuse-holder` | `"bridge-demo-refuse"` | Holder id the `"bridge-demo-refuse"` Verify probe expects on the registrar feed (the bridging demo's refusal exhibit); `""` ⇒ that probe is skipped entirely, not reported red |
 
 ## `kit.config.json`
 
@@ -102,7 +104,7 @@ set headers).
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/health` | none | `200 {"ok":true}` |
-| `GET` | `/api/status` | token | Supervised-child status plus the update-check result |
+| `GET` | `/api/status` | token | Supervised-child status, the update-check result, and — on Kits built with the bridging demo — a `"bridging"` block carrying `demoMode` plus, once the boot-time Verify probes have run, optional `peer`/`refusePeer` probe results (each omitted, never a fabricated red, when its holder id is unconfigured) |
 | `GET` | `/api/bootstrap` | token | Sign-in/provisioning state |
 | `POST` | `/api/bootstrap/signin` | token | Starts a loopback-PKCE browser sign-in |
 | `POST` | `/api/bootstrap/reset` | token | Clears stored credentials; `{"restartRequired":true}` |
@@ -117,6 +119,8 @@ set headers).
 | `GET` | `/api/about` | token | The package-time `versions.json` manifest; 404 with an honest body on a dev checkout |
 | `GET` | `/api/support-bundle` | token | A zip of per-child logs, the manifest, the boot probe results, and recent run history — secrets excluded by inventory, not by hope |
 | `POST` | `/api/children/{name}/restart` | token | Restart one supervised Java child (`validator`/`data-server`/`br-provider`); `403` for the gateway child — restart the whole Kit for that |
+| `POST` | `/api/bridging/demo` | token | Turn bridging demo mode on/off (`{"enabled":bool}`); restarts the gateway child with a narrowed egress-native view; `409` while a run or watch is in flight |
+| `POST` | `/api/bridging/exhibit` | token | Run one embedded fixture (`{"kind":"carry"\|"refusal"}`) through the gateway child's real cross-version transform chain — a self-contained proof of the carry mechanism or a semantic-change refusal, independent of any scenario run or the demo-mode toggle |
 | `GET` | `/ui/*` | **none (ungated)** | The built Kit UI, served as static assets |
 
 `POST /api/runs` is async: it validates and acquires the sequential run lock
@@ -198,6 +202,25 @@ Registering your own Da Vinci system as an inbound ingress client
 narrate it — the Kit never opens a remote listener for this; your system
 must run on the same machine and call the gateway's already-loopback-bound
 ingress directly.
+
+## Bridging demo
+
+On Kits built with the demo peers configured (`--bridge-demo-holder`/
+`--bridge-demo-refuse-holder`), the Kit UI's "Bridging" destination shows how the
+same gateway routes a conformant exchange across contract lines it doesn't share
+with a peer — cross-version transform chains, not a second gateway build. Two
+independent seams:
+
+- **`POST /api/bridging/demo`** actually restarts the supervised gateway child with
+  its native-reach view narrowed (`SHN_DEMO_EGRESS_NATIVE_LINES` —
+  `gateway/docs/CONFIGURATION.md`'s "Demo-only egress narrowing" section), so a real
+  scenario run against the bridge-demo peers genuinely bridges rather than routing at
+  the shared line. `GET /api/status`'s `"bridging"` block reports `demoMode` plus, once
+  configured, the two peers' own Verify-probe health (`peer`/`refusePeer`).
+- **`POST /api/bridging/exhibit`** is independent of both the toggle and any live peer:
+  it runs an embedded fixture through the gateway child's real transform chain to
+  demonstrate the carry mechanism or a genuine semantic-change refusal in isolation —
+  useful even on a Kit with no demo peers configured at all.
 
 ## Packaging: the Java trio and JRE
 

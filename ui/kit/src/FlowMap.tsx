@@ -9,8 +9,9 @@
 // fetch/state beyond what's needed to render.
 import { useEffect, useRef, useState, type JSX } from 'react';
 import type { Lane } from './types';
-import type { RunStory, Step } from './inspect';
+import type { RouteFrame, RunStory, Step } from './inspect';
 import { FlowEdges, type FlowEdgesHandle } from './FlowEdges';
+import { relayedStatusLine } from './StepDetail';
 
 export interface FlowMapProps {
   story: RunStory;
@@ -137,6 +138,15 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+// isRelayedNonSuccess: the rider-(g) trigger — an ok leg's relayed
+// application status (ObserverEvent.Status, step.response.status) fell
+// outside 2xx. Mirrors the plain HTTP-2xx-is-success convention
+// StepDetail's relayedStatusLine callers already rely on; no separate
+// threshold table to keep in sync.
+function isRelayedNonSuccess(status: number): boolean {
+  return status < 200 || status >= 300;
+}
+
 // isPayerLegType classifies a leg's counterpart-ness by its legType FAMILY
 // (the narration vocabulary), never a raw counterpart string match (no
 // classifier existed before this — FlowMap lit all three remote nodes off
@@ -154,6 +164,51 @@ function isPayerLegType(legType: string): boolean {
   if (legType === 'coverage-eligibility' || legType === 'dtr-questionnaire-fetch') return true;
   if (legType.startsWith('crd-') || legType.startsWith('pas-')) return true;
   return false;
+}
+
+// routeChipRank ranks a compat-manifest step class by severity — full (0) <
+// carry (1) < gated (2) — so the routed-line chip can report the WORST hop
+// on a bridged chain, never an average or a first-hop-only summary (a chain
+// that's mostly full but gates on one element is a gated chain, honestly).
+// An unrecognized class value (defensive — the wire only ever sends
+// full/carry/gated, per gateway/engine/observer.go's ChainStep.Class doc)
+// ranks with carry: neither the "nothing lost" claim of full nor silently
+// dropped from the worst-class computation.
+function routeChipRank(cls: string): number {
+  if (cls === 'gated') return 2;
+  if (cls === 'full') return 0;
+  return 1;
+}
+
+function worstChainClass(chain: NonNullable<RouteFrame['chain']>): string {
+  let worst = chain[0].class;
+  let worstRank = routeChipRank(worst);
+  for (const hop of chain) {
+    const rank = routeChipRank(hop.class);
+    if (rank > worstRank) {
+      worst = hop.class;
+      worstRank = rank;
+    }
+  }
+  return worst;
+}
+
+// routeChipText: the routed-line story a leg step's row carries when
+// step.route is present — "built at {buildLine}", plus, on an arm-(3)
+// transform-chain route (route.chain non-empty), the bridged span and its
+// worst hop class. Arm-(1)/(2) routes (route.chain undefined/empty) render
+// the build line alone — there is no bridge story to add. A route with NO
+// buildLine (e.g. a degenerate `"route": {}` on the wire) yields undefined —
+// no chip at all, never a "built at ?" fabrication.
+function routeChipText(route: RouteFrame): string | undefined {
+  if (route.buildLine === undefined) return undefined;
+  let text = `built at ${route.buildLine}`;
+  if (route.chain && route.chain.length > 0) {
+    const first = route.chain[0];
+    const last = route.chain[route.chain.length - 1];
+    text += ` · bridged ${first.from} → … → ${last.to} · ${worstChainClass(route.chain)}`;
+  }
+  return text;
 }
 
 function FlowNode({
@@ -223,6 +278,20 @@ export function FlowMap({
   const payerLit = effectiveSteps.some(
     (s) => s.kind === 'leg' && s.status === 'ok' && isPayerLegType(s.legType),
   );
+
+  // relayedStatusValue: a leg that genuinely completed
+  // (status 'ok' — the counterparty ANSWERED) whose relayed application
+  // status was outside 2xx. Display-only, by the same honesty rule as
+  // StepDetail's own relayedStatusLine: it NEVER folds into remoteLit/
+  // remoteFailed/step.status above — an ok leg with a relayed rejection
+  // still lights the remote zone as lit, never failed. It only adds a
+  // map-level marker so the rejection can't read as silently green at the
+  // map level either, reusing the exact same partner-facing sentence
+  // StepDetail already shows per-step.
+  const relayedStatusStep = effectiveSteps.find(
+    (s) => s.kind === 'leg' && s.status === 'ok' && s.response?.status !== undefined && isRelayedNonSuccess(s.response.status),
+  );
+  const relayedStatusValue = relayedStatusStep?.response?.status;
 
   const hasSor = effectiveSteps.some((s) => s.kind === 'sor');
 
@@ -370,6 +439,11 @@ export function FlowMap({
       <FlowNode id="validator" label="Validator" lit={hasValidate} />
       <div className={classNames('remote', remoteLit && 'lit', remoteFailed && 'failed')}>
         <p className="cap">{REMOTE_ZONE_CAPTION}</p>
+        {relayedStatusValue !== undefined && (
+          <p className="relayed-status" title={relayedStatusLine(relayedStatusValue)}>
+            {relayedStatusLine(relayedStatusValue)}
+          </p>
+        )}
         <FlowNode id="hub" label="Hub" lit={remoteLit} remote />
         <FlowNode id="payer-gateway" label="Payer Smart Gateway" lit={payerLit} remote />
         <FlowNode id="payer-engine" label="Payer system" lit={payerLit} remote />
@@ -396,6 +470,9 @@ export function FlowMap({
                   <span className="cp">{step.counterpart ?? 'the hosted counterparty'}</span>
                 )}
                 {step.kind === 'sor' && <span className="cp">{step.sorOp ?? 'read'}</span>}
+                {step.route && routeChipText(step.route) !== undefined && (
+                  <span className="provenance-tag step-route-tag">{routeChipText(step.route)}</span>
+                )}
               </button>
             </li>
           );

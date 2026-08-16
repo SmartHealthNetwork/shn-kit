@@ -53,6 +53,7 @@ type Event struct {
 	RunID    string          `json:"runId,omitempty"`
 	Lane     string          `json:"lane,omitempty"`
 	UC       string          `json:"uc,omitempty"`
+	Branch   string          `json:"branch,omitempty"`
 	Child    string          `json:"child,omitempty"`
 	Detail   string          `json:"detail,omitempty"`
 	Observer json.RawMessage `json:"observer,omitempty"`

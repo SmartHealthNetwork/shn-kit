@@ -112,7 +112,7 @@ func springConfig(t *testing.T, env []string) map[string]string {
 func TestBuildValidatorChildSpec(t *testing.T) {
 	stateDir := t.TempDir()
 	assetsDir := "/assets"
-	spec, err := BuildValidatorChildSpec(assetsDir, "/opt/jre", stateDir, 18080, "darwin")
+	spec, err := BuildValidatorChildSpec(assetsDir, "/opt/jre", stateDir, 18080, "darwin", "2.0")
 	if err != nil {
 		t.Fatalf("BuildValidatorChildSpec: %v", err)
 	}
@@ -172,17 +172,86 @@ func TestBuildValidatorChildSpec(t *testing.T) {
 			t.Errorf("validator config carries %q, want it absent (single-tenant $validate only)", k)
 		}
 	}
-	// All 8 IGs present, each pointing into assetsDir.
+	// All 9 IGs present (validator-sidecar + shnig), each pointing into assetsDir.
 	absAssets, _ := filepath.Abs(assetsDir)
-	for _, g := range validatorIGs {
+	validatorIGs20 := kitdIGPinsValidator("2.0")
+	for _, g := range validatorIGs20 {
 		key := "hapi.fhir.implementationguides." + g.key + ".packageUrl"
 		want := "file://" + filepath.Join(absAssets, "igs-validator", g.name+"-"+g.version+".tgz")
 		if cfg[key] != want {
 			t.Errorf("%s = %q, want %q", key, cfg[key], want)
 		}
 	}
-	if len(validatorIGs) != 8 {
-		t.Fatalf("validatorIGs has %d entries, want 8", len(validatorIGs))
+	if len(validatorIGs20) != 9 {
+		t.Fatalf("kitdIGPinsValidator(\"2.0\") has %d entries, want 9 (validator-sidecar + shnig)", len(validatorIGs20))
+	}
+}
+
+// ---- validator ChildSpec: per-line -------------------------------------------
+
+// TestBuildValidatorChildSpec_NonDefaultLine_ColdTimeoutOwnDirAndExtSet proves
+// three things together for a non-default line: (1) it gets its OWN state-dir
+// child name ("validator-2.2"), never colliding with the prewarmed default's
+// "validator" dir; (2) its ReadyTimeout is the COLD bound (no prewarm exists
+// for it); (3) line 2.2 carries the 10-IG extensions-closure superset
+// (validator-sidecar-ext + shnig), not the 9-IG validator-sidecar + shnig set.
+func TestBuildValidatorChildSpec_NonDefaultLine_ColdTimeoutOwnDirAndExtSet(t *testing.T) {
+	stateDir := t.TempDir()
+	assetsDir := "/assets"
+	spec, err := BuildValidatorChildSpec(assetsDir, "/opt/jre", stateDir, 18090, "linux", "2.2")
+	if err != nil {
+		t.Fatalf("BuildValidatorChildSpec: %v", err)
+	}
+	if spec.Name != "validator-2.2" {
+		t.Errorf("Name = %q, want validator-2.2", spec.Name)
+	}
+	wantWorkDir := filepath.Join(stateDir, "validator-2.2")
+	if spec.Dir != wantWorkDir {
+		t.Errorf("Dir = %q, want %q", spec.Dir, wantWorkDir)
+	}
+	if spec.LogPath != filepath.Join(stateDir, "validator-2.2.log") {
+		t.Errorf("LogPath = %q, want %q", spec.LogPath, filepath.Join(stateDir, "validator-2.2.log"))
+	}
+	if spec.ReadyTimeout != javaReadyTimeoutCold {
+		t.Errorf("ReadyTimeout = %v, want the cold bound %v (line 2.2 is never prewarmed)", spec.ReadyTimeout, javaReadyTimeoutCold)
+	}
+
+	cfg := springConfig(t, spec.Env)
+	validatorIGs22 := kitdIGPinsValidator("2.2")
+	if len(validatorIGs22) != 10 {
+		t.Fatalf("kitdIGPinsValidator(\"2.2\") has %d entries, want 10 (validator-sidecar-ext + shnig)", len(validatorIGs22))
+	}
+	if _, ok := cfg["hapi.fhir.implementationguides.extensions.packageUrl"]; !ok {
+		t.Errorf("2.2-line validator config missing the extensions IG (validator-sidecar-ext): %v", cfg)
+	}
+}
+
+// TestBuildValidatorChildSpec_DefaultLine_FastTimeoutOwnDir is the
+// complementary pin: the default line ("2.0") keeps the FAST (prewarmed)
+// timeout and the unqualified "validator" dir name, byte-identical to the
+// behavior before the validator line became configurable.
+func TestBuildValidatorChildSpec_DefaultLine_FastTimeoutOwnDir(t *testing.T) {
+	stateDir := t.TempDir()
+	spec, err := BuildValidatorChildSpec("/assets", "/opt/jre", stateDir, 18091, "linux", "2.0")
+	if err != nil {
+		t.Fatalf("BuildValidatorChildSpec: %v", err)
+	}
+	if spec.Name != "validator" {
+		t.Errorf("Name = %q, want validator (unqualified — the prewarmed default line)", spec.Name)
+	}
+	if spec.ReadyTimeout != javaReadyTimeout {
+		t.Errorf("ReadyTimeout = %v, want the fast (prewarmed) bound %v", spec.ReadyTimeout, javaReadyTimeout)
+	}
+}
+
+// TestBuildValidatorChildSpec_UnknownLine_Errors is the rejection test: an
+// unrecognized line must fail loudly, never silently boot a validator with an
+// empty IG set (which would present as "$validate always passes" — a
+// FR-36-defeating false green).
+func TestBuildValidatorChildSpec_UnknownLine_Errors(t *testing.T) {
+	_, err := BuildValidatorChildSpec("/assets", "/opt/jre", t.TempDir(), 18092, "linux", "9.9")
+	if err == nil {
+		t.Fatal("expected an error for an unrecognized line, got nil")
 	}
 }
 
@@ -229,15 +298,16 @@ func TestBuildDataServerChildSpec(t *testing.T) {
 		t.Errorf("cr.enabled = %q, want true", cfg["hapi.fhir.cr.enabled"])
 	}
 	absAssets, _ := filepath.Abs(assetsDir)
-	for _, g := range dataIGs {
+	dataIGs20 := kitdIGPinsData("2.0")
+	for _, g := range dataIGs20 {
 		key := "hapi.fhir.implementationguides." + g.key + ".packageUrl"
 		want := "file://" + filepath.Join(absAssets, "igs-data", g.name+"-"+g.version+".tgz")
 		if cfg[key] != want {
 			t.Errorf("%s = %q, want %q", key, cfg[key], want)
 		}
 	}
-	if len(dataIGs) != 4 {
-		t.Fatalf("dataIGs has %d entries, want 4", len(dataIGs))
+	if len(dataIGs20) != 4 {
+		t.Fatalf("kitdIGPinsData(\"2.0\") has %d entries, want 4", len(dataIGs20))
 	}
 }
 

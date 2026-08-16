@@ -49,6 +49,36 @@ describe('AboutPanel', () => {
     expect(screen.getByText('hl7.fhir.us.davinci-pas 2.0.1')).toBeDefined();
   });
 
+  it('renders per-line IG breakdown + size note when igLines is present', async () => {
+    vi.mocked(api.getAbout).mockResolvedValue(
+      manifest({
+        igLines: {
+          '2.0': { igsValidator: ['hl7.fhir.us.core 6.1.0'], igsData: ['hl7.fhir.us.davinci-pas 2.0.1'] },
+          '2.2': {
+            igsValidator: ['hl7.fhir.us.core 7.0.0', 'hl7.fhir.uv.extensions.r4 5.3.0-ballot-tc1'],
+            igsData: ['hl7.fhir.us.davinci-pas 2.2.1'],
+          },
+        },
+        igSizeNote: 'ships 3 contract lines worth of IG tgz sets',
+      }),
+    );
+    render(<AboutPanel />);
+
+    await waitFor(() => expect(screen.getByText(/Contract lines shipped \(2\)/)).toBeDefined());
+    expect(screen.getByText('Line 2.0')).toBeDefined();
+    expect(screen.getByText('Line 2.2')).toBeDefined();
+    expect(screen.getByText('hl7.fhir.uv.extensions.r4 5.3.0-ballot-tc1')).toBeDefined();
+    expect(screen.getByText('ships 3 contract lines worth of IG tgz sets')).toBeDefined();
+  });
+
+  it('omits the per-line section entirely when igLines is absent (older manifest shape)', async () => {
+    vi.mocked(api.getAbout).mockResolvedValue(manifest());
+    render(<AboutPanel />);
+
+    await waitFor(() => expect(screen.getByText('1.0.0')).toBeDefined());
+    expect(screen.queryByText(/Contract lines shipped/)).toBeNull();
+  });
+
   it('absent manifest (404, dev build) renders the honest "development build" note, not fabricated versions', async () => {
     vi.mocked(api.getAbout).mockRejectedValue(new Error('manifest not available (dev build)'));
     render(<AboutPanel />);

@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	scenariodriver "github.com/SmartHealthNetwork/shn-gateway/scenariodriver"
@@ -74,6 +75,27 @@ type StackConfig struct {
 	// per-arch by main (jre-<goos>-<goarch> under JavaAssetsDir by
 	// default). Required when JavaAssetsDir != "".
 	JREDir string
+
+	// Line is the contract line the packaged validator validates — "" resolves
+	// to defaultContractLine ("2.0", the canonical default). When trio is
+	// configured, the resulting validator's URL is wired into the gateway
+	// child's env under fhirValidateEnvName(Line): FHIR_VALIDATE_URL for
+	// "2.0" (unchanged from before this field existed), or
+	// FHIR_VALIDATE_URL_<line> for any other line — mirroring
+	// gateway/app/app.go's own FHIR_VALIDATE_URL/_2_1/_2_2 triad exactly, so
+	// the SAME env name that lane's FHIR_VALIDATE_URL_* semantics expect is
+	// the one this validator's URL lands under.
+	Line string
+	// AdditionalValidatorLines boots EXTRA validator-ONLY children (never a
+	// second data server or br-provider) at other contract lines — config-
+	// gated, empty by default (do not boot extra validators). Each is wired
+	// to its own fhirValidateEnvName(line) env var for the gateway child,
+	// same as Line above. A line equal to the resolved Line, or repeated
+	// within this slice, is silently deduped (ResolveValidatorLines) — never a second
+	// child for the same line. Every additional child boots cold
+	// (javaReadyTimeoutCold), same as a non-default Line: only
+	// defaultContractLine ever has a package-time prewarm to boot from.
+	AdditionalValidatorLines []string
 
 	// FHIRTokenURL/FHIRClientID/FHIRClientKeyPath/FHIRClientAlg/
 	// FHIRClientScope/FHIRClientKID are the SMART Backend Services quad the
@@ -132,10 +154,68 @@ type Stack struct {
 	// trio). The br-provider ingress client's own key material stays
 	// internal to BuildStack (never exposed here) — callers need only its
 	// URL, which BuildStack has already folded into Driver.BFFURL and
-	// ingress-clients.json.
+	// ingress-clients.json. ValidatorURL is always the PRIMARY (resolved
+	// StackConfig.Line) validator's URL.
 	ValidatorURL  string
 	DataServerURL string
 	BRProviderURL string
+
+	// GatewayEnv is the FULL env BuildStack assembled for the gateway child —
+	// value-identical to the gateway ChildSpec's own Env. Exported for ONE
+	// consumer: shnkitd's bridging demo toggle, which restarts the gateway
+	// with this env plus (or minus) the SHN_DEMO_EGRESS_NATIVE_LINES knob and
+	// so needs the exact baseline to rebuild from, never a re-derivation that
+	// could drift from what the child is actually running.
+	//
+	// SECURITY: this carries secrets-adjacent values (SHN_SECRETS, the SMART
+	// quad's FHIR_CLIENT_KEY path, INGRESS_CLIENTS_FILE). It must NEVER be
+	// surfaced through any kitd API response, event, log line, support
+	// bundle, or UI — kitd consumes it in-process only, inside the demo
+	// closure main builds.
+	GatewayEnv []string
+
+	// AdditionalValidatorURLs maps each StackConfig.AdditionalValidatorLines
+	// entry (after ResolveValidatorLines dedup) to its own validator child's
+	// URL — nil/empty when no additional lines were configured (today's
+	// default).
+	AdditionalValidatorURLs map[string]string
+}
+
+// ResolveValidatorLines resolves (StackConfig.Line, StackConfig.
+// AdditionalValidatorLines) into (primary, all): primary is Line with ""
+// defaulted to defaultContractLine; all is [primary, ...additional] with
+// duplicates (including an additional entry equal to primary) dropped,
+// first-seen order preserved. The single source of truth for this dedup —
+// BuildStack and shnkitd's ClearStaleAssets call both use it, so the set of
+// validator children actually booted and the set swept for staleness can
+// never diverge.
+func ResolveValidatorLines(line string, additional []string) (primary string, all []string) {
+	primary = line
+	if primary == "" {
+		primary = defaultContractLine
+	}
+	seen := map[string]bool{primary: true}
+	all = []string{primary}
+	for _, l := range additional {
+		if l == "" || seen[l] {
+			continue
+		}
+		seen[l] = true
+		all = append(all, l)
+	}
+	return primary, all
+}
+
+// fhirValidateEnvName mirrors gateway/app/app.go's own FHIR_VALIDATE_URL/
+// FHIR_VALIDATE_URL_2_1/FHIR_VALIDATE_URL_2_2 naming EXACTLY (not re-derived —
+// copied verbatim, since the Kit's gateway child is that same binary): the
+// canonical line ("2.0") keeps the bare FHIR_VALIDATE_URL name; any other
+// line gets FHIR_VALIDATE_URL_<line> with "." replaced by "_".
+func fhirValidateEnvName(line string) string {
+	if line == defaultContractLine {
+		return "FHIR_VALIDATE_URL"
+	}
+	return "FHIR_VALIDATE_URL_" + strings.ReplaceAll(line, ".", "_")
 }
 
 // ingressClientFile is one entry of the ingress-clients.json array the
@@ -157,12 +237,21 @@ type ingressClientFile struct {
 func BuildStack(cfg StackConfig) (Stack, error) {
 	trio := cfg.JavaAssetsDir != ""
 
+	// resolvedLine is the primary validator's line; extraLines are the
+	// (deduped, "" and resolvedLine already excluded) AdditionalValidatorLines
+	// entries — each gets its own validator-only child, below. Computed
+	// unconditionally (cheap, pure) even when !trio, so callers can inspect it
+	// if ever needed without a trio guard of their own.
+	resolvedLine, validatorLines := ResolveValidatorLines(cfg.Line, cfg.AdditionalValidatorLines)
+	extraLines := validatorLines[1:]
+
 	need := 1 // observer, always on
 	if cfg.GatewayPort == 0 {
 		need++
 	}
 	if trio {
-		need += 3 // validator, data server, br-provider
+		need += 2                   // data server, br-provider
+		need += len(validatorLines) // one validator port per configured line (1 by default)
 	}
 	ports, err := supervisor.AllocatePorts(need)
 	if err != nil {
@@ -182,11 +271,18 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	}
 	var validatorPort, dataServerPort, brProviderPort int
 	var validatorURL, dataServerURL, brProviderURL string
+	additionalValidatorURLs := map[string]string{}
+	additionalValidatorPorts := map[string]int{}
 	if trio {
 		validatorPort = nextPort()
+		validatorURL = fmt.Sprintf("http://127.0.0.1:%d", validatorPort)
+		for _, line := range extraLines {
+			p := nextPort()
+			additionalValidatorPorts[line] = p
+			additionalValidatorURLs[line] = fmt.Sprintf("http://127.0.0.1:%d", p)
+		}
 		dataServerPort = nextPort()
 		brProviderPort = nextPort()
-		validatorURL = fmt.Sprintf("http://127.0.0.1:%d", validatorPort)
 		dataServerURL = fmt.Sprintf("http://127.0.0.1:%d", dataServerPort)
 		brProviderURL = fmt.Sprintf("http://127.0.0.1:%d", brProviderPort)
 	}
@@ -306,12 +402,19 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		env = append(env, "SHN_FAKE_VALIDATOR=1")
 	}
 	if trio {
-		// Real validator child present: point the gateway at it. This is
-		// emitted regardless of cfg.FakeValidator — the gateway's own
-		// selectValidator checks SHN_FAKE_VALIDATOR FIRST (gateway/app/app.go),
-		// so an explicitly-forced fake validator still wins; this just never
-		// leaves FHIR_VALIDATE_URL unset when a real validator is standing by.
-		env = append(env, "FHIR_VALIDATE_URL="+validatorURL+"/fhir")
+		// Real validator child(ren) present: point the gateway at each one,
+		// under the env name that line's FHIR_VALIDATE_URL_* semantics expect
+		// (fhirValidateEnvName — bare FHIR_VALIDATE_URL for the canonical
+		// "2.0" line, FHIR_VALIDATE_URL_<line> otherwise; gateway/app/app.go's
+		// own naming, mirrored exactly). This is emitted regardless of
+		// cfg.FakeValidator — the gateway's own selectValidator checks
+		// SHN_FAKE_VALIDATOR FIRST (gateway/app/app.go), so an
+		// explicitly-forced fake validator still wins; this just never leaves
+		// a real validator's URL unwired when it's standing by.
+		env = append(env, fhirValidateEnvName(resolvedLine)+"="+validatorURL+"/fhir")
+		for _, line := range extraLines {
+			env = append(env, fhirValidateEnvName(line)+"="+additionalValidatorURLs[line]+"/fhir")
+		}
 	}
 	env = append(env,
 		"OBSERVER_ADDR="+observerAddr,
@@ -390,13 +493,20 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	// multi-minute first-launch wait — start after it and become the visible
 	// wait. This is safe because runs only go live once EVERY child (including
 	// the trio) has passed its ready probe (see cmd/shnkitd's start loop +
-	// SetRunner). cfg.ExtraChildren still follows. The supervisor starts
-	// children sequentially, blocking on each one's ready probe, so this order
-	// is also the staged boot screen's order, for free.
+	// SetRunner). Any AdditionalValidatorLines children are appended AFTER
+	// this core four — they are config-gated and (unlike the primary
+	// validator) never prewarmed, so they carry the real multi-minute-or-more
+	// cold-boot wait; putting them last keeps the core four's fast/prewarmed
+	// boot-screen timing unaffected by an optional feature nobody configured
+	// (no extra validators boot by default — zero of them exist unless
+	// AdditionalValidatorLines is set). cfg.ExtraChildren still follows all of
+	// that. The supervisor starts children sequentially, blocking on each
+	// one's ready probe, so this order is also the staged boot screen's order,
+	// for free.
 	var children []supervisor.ChildSpec
 	children = append(children, gatewaySpec)
 	if trio {
-		validatorSpec, err := BuildValidatorChildSpec(cfg.JavaAssetsDir, cfg.JREDir, cfg.StateDir, validatorPort, runtime.GOOS)
+		validatorSpec, err := BuildValidatorChildSpec(cfg.JavaAssetsDir, cfg.JREDir, cfg.StateDir, validatorPort, runtime.GOOS, resolvedLine)
 		if err != nil {
 			return Stack{}, err
 		}
@@ -410,6 +520,13 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 			return Stack{}, err
 		}
 		children = append(children, validatorSpec, dataServerSpec, brProviderSpec)
+		for _, line := range extraLines {
+			extraSpec, err := BuildValidatorChildSpec(cfg.JavaAssetsDir, cfg.JREDir, cfg.StateDir, additionalValidatorPorts[line], runtime.GOOS, line)
+			if err != nil {
+				return Stack{}, err
+			}
+			children = append(children, extraSpec)
+		}
 	}
 	children = append(children, cfg.ExtraChildren...)
 
@@ -425,7 +542,7 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		driverCfg.BFFURL = brProviderURL
 	}
 
-	return Stack{
+	stack := Stack{
 		Children:          children,
 		ObserverURL:       observerURL,
 		ObserverHealthURL: observerHealthURL,
@@ -434,7 +551,16 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		DataServerURL:     dataServerURL,
 		BRProviderURL:     brProviderURL,
 		Driver:            driverCfg,
-	}, nil
+		// A COPY, not the spec's own backing array: the demo toggle appends
+		// its knob to this baseline, and an append that happened to land in
+		// spare capacity of the shared array would rewrite the registered
+		// ChildSpec's env out from under the supervisor.
+		GatewayEnv: append([]string(nil), env...),
+	}
+	if len(additionalValidatorURLs) > 0 {
+		stack.AdditionalValidatorURLs = additionalValidatorURLs
+	}
+	return stack, nil
 }
 
 // selfSignedCert generates a minimal self-signed X.509 certificate for key,

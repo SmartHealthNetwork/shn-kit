@@ -186,6 +186,54 @@ func TestClearStaleAssets_IdentityMismatch_ClearsH2AndAllWars(t *testing.T) {
 	}
 }
 
+// TestClearStaleAssets_ExtraValidatorLines_AlsoCleared is the rejection test
+// for the extraValidatorLines sweep: a non-default validator line's
+// H2/WAR (e.g. "validator-2.1", never touched by CopyPrewarmedH2) must be
+// swept on an identity mismatch too, exactly like the fixed "validator" dir —
+// a generator/wiring bug that only cleared the fixed dirs would let a
+// non-default line's H2 linger stale across a version bump, silently
+// mismatched against the new pins.
+func TestClearStaleAssets_ExtraValidatorLines_AlsoCleared(t *testing.T) {
+	assetsDir := t.TempDir()
+	stateDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(stateDir, prewarmMarkerName), "0.8.0\n")
+	stale := []string{
+		filepath.Join(stateDir, "validator-2.1", "h2", "db.mv.db"),
+		filepath.Join(stateDir, "validator-2.1", "main.war"),
+		filepath.Join(stateDir, "validator-2.2", "h2", "db.mv.db"),
+	}
+	for _, p := range stale {
+		mustWriteFile(t, p, "stale")
+	}
+	if err := ClearStaleAssets(assetsDir, stateDir, "0.9.0", nil, "2.1", "2.2"); err != nil {
+		t.Fatalf("ClearStaleAssets: %v", err)
+	}
+	for _, p := range stale {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("stale extra-line asset not cleared: %s (err=%v)", p, err)
+		}
+	}
+}
+
+// TestClearStaleAssets_NoExtraValidatorLines_LeavesUnnamedDirsAlone proves the
+// variadic param is genuinely optional: omitting it clears only the fixed
+// "validator"/"data-server" names, never touching an UNNAMED sibling
+// directory that happens to exist (e.g. a line the caller did NOT pass) —
+// ClearStaleAssets must not guess.
+func TestClearStaleAssets_NoExtraValidatorLines_LeavesUnnamedDirsAlone(t *testing.T) {
+	assetsDir := t.TempDir()
+	stateDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(stateDir, prewarmMarkerName), "0.8.0\n")
+	untouched := filepath.Join(stateDir, "validator-2.1", "h2", "db.mv.db")
+	mustWriteFile(t, untouched, "not-named-so-not-cleared")
+	if err := ClearStaleAssets(assetsDir, stateDir, "0.9.0", nil); err != nil {
+		t.Fatalf("ClearStaleAssets: %v", err)
+	}
+	if got := mustReadFile(t, untouched); got != "not-named-so-not-cleared" {
+		t.Errorf("ClearStaleAssets cleared a directory it was never told about (got %q)", got)
+	}
+}
+
 func TestClearStaleAssets_LegacyTimestampMarker_Migrates(t *testing.T) {
 	assetsDir := t.TempDir()
 	stateDir := t.TempDir()

@@ -319,3 +319,370 @@ describe('sor.read steps', () => {
     expect(story.steps[0].narration).not.toMatch(/hosted counterparty/);
   });
 });
+
+describe('buildRunStory — leg.transformed / leg.refused / leg.downgrade / route / status', () => {
+  it('leg.transformed arriving BEFORE leg.originated (the success-path ordering) attaches via the pending map', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        observer: observerFrame({
+          kind: 'leg.transformed',
+          legType: 'pas-claim',
+          correlationId: 'c-10',
+          counterpart: 'payer',
+          detail: 'pa.pas 2.0->2.1, pa.pas 2.1->2.2',
+        }),
+      }),
+      evt({
+        seq: 3,
+        type: 'observer',
+        observer: observerFrame({
+          kind: 'leg.originated',
+          legType: 'pas-claim',
+          correlationId: 'c-10',
+          counterpart: 'payer',
+          authorityFrame: 'provider-tpo',
+          op: 'pas-submit',
+          route: {
+            token: 'pa.pas@2.2',
+            buildLine: '2.0',
+            chain: [{ module: 'pa.pas 2.0->2.1', from: '2.0', to: '2.1', class: 'full' }],
+          },
+        }),
+      }),
+      evt({
+        seq: 4,
+        type: 'observer',
+        observer: observerFrame({ kind: 'leg.response', legType: 'pas-claim', correlationId: 'c-10' }),
+      }),
+      evt({ seq: 5, type: 'run.finished' }),
+    ];
+
+    const story = buildRunStory('run-t', events);
+    expect(story.steps.filter((s) => s.kind === 'leg')).toHaveLength(1);
+    const step = story.steps.find((s) => s.kind === 'leg');
+    expect(step?.transform?.kind).toBe('leg.transformed');
+    expect(step?.transform?.detail).toBe('pa.pas 2.0->2.1, pa.pas 2.1->2.2');
+    expect(step?.route?.token).toBe('pa.pas@2.2');
+    expect(step?.route?.chain).toEqual([{ module: 'pa.pas 2.0->2.1', from: '2.0', to: '2.1', class: 'full' }]);
+    expect(step?.status).toBe('ok');
+  });
+
+  it('leg.refused pushes a self-contained failed step carrying own/peer/bridgeIssue and its own narration', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        observer: observerFrame({
+          kind: 'leg.refused',
+          legType: 'pas-claim',
+          correlationId: 'c-11',
+          counterpart: 'payer',
+          detail: 'no shared contract line',
+          route: { own: ['2.2'], peer: ['1.0'], bridgeIssue: 'no adjacent-line bridge covers 2.2<->1.0' },
+        }),
+      }),
+      evt({ seq: 3, type: 'run.failed', detail: 'leg refused' }),
+    ];
+
+    const story = buildRunStory('run-t', events);
+    expect(story.steps).toHaveLength(1);
+    const step = story.steps[0];
+    expect(step.kind).toBe('leg');
+    expect(step.status).toBe('failed');
+    expect(step.refusal?.own).toEqual(['2.2']);
+    expect(step.refusal?.peer).toEqual(['1.0']);
+    expect(step.refusal?.bridgeIssue).toBe('no adjacent-line bridge covers 2.2<->1.0');
+    expect(step.narration).toBe(
+      'The Smart Gateway found no contract line it shares with the hosted counterparty for this leg, and refused before sending anything.',
+    );
+  });
+
+  it('leg.downgrade attaches its Detail string to the already-open leg step', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        observer: observerFrame({
+          kind: 'leg.originated',
+          legType: 'crd-order-select',
+          correlationId: 'c-12',
+          counterpart: 'payer',
+          op: 'crd-order-select',
+        }),
+      }),
+      evt({
+        seq: 3,
+        type: 'observer',
+        observer: observerFrame({
+          kind: 'leg.downgrade',
+          legType: 'crd-order-select',
+          correlationId: 'c-12',
+          op: 'crd-cards',
+          detail: 'recipient advertises frame v1 but answered bare; processing as legacy (stale-feed downgrade)',
+        }),
+      }),
+      evt({
+        seq: 4,
+        type: 'observer',
+        observer: observerFrame({ kind: 'leg.response', legType: 'crd-order-select', correlationId: 'c-12' }),
+      }),
+      evt({ seq: 5, type: 'run.finished' }),
+    ];
+
+    const story = buildRunStory('run-t', events);
+    const step = story.steps.find((s) => s.kind === 'leg');
+    expect(step?.downgrade).toBe(
+      'recipient advertises frame v1 but answered bare; processing as legacy (stale-feed downgrade)',
+    );
+  });
+
+  it('a route-carrying leg.failed with a correlationId-matching open step closes it and sets refusal', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        observer: observerFrame({
+          kind: 'leg.originated',
+          legType: 'pas-claim',
+          correlationId: 'c-14',
+          counterpart: 'payer',
+          op: 'pas-submit',
+        }),
+      }),
+      evt({
+        seq: 3,
+        type: 'observer',
+        observer: observerFrame({
+          kind: 'leg.failed',
+          legType: 'pas-claim',
+          correlationId: 'c-14',
+          detail: 'transform chain refused',
+          route: { own: ['2.2'], peer: ['1.0'], bridgeIssue: 'no bridge' },
+        }),
+      }),
+      evt({ seq: 4, type: 'run.failed', detail: 'leg failed' }),
+    ];
+
+    const story = buildRunStory('run-t', events);
+    expect(story.steps).toHaveLength(1);
+    const step = story.steps[0];
+    expect(step.status).toBe('failed');
+    expect(step.refusal?.bridgeIssue).toBe('no bridge');
+    expect(step.response?.detail).toBe('transform chain refused');
+  });
+
+  // The Route shape below is deliberately the CHAIN-carrying one
+  // (token/buildLine/chain), not own/peer/bridgeIssue: on the real wire, a
+  // leg.failed with Route present is produced by exactly two engine sites —
+  // egressAdapt's transform-chain refusal and guardPendCarry's carry-integrity
+  // refusal (see :456-463 above and the carry-refusal fixture just below) —
+  // and BOTH populate Route.Chain, never Own/Peer/BridgeIssue (that shape is
+  // leg.refused's alone, a different kind altogether: no shared contract line
+  // found, so no chain was ever attempted). A fixture wearing the wrong shape
+  // here would still pass inspect.ts's narration check (isCarryRefusalDetail
+  // keys on the Detail marker only), but would silently diverge from reality
+  // one layer down: StepDetail's RefusalCard keys `hasChain` FIRST (chain
+  // empty ⇒ falls through to the route-refusal species), so an own/peer/
+  // bridgeIssue-shaped transform-refusal fixture would render the WRONG card
+  // ("No shared contract line…") under this step's own transform-refusal
+  // narration — the two discriminators would visibly disagree on the same
+  // event. They differ by design (a recorded follow-up, not this change's
+  // problem to unify) but must still agree for every realistic wire shape;
+  // see the RefusalCard-side assertion of this exact event in
+  // StepDetail.test.tsx ("the SAME event as inspect.test.ts's...").
+  it('a route-carrying leg.failed with NO open step becomes a self-contained failed step (egressAdapt transform-refusal precedes leg.originated)', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        observer: observerFrame({
+          kind: 'leg.failed',
+          legType: 'pas-claim',
+          correlationId: 'c-15',
+          counterpart: 'payer',
+          detail: 'transform chain refused: no honest byte-level source',
+          route: {
+            token: 'pa.pas@2.2',
+            buildLine: '2.0',
+            chain: [{ module: 'pa.pas 2.0->2.2', from: '2.0', to: '2.2', class: 'gated' }],
+          },
+        }),
+      }),
+      evt({ seq: 3, type: 'run.failed', detail: 'leg failed' }),
+    ];
+
+    const story = buildRunStory('run-t', events);
+    expect(story.steps).toHaveLength(1);
+    const step = story.steps[0];
+    expect(step.kind).toBe('leg');
+    expect(step.status).toBe('failed');
+    expect(step.refusal?.chain).toEqual([{ module: 'pa.pas 2.0->2.2', from: '2.0', to: '2.2', class: 'gated' }]);
+    // Not the route-refusal shape: this Route carries no own/peer/bridgeIssue,
+    // only the attempted chain — the shape a real transform refusal wears.
+    expect(step.refusal?.own).toBeUndefined();
+    expect(step.refusal?.peer).toBeUndefined();
+    expect(step.refusal?.bridgeIssue).toBeUndefined();
+    // The dedicated transform-refused narration, fetched directly:
+    // the legType-keyed path previously fell through to the generic
+    // '…exchanged "pas-claim"…' fallback — a false sentence rendered directly
+    // above RefusalCard's "zero bytes crossed the network".
+    expect(step.narration).toBe(
+      'The Smart Gateway could not honestly bridge this leg to the hosted counterparty’s contract line, and refused before sending anything.'
+    );
+  });
+
+  it('a route-carrying leg.failed whose detail bears the carry marker narrates as a carry refusal, not a transform refusal', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        observer: observerFrame({
+          kind: 'leg.failed',
+          legType: 'pas-claim-update',
+          correlationId: 'c-16',
+          counterpart: 'payer',
+          detail:
+            'engine: pended carry not intact at resume (pin pa.pas@2.1): engine: verifyCarryPresent: declared carry "Claim.extension[0]" not found in the payload about to be restored — the payload no longer bears content its own loss record declares carried',
+          route: {
+            token: 'pa.pas@2.1',
+            buildLine: '2.2',
+            chain: [{ module: 'pa.pas 2.2->2.1', from: '2.2', to: '2.1', class: 'carry' }],
+          },
+        }),
+      }),
+      evt({ seq: 3, type: 'run.failed', detail: 'leg failed' }),
+    ];
+
+    const story = buildRunStory('run-t', events);
+    expect(story.steps).toHaveLength(1);
+    const step = story.steps[0];
+    expect(step.status).toBe('failed');
+    expect(step.narration).toBe(
+      'The Smart Gateway found this resumed request no longer carries content its own record says it must, and refused before sending anything.'
+    );
+  });
+
+  it('a genuinely unknown observer kind is still silently skipped, never a step', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        observer: observerFrame({ kind: 'leg.mystery-future-kind', legType: 'pas-claim', correlationId: 'c-99' }),
+      }),
+      evt({ seq: 3, type: 'run.finished' }),
+    ];
+
+    const story = buildRunStory('run-t', events);
+    expect(story.steps).toEqual([]);
+  });
+
+  it('a relayed non-2xx status is parsed as a number and surfaced on the response frame (display only — step status logic unchanged)', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        observer: observerFrame({ kind: 'leg.originated', legType: 'pas-claim', correlationId: 'c-13', op: 'pas-submit' }),
+      }),
+      evt({
+        seq: 3,
+        type: 'observer',
+        observer: observerFrame({ kind: 'leg.response', legType: 'pas-claim', correlationId: 'c-13', status: 422 }),
+      }),
+      evt({ seq: 4, type: 'run.finished' }),
+    ];
+
+    const story = buildRunStory('run-t', events);
+    const step = story.steps.find((s) => s.kind === 'leg');
+    expect(step?.response?.status).toBe(422);
+    // Step status logic byte-unchanged: leg.response always closes 'ok',
+    // even when it carries a relayed non-2xx status.
+    expect(step?.status).toBe('ok');
+  });
+
+  it('ingress status logic stays byte-unchanged: ingress.responded "200" still closes ok', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        observer: observerFrame({ kind: 'ingress.received', legType: 'pas-ingress' }),
+      }),
+      evt({
+        seq: 3,
+        type: 'observer',
+        observer: observerFrame({ kind: 'ingress.responded', legType: 'pas-ingress', detail: '200' }),
+      }),
+      evt({ seq: 4, type: 'run.finished' }),
+    ];
+
+    const story = buildRunStory('run-t', events);
+    const step = story.steps.find((s) => s.kind === 'ingress');
+    expect(step?.status).toBe('ok');
+    expect(step?.httpStatus).toBe('200');
+  });
+});
+
+describe('parseObserver — route/status', () => {
+  it('parses status as a number', () => {
+    const e = evt({ seq: 1, type: 'observer', observer: observerFrame({ kind: 'leg.response', status: 422 }) });
+    expect(parseObserver(e)?.status).toBe(422);
+  });
+
+  it('parses a well-formed selected route (token/buildLine/chain)', () => {
+    const e = evt({
+      seq: 1,
+      type: 'observer',
+      observer: observerFrame({
+        kind: 'leg.originated',
+        route: {
+          token: 'pa.pas@2.2',
+          buildLine: '2.0',
+          chain: [{ module: 'pa.pas 2.0->2.1', from: '2.0', to: '2.1', class: 'full' }],
+        },
+      }),
+    });
+    const frame = parseObserver(e);
+    expect(frame?.route?.token).toBe('pa.pas@2.2');
+    expect(frame?.route?.buildLine).toBe('2.0');
+    expect(frame?.route?.chain).toEqual([{ module: 'pa.pas 2.0->2.1', from: '2.0', to: '2.1', class: 'full' }]);
+  });
+
+  it('parses a refusal-shaped route (own/peer/bridgeIssue, no token/chain)', () => {
+    const e = evt({
+      seq: 1,
+      type: 'observer',
+      observer: observerFrame({
+        kind: 'leg.refused',
+        route: { own: ['2.2'], peer: ['1.0'], bridgeIssue: 'no adjacent-line bridge' },
+      }),
+    });
+    const frame = parseObserver(e);
+    expect(frame?.route?.own).toEqual(['2.2']);
+    expect(frame?.route?.peer).toEqual(['1.0']);
+    expect(frame?.route?.bridgeIssue).toBe('no adjacent-line bridge');
+    expect(frame?.route?.token).toBeUndefined();
+  });
+
+  it('route is undefined when absent, and never throws on a malformed route', () => {
+    const noRoute = evt({ seq: 1, type: 'observer', observer: observerFrame({ kind: 'leg.originated' }) });
+    expect(parseObserver(noRoute)?.route).toBeUndefined();
+
+    const malformed = evt({
+      seq: 2,
+      type: 'observer',
+      observer: observerFrame({ kind: 'leg.originated', route: 'not-an-object' as unknown }),
+    });
+    expect(() => parseObserver(malformed)).not.toThrow();
+    expect(parseObserver(malformed)?.route).toBeUndefined();
+  });
+});

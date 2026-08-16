@@ -12,6 +12,7 @@ import {
 import { buildRunStory } from './inspect';
 import type { Step, RunStory } from './inspect';
 import type { KitEvent } from './types';
+import { relayedStatusLine } from './StepDetail';
 import ehrUc03 from './fixtures/run-ehr-uc03.json';
 
 const ehrEvents = ehrUc03 as unknown as KitEvent[];
@@ -78,6 +79,38 @@ function okLegStep(counterpart = 'payer'): Step {
     correlationId: 'c-2',
     counterpart,
     narration: 'ok leg narration',
+  };
+}
+
+// okLegRelayedStatusStep: the exchange completed — the counterparty
+// ANSWERED — but the relayed application status (`response.status`,
+// ObserverEvent.Status) was outside 2xx. status stays 'ok' by design
+// (surface, don't reclassify); the relayed status is display-only.
+function okLegRelayedStatusStep(httpStatus = 422): Step {
+  return {
+    id: '3r',
+    kind: 'leg',
+    legType: 'pas-claim',
+    status: 'ok',
+    request: {
+      seq: 10,
+      time: '2026-07-03T00:00:00Z',
+      kind: 'leg.originated',
+      legType: 'pas-claim',
+      correlationId: 'c-2r',
+      counterpart: 'payer',
+    },
+    response: {
+      seq: 11,
+      time: '2026-07-03T00:00:01Z',
+      kind: 'leg.response',
+      legType: 'pas-claim',
+      correlationId: 'c-2r',
+      status: httpStatus,
+    },
+    correlationId: 'c-2r',
+    counterpart: 'payer',
+    narration: 'relayed non-2xx leg narration',
   };
 }
 
@@ -352,6 +385,47 @@ describe('FlowMap — remote-zone honesty (shown-never-faked)', () => {
   });
 });
 
+describe('FlowMap — relayed non-2xx status marker (map level)', () => {
+  it('an ok leg whose relayed response.status is outside 2xx gets a display-only marker whose tooltip reuses relayedStatusLine() verbatim; the remote zone stays lit and is NOT marked failed, and the step keeps data-status="ok"', () => {
+    const story: RunStory = { runId: 'run-13', steps: [okLegRelayedStatusStep(422)], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    const remoteZone = document.querySelector('.remote') as HTMLElement;
+    expect(remoteZone.className).toContain('lit');
+    expect(remoteZone.className).not.toContain('failed');
+
+    const marker = remoteZone.querySelector('.relayed-status');
+    expect(marker).not.toBeNull();
+    expect(marker?.getAttribute('title')).toBe(relayedStatusLine(422));
+    expect(marker?.textContent).toBe(relayedStatusLine(422));
+
+    const button = document.querySelector('[data-step-id="3r"]') as HTMLElement;
+    expect(button.getAttribute('data-status')).toBe('ok');
+  });
+
+  it('an ok leg whose relayed response.status IS a 2xx renders no marker', () => {
+    const story: RunStory = { runId: 'run-14', steps: [okLegRelayedStatusStep(200)], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    expect(document.querySelector('.relayed-status')).toBeNull();
+  });
+
+  it('an ok leg with no relayed response.status at all (the ordinary case) renders no marker', () => {
+    const story: RunStory = { runId: 'run-15', steps: [okLegStep()], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    expect(document.querySelector('.relayed-status')).toBeNull();
+  });
+
+  it('a genuinely failed leg (no relayed answer at all) never gets the relayed marker, and the remote zone stays marked failed', () => {
+    const story: RunStory = { runId: 'run-16', steps: [failedLegStep()], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    expect(document.querySelector('.relayed-status')).toBeNull();
+    expect(document.querySelector('.remote')?.className).toContain('failed');
+  });
+});
+
 function okFederatedQueryStep(): Step {
   return {
     id: '6',
@@ -546,6 +620,66 @@ describe('FlowMap — per-step counterpart labeling', () => {
 
     expect(screen.getByText('payer')).toBeDefined();
     expect(screen.getByText('facility-a')).toBeDefined();
+  });
+});
+
+describe('FlowMap — routed-line chip', () => {
+  // arm-1/arm-2 route: Token+BuildLine, no Chain — the chip names the build
+  // line only, no " · bridged" clause (nothing was bridged).
+  function armOneStep(): Step {
+    return { ...okLegStep(), route: { token: 'pa.pas@2.0', buildLine: '2.0' } };
+  }
+
+  // arm-3 route: a bridged chain — the chip's " · bridged … · {worstClass}"
+  // clause names the walk span and the WORST hop class (gated here, mixed
+  // with a full hop, per routeChipRank's severity ranking — never the first
+  // hop, never an average).
+  function armThreeStep(): Step {
+    return {
+      ...okLegStep(),
+      route: {
+        token: 'pa.pas@2.2',
+        buildLine: '2.0',
+        chain: [
+          { module: 'pa.pas 2.0->2.1', from: '2.0', to: '2.1', class: 'full' },
+          { module: 'pa.pas 2.1->2.2', from: '2.1', to: '2.2', class: 'gated' },
+        ],
+      },
+    };
+  }
+
+  it('a step with an arm-1/2 route (no chain) shows only the build-line chip', () => {
+    const story: RunStory = { runId: 'run-route-1', steps: [armOneStep()], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    const chip = document.querySelector('.step-route-tag') as HTMLElement;
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toBe('built at 2.0');
+    expect(chip.className).toContain('provenance-tag');
+  });
+
+  it('a step with an arm-3 bridged chain shows the build line PLUS the bridged span and worst hop class', () => {
+    const story: RunStory = { runId: 'run-route-3', steps: [armThreeStep()], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    const chip = document.querySelector('.step-route-tag') as HTMLElement;
+    expect(chip.textContent).toBe('built at 2.0 · bridged 2.0 → … → 2.2 · gated');
+  });
+
+  it('a step with no route carries no routed-line chip at all', () => {
+    const story: RunStory = { runId: 'run-route-none', steps: [okLegStep()], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    expect(document.querySelector('.step-route-tag')).toBeNull();
+  });
+
+  it('a degenerate route with no buildLine ("route": {}) renders NO chip — never "built at ?"', () => {
+    const step = armOneStep();
+    step.route = {};
+    const story: RunStory = { runId: 'run-route-empty', steps: [step], audit: [] };
+    render(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+
+    expect(document.querySelector('.step-route-tag')).toBeNull();
   });
 });
 

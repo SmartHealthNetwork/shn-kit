@@ -175,17 +175,21 @@ func fillLumbarQR(member string, cc shnsdk.ClinicalContext, now time.Time) ([]by
 // the Hub — against SHN's OWN sandbox ingress, which is what the Kit's local
 // gateway child runs), this bundle always carries an answered QR so the
 // sandbox adjudicator has something to read.
-func conformantSubmitBundle(member string, srJSON, qrJSON []byte) ([]byte, error) {
+func conformantSubmitBundle(member string, payer shnsdk.PayerIdentifier, srJSON, qrJSON []byte) ([]byte, error) {
 	ref := "Patient/" + member
 	entries := []map[string]any{
 		{"resource": map[string]any{"resourceType": "Patient", "id": member}},
 		{"resource": map[string]any{
 			"resourceType": "Coverage", "id": "cov1", "status": "active",
 			"beneficiary": map[string]any{"reference": ref},
-			// The payor identifier (CMSPayerIdentity) is how the PAS ingress
-			// routes the bundle to the payer holder (FR-G40; no default route).
+			// The payor identifier is how the PAS ingress routes the bundle to the
+			// payer holder (FR-G40; no default route) — so it must name the SAME payer
+			// the run's earlier CRD/DTR legs routed to, or one run gets split across
+			// two payer holders. Ordinary rows pass shnsdk.CMSPayerIdentity (what this
+			// builder used to hardcode); uc03 passes what it read back off its OWN CRD
+			// request (conformantPayorFromCRD), which is member-derived.
 			"payor": []any{map[string]any{"identifier": map[string]any{
-				"system": shnsdk.CMSPayerIdentity.System, "value": shnsdk.CMSPayerIdentity.Value,
+				"system": payer.System, "value": payer.Value,
 			}}},
 		}},
 		{"resource": json.RawMessage(srJSON)},
@@ -211,6 +215,7 @@ func conformantAmendBundle(member string, qrJSON, srJSON, drJSON, provJSON []byt
 		QR: qrJSON, SR: srJSON,
 		PatientRef:       "Patient/" + member,
 		CoverageRef:      "Coverage/" + member,
+		MemberID:         member,
 		Provenance:       provJSON,
 		DiagnosticReport: drJSON,
 		Corr:             corr,
@@ -357,8 +362,38 @@ func conformantUC02(rn *Runner, branch string) (string, error) {
 	return fmt.Sprintf("%s (HCPCS %s %s): covered=%s paNeeded=%s", cards.Cards[0].Summary, order.Code, order.Display, cards.Covered(), cards.PANeeded()), nil
 }
 
+// conformantPayorFromCRD reads the payer identity out of a driver-built CDS
+// Hooks request's prefetch Coverage — the SAME bytes, parsed by the SAME
+// shnsdk.ParsePayerIdentifier the gateway's payload-first ingress routes with
+// (AI-G13). Single-sourcing it this way (rather than re-deriving the member ->
+// payer mapping here) is what guarantees a row's PAS submit bundle names the
+// payer its own CRD/DTR legs already reached.
+func conformantPayorFromCRD(crdBody []byte) (shnsdk.PayerIdentifier, error) {
+	var req struct {
+		Prefetch struct {
+			Coverage json.RawMessage `json:"coverage"`
+		} `json:"prefetch"`
+	}
+	if err := json.Unmarshal(crdBody, &req); err != nil {
+		return shnsdk.PayerIdentifier{}, fmt.Errorf("read payer identity off the CRD request: %w", err)
+	}
+	pid, ok := shnsdk.ParsePayerIdentifier(req.Prefetch.Coverage, nil)
+	if !ok {
+		return shnsdk.PayerIdentifier{}, fmt.Errorf("the CRD request's prefetch Coverage carries no resolvable payer identifier")
+	}
+	return pid, nil
+}
+
 func conformantUC03(rn *Runner, branch string) (string, error) {
-	const member = "MBR-COVERED"
+	// Branch "bridge-demo" selects the bridge-demo persona
+	// (its Coverage.payor routes to the bridge-demo-payer holder — see
+	// gateway/engine/holderdata.go's MBR-BRIDGE-DEMO comment); validateRow
+	// rejects every other branch for this lane, so member fence AI/OWD
+	// guardrails (Member stays freeform-only) are untouched.
+	member := "MBR-COVERED"
+	if branch == "bridge-demo" {
+		member = "MBR-BRIDGE-DEMO"
+	}
 	ref := "Patient/" + member
 
 	crdBody, err := scenariodriver.BuildCRDRequest(member, shnsdk.SystemCPT, "72148", "MRI lumbar spine")
@@ -402,7 +437,15 @@ func conformantUC03(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
 	}
-	bundle, err := conformantSubmitBundle(member, srJSON, qrJSON)
+	// The submit bundle names the SAME payer the CRD/DTR legs of this run just
+	// routed to — read back off the driver's own CRD request rather than
+	// hardcoded, so a member whose Coverage names a demo payer (bridge-demo)
+	// can't end up with its PAS leg routed to the CMS payer holder instead.
+	payer, err := conformantPayorFromCRD(crdBody)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
+	}
+	bundle, err := conformantSubmitBundle(member, payer, srJSON, qrJSON)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
 	}
@@ -435,7 +478,7 @@ func conformantUC04(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc04: %w", err)
 	}
-	submitBundle, err := conformantSubmitBundle(member, srJSON, qrJSON)
+	submitBundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc04: %w", err)
 	}
@@ -494,7 +537,7 @@ func conformantUC05(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc05: %w", err)
 	}
-	submitBundle, err := conformantSubmitBundle(member, srJSON, qrJSON)
+	submitBundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc05: %w", err)
 	}
@@ -562,7 +605,7 @@ func conformantUC06(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: %w", err)
 	}
-	submitBundle, err := conformantSubmitBundle(member, srJSON, qrJSON)
+	submitBundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: %w", err)
 	}
@@ -620,7 +663,7 @@ func conformantUC07(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc07: %w", err)
 	}
-	bundle, err := conformantSubmitBundle(member, srJSON, qrJSON)
+	bundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc07: %w", err)
 	}
@@ -674,7 +717,7 @@ func conformantUC08(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc08: %w", err)
 	}
-	bundle, err := conformantSubmitBundle(member, srJSON, qrJSON)
+	bundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc08: %w", err)
 	}

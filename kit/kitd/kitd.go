@@ -77,6 +77,22 @@ type Config struct {
 	// one) purely for that test seam.
 	Restarter Restarter
 
+	// BridgingDemo is the seam POST /api/bridging/demo dispatches the
+	// bridging demo-mode toggle through: main wires a closure that restarts
+	// the gateway child with (enabled) or without (disabled) the
+	// SHN_DEMO_EGRESS_NATIVE_LINES knob in its env, resetting the SSE relay's
+	// cursor on the way (supervisor.RestartWithEnv's preSpawn hook). nil ⇒
+	// the whole feature is absent: the route 404s and GET /api/status omits
+	// its "bridging" block entirely, so a client can tell "this Kit has no
+	// demo mode" from "demo mode is off" — the same nil-Config-field posture
+	// as Boot/History/BYO.
+	//
+	// Kept as a plain closure (not a *supervisor.Supervisor + env) on
+	// purpose: the gateway env it swaps carries secrets-adjacent paths
+	// (kitd.Stack.GatewayEnv), which must never come within reach of a
+	// handler — the closure keeps it entirely inside main.
+	BridgingDemo func(ctx context.Context, enabled bool) error
+
 	// TokenStorage optionally reports which bootstrap.TokenStore backend is
 	// actually in effect for this Kit: "keychain", or
 	// "file (keychain unavailable: <reason>)" once a fail-visible fallback
@@ -129,6 +145,14 @@ type Restarter interface {
 type StackInfo struct {
 	Validator     string // "stand-in" | "packaged"
 	BRProviderURL string // "" ⇒ no Java trio configured
+
+	// ObserverURL is the gateway child's observer listener SSE URL
+	// (kitd.Stack.ObserverURL's own value, "http://127.0.0.1:<port>/events")
+	// — "" before the first SetStackInfo call, the same daemon-first zero
+	// value as Validator/BRProviderURL above. POST /api/bridging/exhibit
+	// derives the sibling POST /demo/transform URL from it and answers 503
+	// while this reads "".
+	ObserverURL string
 }
 
 // sessionFile is the session.json contract main and the integration gate
@@ -157,6 +181,14 @@ type Daemon struct {
 	verifyFn  func(context.Context) []bootstrap.Probe
 	byo       BYORuntime
 	stackInfo StackInfo // zero value (Validator == "") until the first SetStackInfo call
+
+	// bridgingDemo is the last SUCCESSFULLY applied demo-mode state (a
+	// failed toggle leaves it untouched — status must never claim a mode the
+	// gateway isn't running). false is a genuine value, not "unset": the
+	// gateway always boots demo-off, so no presence flag is needed the way
+	// updateSet is for update.Info. Whether the block is served at all keys
+	// off Config.BridgingDemo != nil instead.
+	bridgingDemo bool
 
 	// update/updateSet back GET /api/status's "update" field.
 	// Unlike StackInfo/PatientAppURL, update.Info's own zero
@@ -308,6 +340,24 @@ func (d *Daemon) getStackInfo() StackInfo {
 	return d.stackInfo
 }
 
+// SetBridgingDemo records the demo-mode state now in effect, so it appears
+// in the next GET /api/status. Called by the toggle handler only AFTER
+// Config.BridgingDemo has returned successfully (an errored toggle leaves
+// the last known-good state standing).
+func (d *Daemon) SetBridgingDemo(enabled bool) {
+	d.mu.Lock()
+	d.bridgingDemo = enabled
+	d.mu.Unlock()
+}
+
+// getBridging returns the recorded demo-mode state (false before any
+// successful toggle — the gateway's own boot default).
+func (d *Daemon) getBridging() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.bridgingDemo
+}
+
 // SetUpdate publishes the launch-time update-check result
 // so it appears in the next GET /api/status as "update". Safe
 // to call any time after Serve begins running, mirroring SetStackInfo/
@@ -332,6 +382,16 @@ func (d *Daemon) getUpdate() (update.Info, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.update, d.updateSet
+}
+
+// getVerify returns the last-published bootstrap.Verify probes (the same
+// slice GET /api/bootstrap's "verify" serializes) — handleStatus reads it to
+// pull the two bridge-demo probes into the "bridging" block's peer/
+// refusePeer keys, so both surfaces reflect one shared result.
+func (d *Daemon) getVerify() []bootstrap.Probe {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.verify
 }
 
 // Serve binds APIAddr, writes session.json into StateDir, closes Ready(),
@@ -421,6 +481,8 @@ func (d *Daemon) handler() http.Handler {
 	gated.HandleFunc("GET /api/byo/patients/{fhirId}/context", d.handleBYOPatientContextGet)
 	gated.HandleFunc("GET /api/byo/seed-bundle/{lane}", d.handleBYOSeedBundleGet)
 	gated.HandleFunc("POST /api/children/{name}/restart", d.handleChildRestart)
+	gated.HandleFunc("POST /api/bridging/demo", d.handleBridgingDemo)
+	gated.HandleFunc("POST /api/bridging/exhibit", d.handleBridgingExhibit)
 	gated.HandleFunc("GET /api/about", d.handleAbout)
 	gated.HandleFunc("GET /api/support-bundle", d.handleSupportBundle)
 	// Only GET /events is forwarded to the bus's handler; its internal
@@ -499,7 +561,122 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	if u, ok := d.getUpdate(); ok {
 		resp["update"] = u
 	}
+	// "bridging" is served iff the demo seam is configured at all — see
+	// Config.BridgingDemo: absent key = this Kit has no demo mode, present
+	// with demoMode false = it has one and it's off.
+	if d.cfg.BridgingDemo != nil {
+		bs := bridgingStatus{DemoMode: d.getBridging()}
+		verify := d.getVerify()
+		// peer/refusePeer are additive keys sourced from the SAME probes
+		// GET /api/bootstrap's "verify" serializes (bootstrap.Verify's
+		// BridgeProbes-configured rows): present iff that probe
+		// ran (BridgeProbes.DemoHolder/RefuseHolder was non-empty at the last
+		// Verify call), omitted (nil) otherwise — never a fabricated red.
+		if p, ok := probeByName(verify, "bridge-demo-payer"); ok {
+			bs.Peer = &p
+		}
+		if p, ok := probeByName(verify, "bridge-demo-refuse"); ok {
+			bs.RefusePeer = &p
+		}
+		resp["bridging"] = bs
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// bridgingStatus is GET /api/status's "bridging" block. Deliberately a named
+// struct rather than an inline map: the bridging peer/refuse-peer probes land
+// here as further OPTIONAL keys, additively, without disturbing demoMode.
+// Peer backs the "bridge-demo-payer" probe, RefusePeer the
+// "bridge-demo-refuse" probe — each nil/omitted whenever its probe didn't run
+// (BridgeProbes left that holder id "" at the last Verify call), so the
+// UI-side exhibit action gates on each independently without ever reading a
+// fabricated red for an unconfigured probe.
+type bridgingStatus struct {
+	DemoMode   bool             `json:"demoMode"`
+	Peer       *bootstrap.Probe `json:"peer,omitempty"`
+	RefusePeer *bootstrap.Probe `json:"refusePeer,omitempty"`
+}
+
+// probeByName returns the first probe in probes with the given Name (mirrors
+// bootstrap/verify_test.go's helper of the same shape) — used to pull the
+// two bridge-demo probes out of the shared verify slice for the "bridging"
+// status block.
+func probeByName(probes []bootstrap.Probe, name string) (bootstrap.Probe, bool) {
+	for _, p := range probes {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return bootstrap.Probe{}, false
+}
+
+// demoRequest is POST /api/bridging/demo's body: {"enabled":bool}. A missing
+// "enabled" decodes as false — i.e. "turn it off", the safe direction.
+type demoRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// handleBridgingDemo serves POST /api/bridging/demo: flips the gateway
+// child's bridging demo mode by restarting it with (or without) the
+// SHN_DEMO_EGRESS_NATIVE_LINES knob — a PURPOSE-BUILT gateway restart, not a
+// hole in the generic per-child restart seam's gateway refusal
+// (gatewayRestartRefused): the spec, port, driver keypair and runner wiring
+// are all identical across it; only the env changes.
+//
+//   - 404 when Config.BridgingDemo is nil (feature absent — the same
+//     nil-Config-field contract as the bootstrap/history/byo routes).
+//   - 503 before SetRunner has ever been called — the same daemon-first gate
+//     as the per-child restart route: pre-boot there is no gateway child to
+//     restart.
+//   - 400 on an undecodable body.
+//   - 409 while a run or watch is in flight (Runner.InFlight(), the same
+//     best-effort gate, with the same accepted residual race): restarting the
+//     gateway under a live run would tear out the transport it is using.
+//   - 500 when the toggle itself fails (the restart never came back ready).
+//     The recorded state is NOT advanced in that case.
+//   - 200 {"demoMode": <enabled>} on success.
+//
+// What a 500 leaves behind (operator contract, worth stating plainly): the
+// toggle closure REVERTS a failed restart — one more restart arc with the
+// prior env (newBridgingDemo's toggle-reverts failure mode) — so the ordinary
+// failure leaves the gateway child running its previous mode, consistent with
+// the unchanged recorded demoMode. Only when the revert restart ALSO fails
+// (the error says so, error-joined) is the child left terminal (failed), and
+// then with its PRIOR env registered — recorded state and registered env
+// still agree. Recovery from that double failure is another toggle (either
+// way — supervisor.Restart's recovers-a-failed-child contract supports it);
+// the generic per-child restart route refuses the gateway outright
+// (gatewayRestartRefused), so short of the toggle the operator is down to
+// restarting the whole Kit.
+func (d *Daemon) handleBridgingDemo(w http.ResponseWriter, r *http.Request) {
+	if d.cfg.BridgingDemo == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bridging demo not configured"})
+		return
+	}
+	rn := d.getRunner()
+	if rn == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "stack not started"})
+		return
+	}
+	var req demoRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("decode request body: %v", err)})
+		return
+	}
+	if rn.InFlight() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "a run or watch is in flight"})
+		return
+	}
+	// d.baseCtx, NEVER r.Context(): the toggle drives a full stop→respawn of
+	// the gateway child, which outlives this request's own deadline the
+	// moment a client disconnects mid-restart — a cancelled restart would
+	// strand the child down. (Same reasoning as handleWatchPost's ctx choice.)
+	if err := d.cfg.BridgingDemo(d.baseCtx, req.Enabled); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	d.SetBridgingDemo(req.Enabled)
+	writeJSON(w, http.StatusOK, bridgingStatus{DemoMode: req.Enabled})
 }
 
 // runRequest is POST /api/runs's body: {"lane","uc","branch","member"}.

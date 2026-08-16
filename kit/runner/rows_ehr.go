@@ -96,8 +96,14 @@ func ehrUC02(rn *Runner, branch string) (string, error) {
 }
 
 func ehrUC03(rn *Runner, branch string) (string, error) {
+	// A req.Branch switch inside handleUC03 carries the member selection,
+	// mirroring ehrUC01's existing {"branch": branch} shape
+	// (gateway/engine/originate.go). "" selects MBR-COVERED (byte-identical
+	// to before this switch existed); "bridge-refuse" selects the demo
+	// refuse persona MBR-BRIDGE-REFUSE — expected to fail at the PAS leg
+	// when run live, which is the run failing as designed, not a bug.
 	var out uc03Resp
-	if err := ehrScenario(rn, "/scenario/uc03", map[string]any{}, &out); err != nil {
+	if err := ehrScenario(rn, "/scenario/uc03", map[string]string{"branch": branch}, &out); err != nil {
 		return "", err
 	}
 	if !out.PARequired {
