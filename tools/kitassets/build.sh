@@ -42,13 +42,18 @@
 # /app/extra-classes is a tolerated-missing loader.path entry — NEITHER pinned
 # image actually ships the directory; do not create it.
 #
-# ── KNOWN GAP ──────────────────────────────────────────────────────────────
-# This script's live packaging (build.sh through verify.sh, i.e. an actual
-# WAR extraction + IG-tgz download + H2 prewarm + boot-verify) is UNPROVEN on
-# this branch — recent work touched the tri-line IG pin set (FR-G49/G50) but
-# did not run a live kit build. Load-bearing before the next kit release: run
-# build.sh + verify.sh for real and fix whatever the tri-line pin widening
-# broke before cutting a release.
+# ── THE GAP THIS SCRIPT USED TO CARRY — now closed ─────────────────────────
+# For a while this script's live packaging (build.sh through verify.sh: real
+# WAR extraction + IG-tgz fetch + H2 prewarm + boot-verify) was UNPROVEN after
+# the tri-line IG pin widening (FR-G49/G50), with a note here saying to run it
+# for real before the next kit release. That note was right: the first release
+# dispatch that exercised it failed, because the widening pulled the
+# SHN-authored shn.fhir.carry package into the Kit's pin set and a published
+# shn-kit snapshot has no tools/shnig to build it from. Fixed by vendoring the
+# package at tools/kitassets/shnig/ (see the ig() carry branch below).
+# The standing lesson: a `source=kit-repo` packaging dispatch is the only thing
+# that proves this script against the SNAPSHOT rather than the monorepo — a
+# green monorepo build says nothing about snapshot self-sufficiency.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -168,19 +173,32 @@ ig() { # ig <dir> <file> <simplifier-path> — download-to-tmp + atomic mv (see 
       shn.fhir.carry/*)
         # shn.fhir.carry is SHN-authored, never published to Simplifier — every
         # OTHER row in igpins.gen.sh is a real Simplifier package, so this is
-        # the ONE name that must never hit the curl branch below. Sourced from
-        # the LOCALLY built package (tools/shnig, deterministic tgz) instead,
-        # same posture as gateway/deploy/validator/Dockerfile's COPY solve. A
-        # fresh checkout (incl. the nightly CI runner) has no dist/ yet, so
-        # build it here if missing — `make shnig-build` does the same thing
-        # by hand. If tools/shnig itself is absent (a kit-repo snapshot
-        # checkout does not mirror tools/shnig or
-        # tools/contracts/manifest.json today), fail LOUDLY naming the fix
-        # rather than falling through to a 404 curl.
+        # the ONE name that must never hit the curl branch below.
+        #
+        # THREE sources, in order, because this script runs from two different
+        # checkouts. The published shn-kit snapshot carries tools/kitassets but
+        # NOT tools/shnig (the builder's Go source) and not
+        # tools/contracts/manifest.json, so a kit-repo packaging build cannot
+        # self-build this package — it must find a committed one. That is what
+        # the VENDORED copy beside this script is for, and it is the same shape
+        # gateway/deploy/validator/shnig/ uses for the published gateway's
+        # standalone build context.
+        #
+        # The vendored bytes cannot silently rot: tools/shnig's
+        # TestCommittedKitPackageMatchesBuild asserts, on every `make check`,
+        # that they equal a fresh deterministic `go run ./tools/shnig` build at
+        # the manifest-pinned version. Do not hand-edit the tgz.
+        vendored_src="$REPO/tools/kitassets/shnig/$2"
         local_src="$REPO/dist/shnig/$2"
+        if [ -s "$vendored_src" ]; then
+          log "IG (vendored): $2"
+          cp "$vendored_src" "$DIST/$1/$2.tmp"
+          mv "$DIST/$1/$2.tmp" "$DIST/$1/$2"
+          return 0
+        fi
         if [ ! -s "$local_src" ]; then
           if [ ! -d "$REPO/tools/shnig" ]; then
-            die "shn.fhir.carry: no local source (tools/shnig absent — a kit-repo snapshot checkout?) and no pre-built $local_src. Build from a full monorepo checkout ('make shnig-build'), or ship a pre-built shn.fhir.carry-*.tgz at that path."
+            die "shn.fhir.carry: no vendored copy at $vendored_src, no pre-built $local_src, and tools/shnig is absent (a kit-repo snapshot checkout?). The snapshot is supposed to CARRY tools/kitassets/shnig/$2 — re-cut it from a monorepo main that has that file committed."
           fi
           log "shn.fhir.carry not yet built locally — building via tools/shnig (see 'make shnig-build')"
           ( cd "$REPO" && go run ./tools/shnig ) || die "tools/shnig build failed — run 'make shnig-build' manually and retry"
