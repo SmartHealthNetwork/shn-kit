@@ -28,6 +28,13 @@ export interface KitConfig {
   jreDir?: string; // --jre-dir; "" / unset => shnkitd's own per-arch default ({java-assets}/jre-{GOOS}-{GOARCH})
   manifest?: string; // --manifest (versions.json path); default <resourcesPath>/versions.json when packaged
   releasesUrl?: string; // --releases-url; "" / unset => shnkitd's own default feed
+  // validatorLine / additionalValidatorLines are the packaged Kit's ONLY way
+  // to reach shnkitd's per-line validator lanes. Without them a packaged Kit
+  // boots the canonical 2.0 lane alone, so the gateway has no lane for any
+  // other line and every live bridged run refuses with "no configured
+  // validator lane" — the defect that shipped in v0.10.1.
+  validatorLine?: string; // --validator-line; "" / unset => shnkitd's own default ("2.0")
+  additionalValidatorLines?: string; // --additional-validator-lines (CSV); "" / unset => no extra lanes
   bridgeDemoHolder?: string; // --bridge-demo-holder; "" / unset => shnkitd's own default ("bridge-demo")
   bridgeDemoRefuseHolder?: string; // --bridge-demo-refuse-holder; "" / unset => shnkitd's own default ("bridge-demo-refuse")
 }
@@ -51,6 +58,8 @@ const OPTIONAL_STRING_FIELDS = [
   'jreDir',
   'manifest',
   'releasesUrl',
+  'validatorLine',
+  'additionalValidatorLines',
   'bridgeDemoHolder',
   'bridgeDemoRefuseHolder',
 ] as const;

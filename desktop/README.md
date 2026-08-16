@@ -111,7 +111,8 @@ resources/
 ```
 
 **Packaged `kit.config.json` carries only the non-path knobs** — `discoveryUrl`,
-`accountsUrl` (or `secretsDir`), `releasesUrl`, and `javaAssets` as a *relative*
+`accountsUrl` (or `secretsDir`), `releasesUrl`, `additionalValidatorLines`, and
+`javaAssets` as a *relative*
 marker rather than an absolute path. Every packaged **path** (`gatewayBin`,
 `kitdBin`, `uiDir`, `manifest`, and the resolved `javaAssets` directory) is instead
 defaulted from Electron's own `process.resourcesPath` at **runtime**, by
@@ -121,6 +122,23 @@ location varies per machine. `gatewayBin` defaults to `{resourcesPath}/shn-gatew
 exactly the way `kitdBin` already defaulted to `{resourcesPath}/shnkitd`.
 `dev.config.json` is unaffected: dev mode has no `resourcesPath` to default from,
 so it must still set every path explicitly.
+
+**Every knob in that file needs a `buildArgs` row in `src/daemon.ts`.** A key the
+JSON sets but `buildArgs` never emits is silently dropped — `shnkitd` only ever
+sees the argv the shell builds. That is exactly how v0.10.1 shipped: the
+daemon had `--additional-validator-lines`, the dev path used it, and the packaged
+app had no way to pass it, so the Bridging destination's live arm was unreachable
+in every installed copy of v0.10.1. `test/kitpackagingwf` now fails `make check`
+on that shape — a new `shnkitd` flag must either get a pass-through or be added
+to that test's skip list with the reason it is deliberately unreachable.
+
+`additionalValidatorLines` (`"2.1,2.2"` as shipped) is what makes cross-version
+bridging work in a packaged install: the gateway refuses to bridge to a line it
+has no configured validator lane for. Those lanes boot **cold** — no package-time
+prewarmed H2 exists for any line but 2.0 — so `shnkitd` starts them in the
+background *after* the core four children are ready and runs have gone live
+(`kitd.Stack.DeferredChildren`). Launch time is unchanged; each lane's first
+index takes 10-15 minutes and then persists in the state dir forever.
 
 **Installer shapes:** mac ships one **universal `.dmg`** (Go binaries
 lipo-merged; both per-arch JREs ride along since the JRE itself cannot be

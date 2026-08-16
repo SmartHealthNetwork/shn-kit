@@ -32,9 +32,11 @@ package kitd
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/SmartHealthNetwork/shn-kit/supervisor"
@@ -159,12 +161,54 @@ func ensureWarLink(workDir, warSrc string) (string, error) {
 	return dst, nil
 }
 
+// fileURLFromSlashPath turns an ABSOLUTE, slash-separated filesystem path into
+// a well-formed file:// URL, percent-escaping everything a URI path may not
+// carry literally.
+//
+// This exists because HAPI parses hapi.fhir.implementationguides.*.packageUrl
+// as a java.net.URI: a raw space (or any other reserved character) in the path
+// aborts the child's boot with
+//
+//	HAPI-2031: Error loading "file:///…/SHN Kit.app/…": Illegal character in path
+//
+// and the Kit's own shipped install path — "/Applications/SHN Kit.app" — has a
+// space in it. Escaping (not renaming the app, not staging the IGs elsewhere)
+// is the fix, because every candidate staging root has the same problem: the
+// per-user state dir is "~/Library/Application Support/SHN Kit/kit".
+//
+// A Windows path arrives here as "C:/…" (already slash-converted by the
+// caller); the leading slash it gains is what makes "file:///C:/…" — the
+// correct Windows file-URL form — rather than reading "C:" as an authority.
+// A space-free POSIX path is byte-identical to the plain "file://"+path
+// concatenation this replaced, so the prewarmed default lane's config does not
+// move.
+func fileURLFromSlashPath(p string) string {
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	u := url.URL{Scheme: "file", Path: p}
+	return u.String()
+}
+
+// hapiIGPackageURL is fileURLFromSlashPath over a native (possibly
+// backslash-separated) absolute path.
+func hapiIGPackageURL(absPath string) string {
+	return fileURLFromSlashPath(filepath.ToSlash(absPath))
+}
+
 // hapiSpringConfig builds the SPRING_APPLICATION_JSON value for a HAPI child:
 // the datasource pointed at h2Dir, listening on port, IG indexing for igs
 // (file:// URLs resolved against assetsDir), and — only for the data
 // server — URL_BASED multitenancy + partitioning flags + operated CQL
 // (the pinned shape from tools/kitassets/build.sh's validator_config/
 // data_config functions).
+//
+// spring.datasource.url deliberately keeps h2Dir VERBATIM: it is a JDBC URL,
+// not a URI — H2 reads everything after "jdbc:h2:file:" as a plain filesystem
+// path and accepts spaces, which is why the packaged Kit's
+// "~/Library/Application Support/SHN Kit/kit/…" H2 stores have always opened
+// (proven in every shipped release, including the v0.10.1 fresh-machine run
+// that hit this defect on the IG URLs alone). Percent-escaping it would BREAK it.
 func hapiSpringConfig(assetsDir, h2Dir string, port int, igs []ig, dataServer bool) (string, error) {
 	absAssets, err := filepath.Abs(assetsDir)
 	if err != nil {
@@ -178,7 +222,7 @@ func hapiSpringConfig(assetsDir, h2Dir string, port int, igs []ig, dataServer bo
 	}
 	for _, g := range igs {
 		base := "hapi.fhir.implementationguides." + g.key
-		cfg[base+".packageUrl"] = "file://" + filepath.Join(absAssets, g.dir, g.name+"-"+g.version+".tgz")
+		cfg[base+".packageUrl"] = hapiIGPackageURL(filepath.Join(absAssets, g.dir, g.name+"-"+g.version+".tgz"))
 		cfg[base+".name"] = g.name
 		cfg[base+".version"] = g.version
 	}

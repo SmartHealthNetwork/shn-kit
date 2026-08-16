@@ -87,12 +87,36 @@ The packaged Electron shell (`../desktop/`) resolves its own configuration from
 a JSON file — `kit.config.json` when packaged, `dev.config.json` in a dev
 checkout (the `SHN_KIT_CONFIG` env var overrides the path). It carries the
 non-path knobs (`discoveryUrl`; `accountsUrl` or `secretsDir`; `releasesUrl`;
-and a *relative* `javaAssets` marker) — every packaged **path** (the
+`additionalValidatorLines`; and a *relative* `javaAssets` marker) — every
+packaged **path** (the
 gateway/kitd binaries, the UI dir, the manifest, the resolved Java-assets dir)
 is instead defaulted from Electron's own `process.resourcesPath` at runtime,
 never baked into the JSON, since an install path varies per machine. See
 `../desktop/src/config.ts` for the full shape and `../desktop/README.md`'s
 "Packaging" section for exactly what lands under `Resources/`.
+
+A knob in that JSON reaches `shnkitd` **only** through a `buildArgs` row in
+`../desktop/src/daemon.ts`. `test/kitpackagingwf` fails the build on a flag
+with no such row, so a packaged Kit cannot again ship a daemon capability it
+has no way to switch on.
+
+### Extra validator lanes boot in the background
+
+`--additional-validator-lines` children are **not** in the blocking start loop.
+Only line 2.0 has a package-time prewarmed H2, so every other lane indexes its
+full IG set from scratch — 10-15 minutes apiece — and blocking the boot on that
+would leave a freshly installed Kit unable to run any scenario for half an hour.
+`kitd.BuildStack` returns them as `Stack.DeferredChildren`; `cmd/shnkitd` starts
+them sequentially in a goroutine once the core four are ready and `SetRunner`
+has fired. Their H2 stores persist, so the wait is once per line, ever. A lane
+that fails to start is reported on the event stream and does **not** fail the
+boot: cross-version runs needing that line refuse, everything else works.
+
+During that first warm-up the gateway already has the lane's URL in its env, so
+it treats the line as configured and a cross-version run started too early fails
+at `$validate` (fail-closed, but the message names a validator outage rather
+than a lane that is still indexing). `GET /api/status` shows the lane's child
+still starting — let it finish before the first cross-version run.
 
 ## The daemon's HTTP+SSE API
 

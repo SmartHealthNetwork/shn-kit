@@ -45,6 +45,8 @@ describe('buildArgs', () => {
       jreDir: '/opt/shn/java/jre-darwin-arm64',
       manifest: '/opt/shn/versions.json',
       releasesUrl: 'https://api.github.com/repos/SmartHealthNetwork/shn-kit/releases/latest',
+      validatorLine: '2.0',
+      additionalValidatorLines: '2.1,2.2',
       bridgeDemoHolder: 'bridge-demo',
       bridgeDemoRefuseHolder: 'bridge-demo-refuse',
       apiAddr: '127.0.0.1:5555',
@@ -63,12 +65,43 @@ describe('buildArgs', () => {
       '--jre-dir', '/opt/shn/java/jre-darwin-arm64',
       '--manifest', '/opt/shn/versions.json',
       '--releases-url', 'https://api.github.com/repos/SmartHealthNetwork/shn-kit/releases/latest',
+      '--validator-line', '2.0',
+      '--additional-validator-lines', '2.1,2.2',
       '--bridge-demo-holder', 'bridge-demo',
       '--bridge-demo-refuse-holder', 'bridge-demo-refuse',
       '--ui-dir', '/opt/shn/ui',
       '--api-addr', '127.0.0.1:5555',
       '--state-dir', '/state',
     ]);
+  });
+
+  // Regression pin for the packaged-Kit shape that v0.10.1 shipped broken: the
+  // as-shipped kit.config.json (.github/workflows/kit-packaging.yml) carries
+  // additionalValidatorLines so the bridge's target lane exists. Without a
+  // buildArgs row for it the value is silently dropped, shnkitd boots only
+  // the canonical lane, and every live bridged run refuses with "no
+  // configured validator lane" — which is exactly what the published v0.10.1
+  // installer did. Asserted on the ARG LIST (adjacent flag+value), because
+  // that list is the only thing that reaches the daemon.
+  it('threads --additional-validator-lines through when the config demands the bridge lanes', () => {
+    const cfg: KitConfig = { ...cfgBase, javaAssets: '/opt/shn/java', additionalValidatorLines: '2.1,2.2' };
+    const args = buildArgs(cfg, '/state');
+    const idx = args.indexOf('--additional-validator-lines');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe('2.1,2.2');
+  });
+
+  it('threads --validator-line through when set', () => {
+    const args = buildArgs({ ...cfgBase, validatorLine: '2.2' }, '/state');
+    const idx = args.indexOf('--validator-line');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe('2.2');
+  });
+
+  it('omits --validator-line/--additional-validator-lines when unset (shnkitd keeps its single-lane default)', () => {
+    const args = buildArgs(cfgBase, '/state');
+    expect(args).not.toContain('--validator-line');
+    expect(args).not.toContain('--additional-validator-lines');
   });
 
   it('secretsDir set + accountsUrl unset -> no --accounts flag, --secrets instead', () => {

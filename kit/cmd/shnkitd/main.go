@@ -595,6 +595,45 @@ func main() {
 			BFFURL:                 stack.BRProviderURL, // "" when no trio
 		}))
 
+		// Extra validator lanes (--additional-validator-lines) start HERE,
+		// after SetRunner — off the critical path, in the background. See
+		// kitd.Stack.DeferredChildren for the full reasoning; the short
+		// version is that every extra lane boots cold (10-15 min of IG
+		// indexing, once, then its H2 persists), and the packaged Kit now
+		// ships two of them on so live bridged runs work out of the box
+		// (the v0.10.1 bridging defect). Starting them in the blocking loop above would have
+		// stalled SetRunner — and so every scenario — for that whole wait on
+		// a fresh install.
+		//
+		// Sequential inside the goroutine, deliberately: two JVMs each
+		// indexing a full IG set in parallel contend for exactly the CPU and
+		// disk the indexing is bound by, and this is a laptop, not a build
+		// farm.
+		//
+		// A failure here is NOT a boot failure — no close(bootFailed), no
+		// cancel(). The Kit is fully usable without the optional lane: the
+		// eight scenarios, the probes and the engine exhibits never touch it,
+		// and a bridged run to an unlaned line refuses with the gateway's own
+		// fail-closed message rather than validating against the wrong IG
+		// version. Killing a working Kit over an optional demo lane would be
+		// the wrong trade.
+		if len(stack.DeferredChildren) > 0 {
+			go func() {
+				for _, spec := range stack.DeferredChildren {
+					if ctx.Err() != nil {
+						return
+					}
+					if err := sup.Start(ctx, spec); err != nil {
+						if ctx.Err() != nil {
+							return
+						}
+						bus.Emit(event.Event{Type: event.TypeChild, Child: spec.Name,
+							Detail: "start failed: " + err.Error() + " — cross-version runs needing this line will refuse; the rest of the Kit is unaffected"})
+					}
+				}
+			}()
+		}
+
 		b, ok := m.Bundle()
 		if !ok {
 			// A Reset raced the boot window: Provisioned() fired, then the bundle

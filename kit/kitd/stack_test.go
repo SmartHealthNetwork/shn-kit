@@ -935,9 +935,9 @@ func TestBuildStack_NonDefaultLine_SuffixedEnvNoDoubleBoot(t *testing.T) {
 
 // TestBuildStack_AdditionalValidatorLines_ExtraChildrenAndEnv is the positive
 // case for the config-gated feature: one additional line boots exactly one
-// more child (5 total), ordered AFTER the core four, with its own port/URL
-// and its own suffixed env var — while the primary line's wiring (bare
-// FHIR_VALIDATE_URL) is untouched.
+// more child, carried in DeferredChildren (never in the blocking Children
+// list), with its own port/URL and its own suffixed env var — while the
+// primary line's wiring (bare FHIR_VALIDATE_URL) is untouched.
 func TestBuildStack_AdditionalValidatorLines_ExtraChildrenAndEnv(t *testing.T) {
 	stack, err := BuildStack(trioCfg(t, func(c *StackConfig) {
 		c.AdditionalValidatorLines = []string{"2.2"}
@@ -945,14 +945,17 @@ func TestBuildStack_AdditionalValidatorLines_ExtraChildrenAndEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	wantNames := []string{"gateway", "validator", "data-server", "br-provider", "validator-2.2"}
+	wantNames := []string{"gateway", "validator", "data-server", "br-provider"}
 	if len(stack.Children) != len(wantNames) {
-		t.Fatalf("Children = %d, want %d: %+v", len(stack.Children), len(wantNames), stack.Children)
+		t.Fatalf("Children = %d, want %d (the core four only): %+v", len(stack.Children), len(wantNames), stack.Children)
 	}
 	for i, want := range wantNames {
 		if stack.Children[i].Name != want {
 			t.Errorf("Children[%d].Name = %q, want %q", i, stack.Children[i].Name, want)
 		}
+	}
+	if len(stack.DeferredChildren) != 1 || stack.DeferredChildren[0].Name != "validator-2.2" {
+		t.Fatalf("DeferredChildren = %+v, want exactly [validator-2.2]", stack.DeferredChildren)
 	}
 	extraURL, ok := stack.AdditionalValidatorURLs["2.2"]
 	if !ok || extraURL == "" {
@@ -967,8 +970,54 @@ func TestBuildStack_AdditionalValidatorLines_ExtraChildrenAndEnv(t *testing.T) {
 	if !hasEnv(stack.Children[0].Env, "FHIR_VALIDATE_URL="+stack.ValidatorURL+"/fhir") {
 		t.Errorf("gateway Env = %q, want the primary line's bare FHIR_VALIDATE_URL untouched", stack.Children[0].Env)
 	}
-	if stack.Children[4].ReadyTimeout != javaReadyTimeoutCold {
-		t.Errorf("Children[4] (validator-2.2) ReadyTimeout = %v, want the cold bound", stack.Children[4].ReadyTimeout)
+	if stack.DeferredChildren[0].ReadyTimeout != javaReadyTimeoutCold {
+		t.Errorf("validator-2.2 ReadyTimeout = %v, want the cold bound", stack.DeferredChildren[0].ReadyTimeout)
+	}
+}
+
+// TestBuildStack_AdditionalValidatorLines_NeverBlockTheCoreBoot is the
+// launch-time guard that lets the packaged Kit ship the bridge lanes ON by
+// default (the v0.10.1 bridging defect). Each extra lane boots COLD — 10-15 minutes of IG
+// indexing, per tools/kitassets/build.sh's own measured prewarm cost — and
+// shnkitd's start loop blocks on every Children entry's ready probe before it
+// calls SetRunner. Putting the lanes in Children would therefore mean no
+// scenario could run for ~half an hour after a fresh install: a worse
+// regression than the bug being fixed. They go in DeferredChildren, which
+// shnkitd starts in the background AFTER runs go live.
+func TestBuildStack_AdditionalValidatorLines_NeverBlockTheCoreBoot(t *testing.T) {
+	stack, err := BuildStack(trioCfg(t, func(c *StackConfig) {
+		c.AdditionalValidatorLines = []string{"2.1", "2.2"}
+	}))
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	for _, c := range stack.Children {
+		if c.ReadyTimeout == javaReadyTimeoutCold {
+			t.Errorf("blocking child %q carries the COLD ready bound (%v) — a cold child in Children stalls SetRunner for the whole indexing wait",
+				c.Name, c.ReadyTimeout)
+		}
+	}
+	wantDeferred := []string{"validator-2.1", "validator-2.2"}
+	if len(stack.DeferredChildren) != len(wantDeferred) {
+		t.Fatalf("DeferredChildren = %+v, want %v", stack.DeferredChildren, wantDeferred)
+	}
+	for i, want := range wantDeferred {
+		if stack.DeferredChildren[i].Name != want {
+			t.Errorf("DeferredChildren[%d].Name = %q, want %q", i, stack.DeferredChildren[i].Name, want)
+		}
+	}
+}
+
+// TestBuildStack_NoAdditionalLines_NoDeferredChildren pins the default: with
+// no extra lines configured, DeferredChildren is empty, so shnkitd's
+// background-start goroutine never even launches.
+func TestBuildStack_NoAdditionalLines_NoDeferredChildren(t *testing.T) {
+	stack, err := BuildStack(trioCfg(t, func(_ *StackConfig) {}))
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	if len(stack.DeferredChildren) != 0 {
+		t.Errorf("DeferredChildren = %+v, want empty", stack.DeferredChildren)
 	}
 }
 

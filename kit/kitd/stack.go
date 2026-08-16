@@ -141,7 +141,45 @@ type IngressClient struct {
 
 // Stack is BuildStack's output.
 type Stack struct {
-	Children    []supervisor.ChildSpec
+	// Children are the BLOCKING children: shnkitd starts them in order and
+	// waits for each one's ready probe before the next, and only calls
+	// SetRunner (i.e. lets scenarios run at all) once the last one is ready.
+	Children []supervisor.ChildSpec
+
+	// DeferredChildren are started in the BACKGROUND, after Children are all
+	// ready and runs have gone live. Today this is exactly the extra
+	// per-line validator lanes (AdditionalValidatorLines).
+	//
+	// They are separated because they are the only children that boot COLD:
+	// no line other than defaultContractLine has a package-time prewarmed H2,
+	// so each one indexes its full IG set from scratch — the 10-15 minutes
+	// tools/kitassets/build.sh's prewarm step exists to spare users, and the
+	// reason javaReadyTimeoutCold is 20 minutes. Blocking the core boot on
+	// that would mean a freshly-installed Kit could run no scenario at all
+	// for half an hour, so the wait is moved off the critical path: the Kit
+	// launches exactly as fast as it did with no lanes configured, the lanes
+	// warm up behind it, and their H2 stores persist so it is a once-ever
+	// cost per line.
+	//
+	// KNOWN ROUGH EDGE, stated plainly rather than papered over: the gateway
+	// child is handed FHIR_VALIDATE_URL_<line> for every configured lane at
+	// BOOT, and gateway/app/app.go builds those validators lazily (no dial at
+	// construction), so from the gateway's point of view a still-indexing lane
+	// is already "laned". A cross-version run attempted during that first
+	// warm-up window therefore selects the bridge and then fails at $validate
+	// with a validator-outage error, rather than with the cleaner "no
+	// configured validator lane" refusal. It fails CLOSED either way — nothing
+	// is validated against the wrong IG version and nothing is fabricated —
+	// but the message names the wrong cause. The condition is transient and
+	// once-per-install; GET /api/status shows the lane's child still starting
+	// for the duration. Making the refusal name the real cause means teaching
+	// the gateway lane readiness, which is a gateway-side change, not a kit
+	// one.
+	//
+	// A DeferredChildren start failure is NOT a boot failure: the Kit stays
+	// fully usable without the optional lane (the v0.10.1 bridging defect).
+	DeferredChildren []supervisor.ChildSpec
+
 	Driver      scenariodriver.Config // IngressURL/IngressBase/ClientID/Key/ProviderDataURL/PHGURL/BFFURL filled
 	ObserverURL string                // http://127.0.0.1:<port>/events
 	// ObserverHealthURL is the observer hub's GET /health — the relay drain
@@ -493,17 +531,18 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	// multi-minute first-launch wait — start after it and become the visible
 	// wait. This is safe because runs only go live once EVERY child (including
 	// the trio) has passed its ready probe (see cmd/shnkitd's start loop +
-	// SetRunner). Any AdditionalValidatorLines children are appended AFTER
-	// this core four — they are config-gated and (unlike the primary
-	// validator) never prewarmed, so they carry the real multi-minute-or-more
-	// cold-boot wait; putting them last keeps the core four's fast/prewarmed
-	// boot-screen timing unaffected by an optional feature nobody configured
-	// (no extra validators boot by default — zero of them exist unless
-	// AdditionalValidatorLines is set). cfg.ExtraChildren still follows all of
-	// that. The supervisor starts children sequentially, blocking on each
-	// one's ready probe, so this order is also the staged boot screen's order,
-	// for free.
+	// SetRunner). cfg.ExtraChildren still follows all of that. The supervisor
+	// starts children sequentially, blocking on each one's ready probe, so
+	// this order is also the staged boot screen's order, for free.
+	//
+	// AdditionalValidatorLines children are deliberately NOT in this list —
+	// they go to Stack.DeferredChildren and start in the background once runs
+	// are already live (see that field's doc for why: they are the only
+	// children that boot cold, at 10-15 minutes of IG indexing apiece, and
+	// the packaged Kit now ships two of them ON so bridging works out of the
+	// box — the v0.10.1 bridging defect).
 	var children []supervisor.ChildSpec
+	var deferredChildren []supervisor.ChildSpec
 	children = append(children, gatewaySpec)
 	if trio {
 		validatorSpec, err := BuildValidatorChildSpec(cfg.JavaAssetsDir, cfg.JREDir, cfg.StateDir, validatorPort, runtime.GOOS, resolvedLine)
@@ -525,7 +564,7 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 			if err != nil {
 				return Stack{}, err
 			}
-			children = append(children, extraSpec)
+			deferredChildren = append(deferredChildren, extraSpec)
 		}
 	}
 	children = append(children, cfg.ExtraChildren...)
@@ -544,6 +583,7 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 
 	stack := Stack{
 		Children:          children,
+		DeferredChildren:  deferredChildren,
 		ObserverURL:       observerURL,
 		ObserverHealthURL: observerHealthURL,
 		GatewayURL:        gatewayURL,

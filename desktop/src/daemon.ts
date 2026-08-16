@@ -38,6 +38,12 @@ export function buildArgs(cfg: KitConfig, stateDir: string): string[] {
   if (cfg.jreDir) args.push('--jre-dir', cfg.jreDir);
   if (cfg.manifest) args.push('--manifest', cfg.manifest);
   if (cfg.releasesUrl) args.push('--releases-url', cfg.releasesUrl);
+  // The validator-lane rows. These were the missing pass-through that
+  // made the packaged Kit's live bridged runs unreachable: shnkitd has both
+  // flags, kit.config.json now ships additionalValidatorLines, and without
+  // these two lines the value never reaches the daemon.
+  if (cfg.validatorLine) args.push('--validator-line', cfg.validatorLine);
+  if (cfg.additionalValidatorLines) args.push('--additional-validator-lines', cfg.additionalValidatorLines);
   if (cfg.bridgeDemoHolder) args.push('--bridge-demo-holder', cfg.bridgeDemoHolder);
   if (cfg.bridgeDemoRefuseHolder) args.push('--bridge-demo-refuse-holder', cfg.bridgeDemoRefuseHolder);
   args.push('--ui-dir', cfg.uiDir);

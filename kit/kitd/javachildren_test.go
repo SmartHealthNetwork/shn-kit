@@ -7,11 +7,123 @@ package kitd
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// ---- IG package file:// URLs (the v0.10.1 cold-lane defect) -----------------------------
+
+// TestFileURLFromSlashPath_Table pins the escaping rules directly, including
+// the Windows drive-letter shape that no darwin/linux CI run can reach through
+// a real filesystem path.
+func TestFileURLFromSlashPath_Table(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			name: "space-free POSIX path is byte-identical to the pre-fix concatenation",
+			in:   "/assets/igs-validator/hl7.fhir.us.core-6.1.0.tgz",
+			want: "file:///assets/igs-validator/hl7.fhir.us.core-6.1.0.tgz",
+		},
+		{
+			name: "the shipped macOS install path (the HAPI-2031 case)",
+			in:   "/Applications/SHN Kit.app/Contents/Resources/java/igs-validator/hl7.fhir.us.davinci-cdex-2.1.0.tgz",
+			want: "file:///Applications/SHN%20Kit.app/Contents/Resources/java/igs-validator/hl7.fhir.us.davinci-cdex-2.1.0.tgz",
+		},
+		{
+			name: "a Windows drive-letter path gains the third slash and escapes its spaces",
+			in:   "C:/Program Files/SHN Kit/resources/java/igs-validator/x-1.0.0.tgz",
+			want: "file:///C:/Program%20Files/SHN%20Kit/resources/java/igs-validator/x-1.0.0.tgz",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fileURLFromSlashPath(tc.in); got != tc.want {
+				t.Errorf("fileURLFromSlashPath(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHAPIIGPackageURLs_SpaceInInstallPath is the regression pin for issue
+// the v0.10.1 cold-lane defect: the Kit installs to "/Applications/SHN Kit.app", whose
+// SPACE reached HAPI's IG loader inside an unescaped file:// URL and killed
+// every COLD validator lane with
+//
+//	HAPI-2031: Illegal character in path at index 24
+//
+// The default 2.0 lane masked it (it boots from the package-time prewarmed H2
+// and never dereferences a packageUrl at runtime), so only the extra bridging
+// lanes — every one of which boots cold by design — ever hit it. Asserted over
+// BOTH Java HAPI children, since hapiSpringConfig serves both.
+func TestHAPIIGPackageURLs_SpaceInInstallPath(t *testing.T) {
+	stateDir := t.TempDir()
+	// The real shape, not a synthetic one: an app bundle whose directory name
+	// contains a space, exactly as electron-builder ships it.
+	assetsDir := filepath.Join(t.TempDir(), "SHN Kit.app", "Contents", "Resources", "java")
+	if err := os.MkdirAll(assetsDir, 0700); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	absAssets, err := filepath.Abs(assetsDir)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+
+	// Line 2.1 — a COLD lane (never prewarmed), i.e. the exact child that
+	// crashlooped in the published v0.10.1 installer.
+	validatorSpec, err := BuildValidatorChildSpec(assetsDir, "/opt/jre", stateDir, 18080, "darwin", "2.1")
+	if err != nil {
+		t.Fatalf("BuildValidatorChildSpec: %v", err)
+	}
+	dataSpec, err := BuildDataServerChildSpec(assetsDir, "/opt/jre", stateDir, 18081, "darwin")
+	if err != nil {
+		t.Fatalf("BuildDataServerChildSpec: %v", err)
+	}
+
+	for _, tc := range []struct {
+		child string
+		env   []string
+		igs   []ig
+		dir   string
+	}{
+		{"validator-2.1", validatorSpec.Env, kitdIGPinsValidator("2.1"), "igs-validator"},
+		{"data-server", dataSpec.Env, kitdIGPinsData("2.0"), "igs-data"},
+	} {
+		t.Run(tc.child, func(t *testing.T) {
+			cfg := springConfig(t, tc.env)
+			if len(tc.igs) == 0 {
+				t.Fatalf("no IG pins for %s — test would assert nothing", tc.child)
+			}
+			for _, g := range tc.igs {
+				key := "hapi.fhir.implementationguides." + g.key + ".packageUrl"
+				got := cfg[key]
+				// (1) No raw space survives into the URL — the literal
+				// HAPI-2031 trigger.
+				if strings.Contains(got, " ") {
+					t.Errorf("%s = %q contains a raw space — HAPI rejects it with HAPI-2031", key, got)
+				}
+				// (2) The space is percent-escaped, not dropped or replaced.
+				if !strings.Contains(got, "SHN%20Kit.app") {
+					t.Errorf("%s = %q, want the install dir's space percent-escaped as SHN%%20Kit.app", key, got)
+				}
+				// (3) It is a well-formed file URL that round-trips back to
+				// the real on-disk path — escaping that loses the path would
+				// be a different bug, not a fix.
+				u, perr := url.Parse(got)
+				if perr != nil {
+					t.Fatalf("%s = %q: not parseable as a URL: %v", key, got, perr)
+				}
+				if u.Scheme != "file" {
+					t.Errorf("%s = %q: scheme = %q, want file", key, got, u.Scheme)
+				}
+				wantPath := filepath.Join(absAssets, tc.dir, g.name+"-"+g.version+".tgz")
+				if u.Path != wantPath {
+					t.Errorf("%s round-trips to %q, want the real path %q", key, u.Path, wantPath)
+				}
+			}
+		})
+	}
+}
 
 // ---- command path (GOOS-parameterized) ----------------------------------------
 
