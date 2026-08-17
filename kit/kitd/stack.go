@@ -201,9 +201,10 @@ type Stack struct {
 	// GatewayEnv is the FULL env BuildStack assembled for the gateway child —
 	// value-identical to the gateway ChildSpec's own Env. Exported for ONE
 	// consumer: shnkitd's bridging demo toggle, which restarts the gateway
-	// with this env plus (or minus) the SHN_DEMO_EGRESS_NATIVE_LINES knob and
-	// so needs the exact baseline to rebuild from, never a re-derivation that
-	// could drift from what the child is actually running.
+	// with this env plus (or minus) the SHN_DEMO_EGRESS_NATIVE_LINES and
+	// SHN_DEMO_EDGE_CAPTURE knobs and so needs the exact baseline to rebuild
+	// from, never a re-derivation that could drift from what the child is
+	// actually running.
 	//
 	// SECURITY: this carries secrets-adjacent values (SHN_SECRETS, the SMART
 	// quad's FHIR_CLIENT_KEY path, INGRESS_CLIENTS_FILE). It must NEVER be

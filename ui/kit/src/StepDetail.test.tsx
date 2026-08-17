@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   StepDetail,
@@ -15,14 +15,60 @@ import {
   CARRY_REFUSAL_NOTE,
   LEG_DOWNGRADE_NOTE,
   TRANSFORM_CARD_NARRATION,
+  XFORM_EXPANDER_LABEL,
+  CAPTURE_POSTURE_NOTE,
+  CAPTURE_UNAVAILABLE_NOTE,
+  CAPTURE_ERROR_NOTE,
+  DemoStepDetail,
+  demoStepFromRecord,
+  DEMO_REFUSAL_NARRATION,
+  DEMO_CARRY_NARRATION,
+  DEMO_RESTORED_VERDICT,
+  DEMO_REFUSAL_WHAT,
+  DEMO_CARRY_WHAT,
+  DEMO_INPUT_PANE_HEADER,
+  DEMO_OUTPUT_PANE_HEADER,
   relayedStatusLine,
   directionRows,
 } from './StepDetail';
 import { buildRunStory } from './inspect';
 import type { Step } from './inspect';
-import type { KitEvent } from './types';
+import type { BridgingCapture, DemoRecord, KitEvent } from './types';
+import { LOCAL_DEMO_FRAMING } from './bridgingmeta';
 import ehrUc03 from './fixtures/run-ehr-uc03.json';
 import conformantUc03 from './fixtures/run-conformant-uc03.json';
+
+// vi.mock factories are hoisted above the rest of the module, so ApiError
+// must be created through vi.hoisted (mirrors BridgingPanel.test.tsx/
+// UCCards.test.tsx/WatchPanel.test.tsx).
+const { ApiError } = vi.hoisted(() => {
+  class ApiError extends Error {
+    status: number;
+    constructor(message: string, status: number) {
+      super(message);
+      this.name = 'ApiError';
+      this.status = status;
+    }
+  }
+  return { ApiError };
+});
+
+vi.mock('./api', () => ({
+  getBridgingCapture: vi.fn(),
+  ApiError,
+}));
+
+import * as api from './api';
+
+// File-wide: every test that exercises the wire-run expander or the carry
+// demonstration's "zero fetches" claim reads api.getBridgingCapture's own
+// mock call count — reset it before every test, not just inside the
+// expander's own describe block, so an earlier test's fetch never leaks
+// into a later assertion (mirrors BridgingPanel.test.tsx's top-level
+// beforeEach).
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 const ehrEvents = ehrUc03 as unknown as KitEvent[];
 const conformantEvents = conformantUc03 as unknown as KitEvent[];
@@ -712,6 +758,144 @@ describe('StepDetail — TransformCard', () => {
 });
 
 // ---------------------------------------------------------------------------
+// TransformExpander — the on-demand "Show transformation" expander: collapsed
+// by default, fetches the gateway's edge capture ONLY once expanded, caches
+// the result across collapse/re-expand, and slots between the loss-report
+// block and the validator-posture line.
+// ---------------------------------------------------------------------------
+
+function bridgingCaptureFixture(overrides: Partial<BridgingCapture> = {}): BridgingCapture {
+  return {
+    correlationId: 'c-t1',
+    legType: 'dtr-questionnaire-fetch',
+    contract: 'pa.dtr',
+    from: '2.2',
+    to: '2.1',
+    chain: [{ module: 'pa.dtr 2.2->2.1', from: '2.2', to: '2.1', class: 'carry' }],
+    lossReports: [
+      {
+        module: 'pa.dtr 2.2->2.1',
+        source: '2.2',
+        target: '2.1',
+        carried: [{ path: CARRY_PATH_MARKER, detail: 'itemWeight extension carried; source line 2.2' }],
+      },
+    ],
+    before: { resourceType: 'QuestionnaireResponse', id: 'built-2.2' },
+    after: { resourceType: 'QuestionnaireResponse', id: 'sent-2.1' },
+    capturedAt: '2026-08-16T00:00:00Z',
+    ...overrides,
+  };
+}
+
+describe('StepDetail — TransformCard\'s on-demand transformation expander (lazy edge-capture fetch)', () => {
+  it('is collapsed by default with the pinned expander label, and fetches nothing until expanded', () => {
+    render(<StepDetail step={bridgedLegStep()} view="clinical" />);
+
+    expect(screen.getByText(XFORM_EXPANDER_LABEL)).toBeDefined();
+    expect(XFORM_EXPANDER_LABEL).toBe('Show transformation');
+    expect(document.querySelector('.xform-diff')).toBeNull();
+    expect(api.getBridgingCapture).not.toHaveBeenCalled();
+  });
+
+  it('expanding fetches exactly once (fetch spy 0 -> 1); a 200 renders XformDiff with labels built from the capture\'s contract/lines, plus the pinned posture note', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getBridgingCapture).mockResolvedValueOnce(bridgingCaptureFixture());
+    render(<StepDetail step={bridgedLegStep()} view="clinical" />);
+
+    expect(api.getBridgingCapture).toHaveBeenCalledTimes(0);
+    await user.click(screen.getByText(XFORM_EXPANDER_LABEL));
+    expect(api.getBridgingCapture).toHaveBeenCalledTimes(1);
+    expect(api.getBridgingCapture).toHaveBeenCalledWith('c-t1');
+
+    expect(await screen.findByText('Before — as built (pa.dtr 2.2)')).toBeDefined();
+    expect(screen.getByText('After — as sent (pa.dtr 2.1)')).toBeDefined();
+    expect(document.querySelector('.xform-diff')).not.toBeNull();
+
+    expect(screen.getByText(CAPTURE_POSTURE_NOTE)).toBeDefined();
+    expect(CAPTURE_POSTURE_NOTE).toBe(
+      "Captured at your gateway's edge as this leg left — an inspection view, available while the compatibility simulation is on. This is not an audit or wire record.",
+    );
+  });
+
+  it('a 404 renders CAPTURE_UNAVAILABLE_NOTE, never an XformDiff', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getBridgingCapture).mockRejectedValueOnce(new ApiError('no capture for this leg', 404));
+    render(<StepDetail step={bridgedLegStep()} view="clinical" />);
+
+    await user.click(screen.getByText(XFORM_EXPANDER_LABEL));
+
+    expect(await screen.findByText(CAPTURE_UNAVAILABLE_NOTE)).toBeDefined();
+    expect(CAPTURE_UNAVAILABLE_NOTE).toBe(
+      'No transformation capture is available for this leg. Captures are kept in memory for recent runs while the compatibility simulation is on, and clear when it turns off.',
+    );
+    expect(document.querySelector('.xform-diff')).toBeNull();
+    expect(screen.queryByText(CAPTURE_POSTURE_NOTE)).toBeNull();
+  });
+
+  it('the fetched result is cached: collapsing then re-expanding does not re-fetch', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getBridgingCapture).mockResolvedValueOnce(bridgingCaptureFixture());
+    render(<StepDetail step={bridgedLegStep()} view="clinical" />);
+
+    await user.click(screen.getByText(XFORM_EXPANDER_LABEL));
+    await screen.findByText(CAPTURE_POSTURE_NOTE);
+    expect(api.getBridgingCapture).toHaveBeenCalledTimes(1);
+
+    // Collapse (the button now reads "Hide transformation").
+    await user.click(screen.getByText('Hide transformation'));
+    expect(document.querySelector('.xform-diff')).toBeNull();
+
+    // Re-expand: the cached result renders immediately, no second fetch.
+    await user.click(screen.getByText(XFORM_EXPANDER_LABEL));
+    expect(screen.getByText(CAPTURE_POSTURE_NOTE)).toBeDefined();
+    expect(api.getBridgingCapture).toHaveBeenCalledTimes(1);
+  });
+
+  it('a non-404 fetch failure surfaces role="alert" with pinned copy (never the raw error text) and a retry affordance that can succeed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getBridgingCapture)
+      .mockRejectedValueOnce(new ApiError('internal error: gateway child unreachable', 500))
+      .mockResolvedValueOnce(bridgingCaptureFixture());
+    render(<StepDetail step={bridgedLegStep()} view="clinical" />);
+
+    await user.click(screen.getByText(XFORM_EXPANDER_LABEL));
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText(CAPTURE_ERROR_NOTE)).toBeDefined();
+    expect(alert.textContent).not.toContain('internal error: gateway child unreachable');
+    expect(document.querySelector('.xform-diff')).toBeNull();
+    expect(api.getBridgingCapture).toHaveBeenCalledTimes(1);
+
+    const retryButton = within(alert).getByRole('button', { name: /retry/i });
+    await user.click(retryButton);
+
+    expect(api.getBridgingCapture).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText(CAPTURE_POSTURE_NOTE)).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('slots between the loss-report block and the validator-posture line (DOM order)', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getBridgingCapture).mockResolvedValueOnce(bridgingCaptureFixture());
+    render(<StepDetail step={bridgedLegStep()} view="clinical" />);
+
+    const card = document.querySelector('.transform-card');
+    expect(card).not.toBeNull();
+    const children = Array.from(card!.children);
+    const lossIdx = children.findIndex((c) => c.classList.contains('loss-report-list'));
+    const expanderIdx = children.findIndex((c) => c.classList.contains('transform-expander'));
+    const postureIdx = children.findIndex((c) => c.classList.contains('validator-posture-label'));
+    expect(lossIdx).toBeGreaterThanOrEqual(0);
+    expect(expanderIdx).toBeGreaterThan(lossIdx);
+    expect(postureIdx).toBeGreaterThan(expanderIdx);
+
+    // Expanding doesn't move the expander wrapper itself out of that slot.
+    await user.click(screen.getByText(XFORM_EXPANDER_LABEL));
+    const childrenAfter = Array.from(card!.children);
+    expect(childrenAfter.findIndex((c) => c.classList.contains('transform-expander'))).toBe(expanderIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // parseLossReports' defensive branches (IMPORTANT):
 // each malformed-payload shape must degrade to the honest empty-content
 // note, never crash the render.
@@ -1124,5 +1308,265 @@ describe('StepDetail — leg.downgrade annotation', () => {
   it('a leg step with no downgrade shows no annotation', () => {
     render(<StepDetail step={okLegStep()} view="clinical" />);
     expect(document.querySelector('.leg-downgrade-note')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Local-demonstration species — demoStepFromRecord (the Step-shaped view-model
+// adapter) + DemoStepDetail (StepDetail's demonstration rendering branch).
+// Fixtures constructed inline (kit/kitd/bridging.go's demoRecord wire shape),
+// same convention as RunInspector.test.tsx's demoRefusalEvents, until a
+// captured fixture replaces them.
+// ---------------------------------------------------------------------------
+
+// The Detail text's MissingElements tail mirrors bridgingassets/README.md's
+// refusal-input-2.1 exhibit (same marker parseMissingElements/RefusalCard
+// already handle for a wire transform refusal).
+const DEMO_TRANSFORM_ELEMENT =
+  'QuestionnaireResponse.extension:qr-coverage (ambiguous: 2 Coverage-referencing qr-context entries, multi-coverage source)';
+
+function demoRefusalRecord(): DemoRecord {
+  return {
+    kind: 'refusal-engine',
+    contract: 'pa.dtr',
+    chain: [{ module: 'pa.dtr 2.1->2.2', from: '2.1', to: '2.2', class: 'gated' }],
+    input: {
+      resourceType: 'QuestionnaireResponse',
+      id: 'multi-coverage-qr',
+      extension: [
+        {
+          url: 'http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context',
+          valueReference: { reference: 'Coverage/cov-primary' },
+        },
+        {
+          url: 'http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context',
+          valueReference: { reference: 'Coverage/cov-secondary' },
+        },
+      ],
+    },
+    refusal: `shn: semantic-change refusal: pa.dtr 2.1->2.2 (up direction): no honest byte-level source for ${DEMO_TRANSFORM_ELEMENT}`,
+    semanticChange: true,
+  };
+}
+
+function demoCarryRecord(): DemoRecord {
+  const qr = {
+    resourceType: 'QuestionnaireResponse',
+    id: 'itemweight-qr',
+    item: [{ linkId: 'weight', answer: [{ valueInteger: 7 }] }],
+  };
+  return {
+    kind: 'carry-engine',
+    contract: 'pa.dtr',
+    chain: [
+      { module: 'pa.dtr 2.2->2.1', from: '2.2', to: '2.1', class: 'carry' },
+      { module: 'pa.dtr 2.1->2.2', from: '2.1', to: '2.2', class: 'carry' },
+    ],
+    input: qr,
+    intermediate: { resourceType: 'QuestionnaireResponse', id: 'itemweight-qr', item: [{ linkId: 'weight', answer: [{}] }] },
+    output: qr,
+    restored: true,
+    lossReports: [
+      {
+        module: 'pa.dtr 2.2->2.1',
+        source: '2.2',
+        target: '2.1',
+        carried: [
+          {
+            path: 'QuestionnaireResponse.item.answer.extension:itemWeight',
+            detail: 'itemWeight extension carried; source line 2.2',
+          },
+        ],
+      },
+      {
+        module: 'pa.dtr 2.1->2.2',
+        source: '2.1',
+        target: '2.2',
+      },
+    ],
+  };
+}
+
+describe('StepDetail — demoStepFromRecord (the Step-shaped view-model adapter)', () => {
+  it('a refusal record adapts to a failed Step whose route.chain/refusal.chain/response.detail mirror the record verbatim — presentation adaptation, never event synthesis', () => {
+    const record = demoRefusalRecord();
+    const step = demoStepFromRecord(record);
+    expect(step.status).toBe('failed');
+    expect(step.route?.chain).toEqual(record.chain);
+    expect(step.refusal?.chain).toEqual(record.chain);
+    expect(step.response?.detail).toBe(record.refusal);
+  });
+
+  it('a carry record adapts to an ok, refusal-less Step (RefusalCard must never fire for it)', () => {
+    const record = demoCarryRecord();
+    const step = demoStepFromRecord(record);
+    expect(step.status).toBe('ok');
+    expect(step.refusal).toBeUndefined();
+    expect(step.route?.chain).toEqual(record.chain);
+  });
+});
+
+describe('StepDetail — DemoStepDetail, refusal demonstration', () => {
+  it("renders RefusalCard's transform-refusal species VERBATIM through the adapter — the same pinned zero-bytes note a wire transform refusal renders — plus the narration and LOCAL_DEMO_FRAMING literal", () => {
+    const record = demoRefusalRecord();
+    render(<DemoStepDetail record={record} />);
+
+    expect(document.querySelector('.refusal-card-transform')).not.toBeNull();
+    expect(document.querySelector('.refusal-card-route')).toBeNull();
+    expect(document.querySelector('.refusal-card-carry')).toBeNull();
+    expect(screen.getByText(ZERO_BYTES_NOTE)).toBeDefined();
+    expect(ZERO_BYTES_NOTE).toBe('refused before sending — zero bytes crossed the network');
+
+    expect(screen.getByText(DEMO_REFUSAL_NARRATION)).toBeDefined();
+    expect(DEMO_REFUSAL_NARRATION).toBe(
+      'The module refused to bridge this response up to 2.2: two Coverage-referencing entries make the qr-coverage extension ambiguous, and the network refuses loudly rather than guessing at clinical content.',
+    );
+
+    expect(screen.getByText(LOCAL_DEMO_FRAMING)).toBeDefined();
+    expect(LOCAL_DEMO_FRAMING).toBe(
+      'engine demonstration over frozen reference content — the same modules your live legs route through. Nothing crossed the network for this run.',
+    );
+
+    // dir-row: derived from the record's own chain, never hardcoded per kind.
+    expect(screen.getByText('Smart Gateway → its DTR 2.1→2.2 module')).toBeDefined();
+
+    // dir-row "what" half + the input pane header — both pinned, both
+    // double-asserted (literal + rendered).
+    expect(screen.getByText(DEMO_REFUSAL_WHAT)).toBeDefined();
+    expect(DEMO_REFUSAL_WHAT).toBe('crafted multi-coverage questionnaire response');
+    expect(screen.getByText(DEMO_INPUT_PANE_HEADER)).toBeDefined();
+    expect(DEMO_INPUT_PANE_HEADER).toBe('Demonstration input — QuestionnaireResponse (frozen reference content)');
+  });
+
+  it('the input JsonView is searchable — "Coverage/cov-" hits 2 nodes on the fixture record', async () => {
+    const user = userEvent.setup();
+    const record = demoRefusalRecord();
+    render(<DemoStepDetail record={record} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    expect(inputs).toHaveLength(1);
+    await user.type(inputs[0], 'Coverage/cov-');
+
+    expect(screen.getByText('2 matches')).toBeDefined();
+  });
+
+  it('never renders a wire-run-only affordance: no validator posture line, no raw Provenance disclosure', () => {
+    const record = demoRefusalRecord();
+    render(<DemoStepDetail record={record} />);
+
+    expect(document.querySelector('.validator-posture-label')).toBeNull();
+    expect(document.querySelector('.raw-provenance')).toBeNull();
+    expect(screen.queryByText('Raw Provenance')).toBeNull();
+  });
+});
+
+describe('StepDetail — DemoStepDetail, carry demonstration', () => {
+  it('renders both input and output JsonViews, the loss entries, and the restored verdict — never a RefusalCard', () => {
+    const record = demoCarryRecord();
+    render(<DemoStepDetail record={record} />);
+
+    expect(document.querySelector('.refusal-card')).toBeNull();
+
+    expect(screen.getByText(DEMO_CARRY_NARRATION)).toBeDefined();
+    expect(DEMO_CARRY_NARRATION).toBe(
+      'The itemWeight extension has no slot on the 2.1 line, so it traveled wrapped and unread — and came back restored exactly.',
+    );
+    expect(screen.getByText(LOCAL_DEMO_FRAMING)).toBeDefined();
+
+    // dir-row: the round-trip's full path, derived from the chain, not hardcoded.
+    expect(screen.getByText('Smart Gateway → its DTR 2.2→2.1→2.2 module')).toBeDefined();
+
+    // dir-row "what" half + both pane headers — all pinned, all
+    // double-asserted (literal + rendered).
+    expect(screen.getByText(DEMO_CARRY_WHAT)).toBeDefined();
+    expect(DEMO_CARRY_WHAT).toBe('itemWeight-bearing questionnaire response');
+    expect(screen.getByText(DEMO_INPUT_PANE_HEADER)).toBeDefined();
+    expect(DEMO_INPUT_PANE_HEADER).toBe('Demonstration input — QuestionnaireResponse (frozen reference content)');
+    expect(screen.getByText(DEMO_OUTPUT_PANE_HEADER)).toBeDefined();
+    expect(DEMO_OUTPUT_PANE_HEADER).toBe('Round-tripped output — QuestionnaireResponse');
+
+    // chain hops (existing ChainHops subcomponent, reused directly) — scoped
+    // to .chain-hops since the same "source → target" text also appears in
+    // the loss-report-lines span below (both legitimately render it).
+    const chainHops = document.querySelector('.chain-hops');
+    expect(chainHops).not.toBeNull();
+    expect(within(chainHops as HTMLElement).getByText('2.2 → 2.1')).toBeDefined();
+    expect(within(chainHops as HTMLElement).getByText('2.1 → 2.2')).toBeDefined();
+
+    // loss entries (existing LossEntryList subcomponent, reused directly)
+    expect(screen.getByText('QuestionnaireResponse.item.answer.extension:itemWeight')).toBeDefined();
+    expect(document.body.textContent).toContain('itemWeight extension carried; source line 2.2');
+
+    // both JsonViews present, scoped so an identical byte-for-byte
+    // input/output pair (the point of "restored exactly") doesn't collide.
+    const inputPane = document.querySelector('.demo-input-payload');
+    const outputPane = document.querySelector('.demo-output-payload');
+    expect(inputPane).not.toBeNull();
+    expect(outputPane).not.toBeNull();
+    expect(within(inputPane as HTMLElement).getByText('itemweight-qr')).toBeDefined();
+    expect(within(outputPane as HTMLElement).getByText('itemweight-qr')).toBeDefined();
+
+    expect(screen.getByText(DEMO_RESTORED_VERDICT)).toBeDefined();
+    expect(DEMO_RESTORED_VERDICT).toBe('0 regions differ — byte-identical');
+  });
+
+  it('one search input drives both the input and output JsonViews', async () => {
+    const user = userEvent.setup();
+    const record = demoCarryRecord();
+    render(<DemoStepDetail record={record} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    expect(inputs).toHaveLength(1);
+    await user.type(inputs[0], 'itemweight-qr');
+
+    const summaries = screen.getAllByText(/match(es)?$/);
+    expect(summaries.length).toBeGreaterThanOrEqual(2);
+    for (const s of summaries) {
+      expect(s.textContent).not.toBe('no matches');
+    }
+  });
+
+  it('never renders a wire-run-only affordance: no validator posture line, no raw Provenance disclosure', () => {
+    const record = demoCarryRecord();
+    render(<DemoStepDetail record={record} />);
+
+    expect(document.querySelector('.validator-posture-label')).toBeNull();
+    expect(document.querySelector('.raw-provenance')).toBeNull();
+    expect(screen.queryByText('Raw Provenance')).toBeNull();
+  });
+
+  it('renders the region-by-region transformation view (XformDiff) fed from the record\'s own input->intermediate pair, entirely locally — zero fetches', () => {
+    const record = demoCarryRecord();
+    render(<DemoStepDetail record={record} />);
+
+    expect(document.querySelector('.xform-diff')).not.toBeNull();
+    // labels built from the record's own contract + first hop's from/to —
+    // the down-bridge leg (2.2 built -> 2.1 carried), never the round trip.
+    // "as carried", never "as sent" — a demonstration never sends anything
+    // (LOCAL_DEMO_FRAMING says so explicitly); "as sent" is reserved for the
+    // wire-leg TransformExpander's genuinely observed capture.
+    expect(screen.getByText('Before — as built (pa.dtr 2.2)')).toBeDefined();
+    expect(screen.getByText('After — as carried (pa.dtr 2.1)')).toBeDefined();
+    expect(screen.queryByText('After — as sent (pa.dtr 2.1)')).toBeNull();
+
+    // Zero fetches: a demonstration record never crosses the network, and
+    // this feed never calls the wire capture endpoint at all.
+    expect(api.getBridgingCapture).not.toHaveBeenCalled();
+  });
+
+  it('the restored verdict is computed from the record\'s own input/output pair, never trusted off the wire `restored` flag alone', () => {
+    const restoredButDiffers = demoCarryRecord();
+    restoredButDiffers.restored = true;
+    restoredButDiffers.output = {
+      resourceType: 'QuestionnaireResponse',
+      id: 'itemweight-qr',
+      item: [{ linkId: 'weight', answer: [{ valueInteger: 999 }] }],
+    };
+    render(<DemoStepDetail record={restoredButDiffers} />);
+
+    // The wire flag says restored, but the actual input/output bytes
+    // differ — the honest computation must not repeat the pinned
+    // byte-identical claim.
+    expect(screen.queryByText(DEMO_RESTORED_VERDICT)).toBeNull();
   });
 });

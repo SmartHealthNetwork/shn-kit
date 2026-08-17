@@ -187,10 +187,11 @@ func demoFixture(t *testing.T, rec *demoRestartRecorder, base []string, rly *rel
 }
 
 // TestNewBridgingDemo_EnvAndHook pins the toggle's whole contract in one
-// pass: enabling appends exactly the FIXED "2.0" knob (no picker) to a
-// CLONE of the baseline, disabling restarts with the bare baseline, the
-// gateway child is the target, the relay's ResetCursor is what rides the
-// preSpawn hook, and each successful toggle emits its child-typed bus event.
+// pass: enabling appends exactly the FIXED "2.0" knob (no picker) plus the
+// edge-capture flag to a CLONE of the baseline, disabling restarts with the
+// bare baseline (neither knob present), the gateway child is the target, the
+// relay's ResetCursor is what rides the preSpawn hook, and each successful
+// toggle emits its child-typed bus event.
 func TestNewBridgingDemo_EnvAndHook(t *testing.T) {
 	// SPARE CAPACITY IS LOAD-BEARING (verified by mutation): an
 	// append-onto-the-baseline bug only writes through when the baseline has
@@ -209,7 +210,7 @@ func TestNewBridgingDemo_EnvAndHook(t *testing.T) {
 		t.Fatalf("restart target = %q, want %q", rec.names[0], gatewayChild)
 	}
 	gotEnv := rec.envs[0]
-	wantEnabled := append(append([]string{}, base...), "SHN_DEMO_EGRESS_NATIVE_LINES=2.0")
+	wantEnabled := append(append([]string{}, base...), "SHN_DEMO_EGRESS_NATIVE_LINES=2.0", "SHN_DEMO_EDGE_CAPTURE=true")
 	if strings.Join(gotEnv, "\x00") != strings.Join(wantEnabled, "\x00") {
 		t.Fatalf("enabled env = %v, want %v", gotEnv, wantEnabled)
 	}
@@ -305,7 +306,7 @@ func TestNewBridgingDemo_FailedToggleEmitsNothing(t *testing.T) {
 // itself fails (error-joined, both messages visible).
 func TestNewBridgingDemo_FailedToggleRevertsEnv(t *testing.T) {
 	base := []string{"ROLE=provider"}
-	enabledEnv := append(append([]string{}, base...), "SHN_DEMO_EGRESS_NATIVE_LINES=2.0")
+	enabledEnv := append(append([]string{}, base...), "SHN_DEMO_EGRESS_NATIVE_LINES=2.0", "SHN_DEMO_EDGE_CAPTURE=true")
 
 	t.Run("revert to baseline before any successful toggle", func(t *testing.T) {
 		failErr := fmt.Errorf("supervisor: gateway not ready within 30s")

@@ -244,7 +244,13 @@ independent seams:
 - **`POST /api/bridging/exhibit`** is independent of both the toggle and any live peer:
   it runs an embedded fixture through the gateway child's real transform chain to
   demonstrate the carry mechanism or a genuine semantic-change refusal in isolation —
-  useful even on a Kit with no demo peers configured at all.
+  useful even on a Kit with no demo peers configured at all. Each exhibit opens as its
+  own run in the flow inspector, clearly marked "local demonstration — no network" so it
+  is never mistaken for a live exchange.
+
+On a live bridged leg, the inspector's "Show transformation" expander fetches an
+on-demand before/after view of exactly what left this gateway's own edge — captured while
+the compatibility simulation is on, never on the wire and never part of the audit record.
 
 ## Packaging: the Java trio and JRE
 

@@ -4,14 +4,17 @@
 // is the payload-BLIND leg-facts framing: no payload JSON reaches the DOM
 // in that view — only the envelope facts (correlation id, direction,
 // counterpart, authority frames, approximate sizes).
-import { useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { isCarryRefusalDetail } from './inspect';
 import type { RouteFrame, Step } from './inspect';
-import type { Register } from './types';
-import { STEP_CLASS_META, type StepClass } from './bridgingmeta';
+import type { BridgingCapture, DemoRecord, Register } from './types';
+import { DEMO_RESTORED_VERDICT, LOCAL_DEMO_FRAMING, STEP_CLASS_META, type StepClass } from './bridgingmeta';
 import { JsonView } from './JsonView';
 import { TickIcon } from './StatusChip';
+import { ApiError, getBridgingCapture } from './api';
+import { computeXformDiff } from './xformclassify';
+import { XformDiff } from './XformDiff';
 
 export type InspectorView = 'clinical' | 'substrate';
 
@@ -362,6 +365,179 @@ function LossEntryList({ title, entries }: { title: string; entries: ParsedLossE
   );
 }
 
+// ---------------------------------------------------------------------------
+// TransformExpander — the on-demand before/after transformation view: a
+// collapsed-by-default "Show transformation" affordance that fetches the
+// gateway's edge capture for this leg ONLY once expanded (never eagerly
+// alongside the rest of a step's frames), caches the result across
+// collapse/re-expand, and renders it through XformDiff.tsx once it arrives.
+// Three pinned strings below; do not paraphrase.
+// ---------------------------------------------------------------------------
+
+// XFORM_EXPANDER_LABEL: the collapsed expander's pinned label. Pinned
+// exactly; do not paraphrase.
+export const XFORM_EXPANDER_LABEL = 'Show transformation';
+
+// CAPTURE_POSTURE_NOTE: shown alongside a successfully fetched capture — the
+// same mandatory honesty gate every other content-bearing card in this file
+// carries (postureLabel/ValidatorPosture), but for a capture rather than a
+// $validate verdict: an edge capture is an INSPECTION view kept in memory
+// while the compatibility simulation is on, never an audit or wire record.
+// Pinned exactly; do not paraphrase.
+export const CAPTURE_POSTURE_NOTE =
+  "Captured at your gateway's edge as this leg left — an inspection view, available while the compatibility simulation is on. This is not an audit or wire record.";
+
+// CAPTURE_UNAVAILABLE_NOTE: shown when the fetch resolves 404 — either wire
+// reason (the compatibility simulation is off, or this leg's capture aged
+// out/was never recorded) collapses to this SAME honest sentence; the two
+// reasons are never distinguished client-side (api.ts's getBridgingCapture
+// rejects both as ApiError(404) with no further discrimination). Pinned
+// exactly; do not paraphrase.
+export const CAPTURE_UNAVAILABLE_NOTE =
+  'No transformation capture is available for this leg. Captures are kept in memory for recent runs while the compatibility simulation is on, and clear when it turns off.';
+
+// CAPTURE_ERROR_NOTE: shown when the capture fetch fails for any reason
+// other than a 404 (a transport hiccup, the gateway child unreachable, an
+// unexpected server error) — a fixed, participant-facing sentence, never the
+// raw Error/ApiError message (which can carry internal transport detail no
+// partner needs, or shouldn't see). Pinned exactly; do not paraphrase.
+export const CAPTURE_ERROR_NOTE = "Couldn't load this leg's transformation capture.";
+
+// xformPaneLabels: the before/after pane labels XformDiff.tsx renders for a
+// live leg's fetched capture below. The gateway's own EdgeCapture is a
+// PRE-SEAL snapshot (captured just before this leg's payload is sealed for
+// Hub transit, never a wire read) — "as sent" is this surface's honest
+// shorthand for that moment, not a claim about bytes actually observed on
+// the wire.
+function xformPaneLabels(contract: string, from: string, to: string): { beforeLabel: string; afterLabel: string } {
+  return {
+    beforeLabel: `Before — as built (${contract} ${from})`,
+    afterLabel: `After — as sent (${contract} ${to})`,
+  };
+}
+
+// demoXformPaneLabels: the same before-pane wording, but "as carried" for
+// the after pane — the carry demonstration's local record in
+// DemoStepDetail never sent anything (LOCAL_DEMO_FRAMING says so
+// explicitly); "as sent" would be a false claim for a pair that only ever
+// existed in the engine's in-process exhibit.
+function demoXformPaneLabels(contract: string, from: string, to: string): { beforeLabel: string; afterLabel: string } {
+  return {
+    beforeLabel: `Before — as built (${contract} ${from})`,
+    afterLabel: `After — as carried (${contract} ${to})`,
+  };
+}
+
+type CaptureFetchState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'found'; capture: BridgingCapture }
+  | { kind: 'not-found' }
+  | { kind: 'error'; message: string };
+
+function captureErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  return err instanceof Error ? err.message : String(err);
+}
+
+// TransformExpander: collapsed by default (state stays 'idle' and nothing is
+// fetched until the participant clicks) — the SAME lazy-fetch idiom
+// FreeFormPanel.tsx's patient-context read already uses (idle/loading/
+// loaded/error), with a 'not-found' state added for the honest 404 case.
+// Caching is structural, not an extra flag: once `state` leaves 'idle' it
+// never resets on collapse, so re-expanding the SAME step never re-fetches.
+function TransformExpander({ correlationId }: { correlationId: string | undefined }): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const [state, setState] = useState<CaptureFetchState>({ kind: 'idle' });
+  // Every step in a run can render its own TransformExpander, so the body id
+  // must be per-instance, not the same literal reused across the page — a
+  // duplicate DOM id would break aria-controls (and any other id-targeted
+  // lookup) once more than one is mounted at once. useId() derives a stable,
+  // component-instance-unique id.
+  const bodyId = `transform-expander-body-${useId()}`;
+
+  // capturedRaw: JSON.stringify of the fetched capture's before/after,
+  // hoisted into its own useMemo rather than called inline in the JSX below
+  // — state.capture is a stable object reference once fetched (only a fresh
+  // fetch ever replaces it), so an inline call would re-run the stringify
+  // (and pay its cost, up to the capture's full size) on every unrelated
+  // re-render of this component (e.g. a sibling search box's keystroke),
+  // defeating the point of XformDiff's own memoization one level down.
+  const capture = state.kind === 'found' ? state.capture : undefined;
+  const capturedRaw = useMemo(
+    () => (capture ? { rawBefore: JSON.stringify(capture.before), rawAfter: JSON.stringify(capture.after) } : undefined),
+    [capture],
+  );
+
+  // fetchCapture: the one place that actually calls getBridgingCapture —
+  // shared by the first expand (handleToggle, gated on state.kind ===
+  // 'idle') and by a retry from the error state (handleRetry, which calls
+  // it unconditionally). Both paths converge here so a retry re-runs
+  // exactly the same request/response handling as the original attempt.
+  const fetchCapture = () => {
+    if (correlationId === undefined) return;
+    setState({ kind: 'loading' });
+    getBridgingCapture(correlationId)
+      .then((capture) => setState({ kind: 'found', capture }))
+      .catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 404) {
+          setState({ kind: 'not-found' });
+        } else {
+          setState({ kind: 'error', message: captureErrorMessage(err) });
+        }
+      });
+  };
+
+  const handleToggle = () => {
+    const nextExpanded = !expanded;
+    setExpanded(nextExpanded);
+    if (nextExpanded && state.kind === 'idle') fetchCapture();
+  };
+
+  const handleRetry = () => fetchCapture();
+
+  return (
+    <div className="transform-expander">
+      <button
+        type="button"
+        className="transform-expander-toggle"
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        onClick={handleToggle}
+      >
+        {expanded ? 'Hide transformation' : XFORM_EXPANDER_LABEL}
+      </button>
+      {expanded && (
+        <div className="transform-expander-body" id={bodyId}>
+          {state.kind === 'loading' && <p className="transform-expander-loading">Loading…</p>}
+          {state.kind === 'found' && capturedRaw && (
+            <>
+              <XformDiff
+                before={state.capture.before}
+                after={state.capture.after}
+                rawBefore={capturedRaw.rawBefore}
+                rawAfter={capturedRaw.rawAfter}
+                lossReports={state.capture.lossReports}
+                {...xformPaneLabels(state.capture.contract, state.capture.from, state.capture.to)}
+              />
+              <p className="capture-posture-note">{CAPTURE_POSTURE_NOTE}</p>
+            </>
+          )}
+          {state.kind === 'not-found' && <p className="capture-unavailable-note">{CAPTURE_UNAVAILABLE_NOTE}</p>}
+          {state.kind === 'error' && (
+            <div role="alert" className="transform-expander-error">
+              <p className="transform-expander-error-message">{CAPTURE_ERROR_NOTE}</p>
+              <button type="button" className="transform-expander-retry" onClick={handleRetry}>
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // TransformCard: the LossReport story for a step whose leg was bridged
 // across a compat-manifest chain (step.transform present — inspect.ts's
 // joined leg.transformed frame). Content:
@@ -428,6 +604,7 @@ function TransformCard({
       ) : (
         <p className="transform-empty-note">{emptyNote}</p>
       )}
+      <TransformExpander correlationId={step.correlationId} />
       <p className="validator-posture-label">{postureLabel(posture)}</p>
       <details className="raw-provenance">
         <summary>Raw Provenance</summary>
@@ -891,6 +1068,250 @@ export function StepDetail({ step, view, posture = 'stand-in', register = 'overv
       {failureDetail && <p className="failure-detail">{failureDetail}</p>}
       {step.downgrade !== undefined && <p className="leg-downgrade-note">{LEG_DOWNGRADE_NOTE}</p>}
       {step.transform && <TransformCard step={step} posture={posture} register={register} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Local-demonstration species — DemoStepDetail. A disjoint rendering branch
+// from wire-run StepDetail above: a demonstration record never crosses the
+// Hub, never has a posture-checked validator verdict, and never carries a
+// Provenance resource to disclose (SUBSTRATE_FRAMING/ValidationBadge/
+// TransformCard's raw-Provenance <details> would all be false claims here —
+// none of them are reused). What genuinely IS reused verbatim: RefusalCard
+// (the refusal species) and the ChainHops/LossEntryList subcomponents (the
+// carry species) — the same honest machinery a wire-bridged leg renders
+// through, fed a view-model adapter instead of an observed frame.
+// ---------------------------------------------------------------------------
+
+// demoStepFromRecord adapts a DemoRecord (inspect.ts's buildDemoStory) into
+// the Step shape StepDetail's existing RefusalCard already knows how to
+// render — route.chain/refusal.chain and response.detail copied straight
+// off the record, status set per the record's own kind. This is
+// PRESENTATION ADAPTATION ONLY, never event synthesis: it invents no wire
+// frame, mints no correlation id, and crosses no Hub — it exists solely so
+// RefusalCard (built to read a Step) can render the SAME species discrimination
+// and pinned copy for a demonstration refusal that it renders for a genuine
+// leg.failed. Consumed only by DemoStepDetail below, never fed into the
+// wire-run branches above (which assume a genuinely observed frame).
+export function demoStepFromRecord(record: DemoRecord): Step {
+  const isRefusal = record.kind === 'refusal-engine';
+  const step: Step = {
+    id: 'demo',
+    kind: 'leg',
+    legType: record.contract,
+    status: isRefusal ? 'failed' : 'ok',
+    route: { chain: record.chain },
+    narration: '',
+  };
+  if (isRefusal) {
+    step.refusal = { chain: record.chain };
+    step.response = { seq: 0, time: '', kind: 'demo.refusal', detail: record.refusal };
+  }
+  return step;
+}
+
+// CONTRACT_MODULE_NAMES/moduleDisplayName: the demonstration dir-row's
+// module name ("DTR") is derived from the record's own `contract` field
+// ("pa.dtr"), never hardcoded per demonstration kind — a future third
+// demonstration contract renders honestly (falls back to the raw token
+// upper-cased) without a code change here. Matches CONTRACT_LINE_EXPLAINER's
+// "CRD, DTR, PAS, or PDex" vocabulary (bridgingmeta.ts).
+const CONTRACT_MODULE_NAMES: Record<string, string> = {
+  'pa.crd': 'CRD',
+  'pa.dtr': 'DTR',
+  'pa.pas': 'PAS',
+  'pa.pdex': 'PDex',
+};
+
+function moduleDisplayName(contract: string): string {
+  return CONTRACT_MODULE_NAMES[contract] ?? contract.toUpperCase();
+}
+
+// chainPathLabel: the dir-row's version-path tail ("2.1→2.2" for the
+// refusal exhibit's single hop; "2.2→2.1→2.2" for the carry exhibit's
+// down-then-up round trip) — derived from the chain's own from/to fields,
+// never hardcoded per kind, so it stays honest for either species' actual
+// chain shape.
+function chainPathLabel(chain: DemoRecord['chain']): string {
+  if (chain.length === 0) return '';
+  return [chain[0].from, ...chain.map((h) => h.to)].join('→');
+}
+
+// The demonstration dir-row's "what" half — the frozen fixture each
+// exhibit runs over. Not a wire-observed fact (no request truly went out),
+// so this is fixed copy per species, not derived from the record. Pinned
+// exactly; do not paraphrase.
+export const DEMO_REFUSAL_WHAT = 'crafted multi-coverage questionnaire response';
+export const DEMO_CARRY_WHAT = 'itemWeight-bearing questionnaire response';
+
+// DEMO_REFUSAL_NARRATION / DEMO_CARRY_NARRATION — the demonstration
+// species' narration lines: pinned, participant-facing wording, asserted
+// verbatim by tests. Register-neutral by design (a demonstration has one
+// frozen outcome, not a request/done/failed lifecycle the existing
+// NARRATION table's Register-agnostic-but-status-keyed shape assumes) —
+// pinned exactly; do not paraphrase.
+export const DEMO_REFUSAL_NARRATION =
+  'The module refused to bridge this response up to 2.2: two Coverage-referencing entries make the qr-coverage extension ambiguous, and the network refuses loudly rather than guessing at clinical content.';
+
+export const DEMO_CARRY_NARRATION =
+  'The itemWeight extension has no slot on the 2.1 line, so it traveled wrapped and unread — and came back restored exactly.';
+
+// The demonstration input/output pane headers — pinned, participant-facing
+// wording, asserted verbatim by tests. Pinned exactly; do not paraphrase.
+export const DEMO_INPUT_PANE_HEADER = 'Demonstration input — QuestionnaireResponse (frozen reference content)';
+export const DEMO_OUTPUT_PANE_HEADER = 'Round-tripped output — QuestionnaireResponse';
+
+// DEMO_RESTORED_VERDICT (imported from bridgingmeta.ts, the ONE pin-home
+// shared with XformDiff.tsx's own identical-summary computation — see that
+// constant's doc comment) — the carry demonstration's restored-verdict line.
+// Rendered only when computeXformDiff over the record's OWN input/output
+// pair actually reports byteIdentical — never trusted off the wire's
+// `restored` flag alone (a record could in principle declare restored:true
+// while carrying a genuinely differing output; the honest fallback here is
+// to render nothing rather than repeat an unverified claim). Re-exported
+// here so existing `from './StepDetail'` imports keep working.
+export { DEMO_RESTORED_VERDICT };
+
+export interface DemoStepDetailProps {
+  record: DemoRecord;
+}
+
+// DemoStepDetail: StepDetail's demonstration-species rendering entry point,
+// routed here from RunInspector's demo branch (isDemoRun) instead of the
+// wire-run StepDetail above. Renders the two demonstration species —
+// refusal (RefusalCard, reused verbatim over the demoStepFromRecord
+// adapter, plus the searchable frozen input) and carry (the existing
+// ChainHops/LossEntryList subcomponents plus both searchable JsonViews and
+// the restored verdict) — never the wire-run-only affordances
+// (ValidationBadge/posture label, TransformCard's raw-Provenance
+// disclosure): neither is a true claim for a run that never crossed the
+// Hub or the validator.
+export function DemoStepDetail({ record }: DemoStepDetailProps): JSX.Element {
+  const [search, setSearch] = useState('');
+  const isRefusal = record.kind === 'refusal-engine';
+  const step = demoStepFromRecord(record);
+  const moduleName = moduleDisplayName(record.contract);
+  const pathLabel = chainPathLabel(record.chain);
+  const what = isRefusal ? DEMO_REFUSAL_WHAT : DEMO_CARRY_WHAT;
+  const narration = isRefusal ? DEMO_REFUSAL_NARRATION : DEMO_CARRY_NARRATION;
+
+  // outputDiff: the carry species' honest restored-verdict computation —
+  // computeXformDiff over the record's OWN input/output pair (never the
+  // wire's `restored` boolean alone). undefined for the refusal species
+  // (record.output is only ever set for carry-engine) and unused there.
+  // Memoized on `record` (a stable prop reference across this component's
+  // own search-keystroke re-renders — RunInspector doesn't re-render just
+  // because THIS component's local `search` state changed) so typing in
+  // the search box below never re-walks a payload up to 2 MiB on every
+  // keystroke.
+  const outputDiff = useMemo(
+    () =>
+      !isRefusal && record.output !== undefined
+        ? computeXformDiff(record.input, record.output, JSON.stringify(record.input), JSON.stringify(record.output), record.lossReports ?? [])
+        : undefined,
+    [isRefusal, record],
+  );
+
+  // intermediateRaw: JSON.stringify of the record's own input/intermediate
+  // pair, hoisted into the same `record`-keyed useMemo as outputDiff above
+  // (not called inline in the XformDiff render below) — the down-hop pane
+  // XformDiff feeds its OWN useMemo off these two strings, so leaving the
+  // stringify inline in JSX would re-run it (and pay its cost) on every
+  // search-keystroke re-render, defeating that inner memoization.
+  const intermediateRaw = useMemo(
+    () => ({ rawBefore: JSON.stringify(record.input), rawAfter: JSON.stringify(record.intermediate) }),
+    [record],
+  );
+
+  return (
+    <div className="detail demo-detail" data-view="clinical">
+      <div className="dir-rows">
+        <div className="dir-row">
+          <span className="arr">→</span>
+          <span className="who">{`Smart Gateway → its ${moduleName} ${pathLabel} module`}</span>
+          <span className="what">{what}</span>
+        </div>
+      </div>
+      <p className="narr">{narration}</p>
+      <p className="local-demo-framing">{LOCAL_DEMO_FRAMING}</p>
+
+      {isRefusal ? (
+        <>
+          <RefusalCard step={step} />
+          <label className="json-search-label">
+            Search demonstration input
+            <input
+              type="text"
+              className="json-search-input"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
+          <div className="pane demo-input-payload">
+            <h4>{DEMO_INPUT_PANE_HEADER}</h4>
+            <JsonView value={record.input} search={search} />
+          </div>
+        </>
+      ) : (
+        <>
+          <ChainHops chain={record.chain} />
+          <div className="loss-report-list">
+            {(record.lossReports ?? []).map((r, i) => (
+              <div key={i} className="loss-report">
+                <div className="loss-report-module">
+                  {r.module} <span className="loss-report-lines">{r.source} → {r.target}</span>
+                </div>
+                {r.carried && r.carried.length > 0 && <LossEntryList title="Carried, not lost" entries={r.carried} />}
+                {r.synthesized && r.synthesized.length > 0 && (
+                  <LossEntryList title="Synthesized" entries={r.synthesized} />
+                )}
+              </div>
+            ))}
+          </div>
+          {record.chain[0] !== undefined && record.intermediate !== undefined && (
+            <XformDiff
+              before={record.input}
+              after={record.intermediate}
+              rawBefore={intermediateRaw.rawBefore}
+              rawAfter={intermediateRaw.rawAfter}
+              lossReports={record.lossReports ?? []}
+              {...demoXformPaneLabels(record.contract, record.chain[0].from, record.chain[0].to)}
+            />
+          )}
+          {outputDiff?.byteIdentical && (
+            // Labeled explicitly — this line and the XformDiff block right
+            // above it both end in a "regions differ" summary, but they
+            // describe two DIFFERENT pairs (input vs. the carried-down
+            // intermediate, above; input vs. the round-tripped output,
+            // here). Stacked with no label, they read as one confusing
+            // number changing rather than two honest, separate comparisons.
+            // The pinned literal itself stays intact, in its own element,
+            // so the existing byte-exact assertions on it still hold.
+            <p className="demo-restored-verdict">
+              Input vs. round-tripped output —{' '}
+              <span className="demo-restored-verdict-value">{DEMO_RESTORED_VERDICT}</span>
+            </p>
+          )}
+          <label className="json-search-label">
+            Search demonstration input and output
+            <input
+              type="text"
+              className="json-search-input"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
+          <div className="pane demo-input-payload">
+            <h4>{DEMO_INPUT_PANE_HEADER}</h4>
+            <JsonView value={record.input} search={search} />
+          </div>
+          <div className="pane demo-output-payload">
+            <h4>{DEMO_OUTPUT_PANE_HEADER}</h4>
+            <JsonView value={record.output} search={search} />
+          </div>
+        </>
+      )}
     </div>
   );
 }

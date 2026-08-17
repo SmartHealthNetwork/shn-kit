@@ -4,9 +4,12 @@ import App from './App';
 import { computeDisabledReason, isGatewayReady } from './App';
 import type { BootstrapResponse, HistoryRecord, HistorySummary, KitEvent, RunResult, StatusResponse } from './types';
 import type { EventsView } from './useEvents';
+import { DEMO_REPLAY_FAILURE_NOTE } from './bridgingmeta';
 import ehrUc03 from './fixtures/run-ehr-uc03.json';
+import runDemoRefusal from './fixtures/run-demo-refusal.json';
 
 const ehrUc03Events = ehrUc03 as unknown as KitEvent[];
+const demoRefusalEvents = runDemoRefusal as unknown as KitEvent[];
 
 // vi.mock factories are hoisted above the rest of the module, so ApiError
 // must be created through vi.hoisted rather than a plain top-level class.
@@ -50,6 +53,9 @@ vi.mock('./api', () => ({
   getAbout: vi.fn(() => new Promise(() => {})),
   postChildRestart: vi.fn(),
   supportBundleUrl: vi.fn(() => '/api/support-bundle'),
+  // handleReplayDemo (App.tsx) posts here directly — the local-
+  // demonstration species' Replay wiring.
+  postBridgingExhibit: vi.fn(),
   ApiError,
 }));
 
@@ -530,6 +536,141 @@ describe('App — run history', () => {
     await advance(STATUS_POLL_MS);
     expect(screen.getByText(/loading this run/i)).toBeDefined();
     expect(screen.queryByText('conformant/uc03')).toBeNull();
+  });
+
+  it("clicking a local-demonstration run's Replay run button calls postBridgingExhibit with the mapped kind (App's half of the ruled Replay mechanism — RunInspector.test.tsx only proves the prop call, this proves the wiring)", async () => {
+    // The captured run-demo-refusal.json fixture, not a hand-built
+    // demo.exhibit — a hand-built one with chain: null lands RefusalCard on
+    // its defensive, unclassified branch, a render the real gateway never
+    // produces (its own ChainSteps call always populates a chain before a
+    // refusal is even known).
+    const demoRunId = demoRefusalEvents[0].runId as string;
+    const demoSummary: HistorySummary = {
+      runId: demoRunId,
+      lane: 'demo',
+      uc: 'refusal-engine',
+      branch: '',
+      state: 'passed',
+      detail: 'refused as expected',
+      time: '2026-08-16T00:00:00Z',
+      eventCount: demoRefusalEvents.length,
+    };
+    const demoEvents: KitEvent[] = demoRefusalEvents;
+
+    const replayRunId = 'demo-1755302400000-2';
+
+    vi.mocked(api.getHistory).mockResolvedValue([demoSummary]);
+    // Keyed by runId (not the default `mockResolvedValue` blanket stub) so
+    // the re-point assertion below is honest: the FRESH run id the replay
+    // resolves to has no matching record here, and stays genuinely pending
+    // — the same as it would in production the instant Replay is clicked
+    // (the demo.* events for it haven't streamed in over SSE yet either).
+    vi.mocked(api.getHistoryRecord).mockImplementation((id: string) =>
+      id === demoRunId ? Promise.resolve({ ...demoSummary, events: demoEvents }) : new Promise(() => {}),
+    );
+    vi.mocked(api.postBridgingExhibit).mockResolvedValue({
+      kind: 'refusal',
+      refusal: 'multiple coverages selected; no honest byte-level source for a single-coverage 2.2 payload',
+      semanticChange: true,
+      runId: replayRunId,
+    });
+
+    await renderMain();
+    await flush(); // getHistory resolves; the row renders
+    await clickNav(/^run history$/i);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: `Open ${demoRunId}` }));
+    });
+    await flush(); // getHistoryRecord resolves — the demo record renders
+
+    // RunHistory's own row ALSO renders "demo/refusal-engine" text (the
+    // 'Run history' nav destination keeps the inspector pane alongside the
+    // list) — scope to the inspector's title span specifically.
+    expect(document.querySelector('.insp-title .mono')?.textContent).toBe('demo/refusal-engine');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Replay run' }));
+    });
+
+    expect(api.postBridgingExhibit).toHaveBeenCalledTimes(1);
+    expect(api.postBridgingExhibit).toHaveBeenCalledWith('refusal');
+
+    await flush(); // postBridgingExhibit resolves — App re-points the inspector at the fresh run
+
+    // The ruled re-execute semantics land the operator on the run that just
+    // ran: selectedRunId moves to the response's runId (App's own
+    // handleSelectRun path, same as onSelectRun elsewhere), which has no
+    // history record yet here, so the inspector falls into its loading
+    // state rather than continuing to show the stale demoRunId's title.
+    expect(document.querySelector('.insp-title .mono')?.textContent).not.toBe('demo/refusal-engine');
+    expect(screen.getByText('Loading this run…')).toBeDefined();
+  });
+
+  it("a rejected postBridgingExhibit surfaces as RunInspector's inline role=\"alert\" (App.tsx's handleReplayDemo no longer swallows the rejection) — proven from Run history, where BridgingPanel isn't even mounted", async () => {
+    // The captured run-demo-refusal.json fixture — see the previous test's
+    // comment for why a hand-built chain: null shape is the wrong render to
+    // pin here.
+    const demoRunId = demoRefusalEvents[0].runId as string;
+    const demoSummary: HistorySummary = {
+      runId: demoRunId,
+      lane: 'demo',
+      uc: 'refusal-engine',
+      branch: '',
+      state: 'passed',
+      detail: 'refused as expected',
+      time: '2026-08-16T00:00:00Z',
+      eventCount: demoRefusalEvents.length,
+    };
+    const demoEvents: KitEvent[] = demoRefusalEvents;
+
+    vi.mocked(api.getHistory).mockResolvedValue([demoSummary]);
+    vi.mocked(api.getHistoryRecord).mockImplementation((id: string) =>
+      id === demoRunId ? Promise.resolve({ ...demoSummary, events: demoEvents }) : new Promise(() => {}),
+    );
+    // A manually-settled promise (rather than mockRejectedValue's
+    // already-rejected one) so the in-flight/double-click assertions below
+    // observe a genuine pending state — a synchronously-rejecting mock
+    // would settle before the disabled-button assertion ever runs.
+    let rejectExhibit: (err: unknown) => void = () => undefined;
+    vi.mocked(api.postBridgingExhibit).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectExhibit = reject;
+        }),
+    );
+
+    await renderMain();
+    await flush();
+    await clickNav(/^run history$/i);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: `Open ${demoRunId}` }));
+    });
+    await flush();
+
+    const replayButton = screen.getByRole('button', { name: 'Replay run' }) as HTMLButtonElement;
+
+    await act(async () => {
+      fireEvent.click(replayButton);
+    });
+    // In flight: disabled, so a second click fires no second api call.
+    expect(replayButton.disabled).toBe(true);
+    await act(async () => {
+      fireEvent.click(replayButton);
+    });
+    expect(api.postBridgingExhibit).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectExhibit(new ApiError('bad gateway', 502));
+    });
+    await flush(); // the rejection propagates through RunInspector's .catch
+
+    expect(screen.getByRole('alert')).toHaveTextContent(DEMO_REPLAY_FAILURE_NOTE);
+    expect(replayButton.disabled).toBe(false);
+    // The pane stays exactly where it was — handleSelectRun never fires on
+    // a rejected replay.
+    expect(document.querySelector('.insp-title .mono')?.textContent).toBe('demo/refusal-engine');
   });
 
   it('onCompare renders two RunInspector panes side by side (two inspector headers); comparing the same run again closes it', async () => {

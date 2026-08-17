@@ -8,10 +8,16 @@
 // presentational component: selection is controlled via props, no internal
 // fetch/state beyond what's needed to render.
 import { useEffect, useRef, useState, type JSX } from 'react';
-import type { Lane } from './types';
+import type { DemoRecord, Lane } from './types';
 import type { RouteFrame, RunStory, Step } from './inspect';
 import { FlowEdges, type FlowEdgesHandle } from './FlowEdges';
 import { relayedStatusLine } from './StepDetail';
+import {
+  DEMO_REMOTE_CAPTION,
+  DEMO_STEP_CLASS_CAPTION,
+  DEMO_STEP_LABEL,
+  FROZEN_SOURCE_NODE,
+} from './bridgingmeta';
 
 export interface FlowMapProps {
   story: RunStory;
@@ -32,6 +38,43 @@ export interface FlowMapProps {
   // interrupted by unmount/a stale token) and the map has returned to
   // showing the full, un-cut story.
   onReplayEnd?(): void;
+  // demo: the local-demonstration flow-map variant (RunInspector's demo
+  // branch) — a fixed three-zone shape (static FROZEN_SOURCE_NODE source ->
+  // lit gateway -> dimmed, not-involved remote zone), never derived from
+  // `story`/`lane`/`providerLabel` (this run never crossed the network, so
+  // there is nothing observed to derive a node/edge state from — those
+  // props stay wire-run-only and are ignored here). undefined/false ⇒
+  // today's wire-run rendering, byte-unchanged.
+  demo?: boolean;
+  // demoRecord: the local-demonstration record (RunInspector's demo branch,
+  // inspect.ts's buildDemoStory) backing the steps rail's single synthetic
+  // row below — a demonstration never crosses the network, so buildRunStory
+  // legitimately yields zero wire Steps for one (see inspect.ts's own
+  // comment), and the rail would otherwise render as an empty, broken-
+  // looking `<ol>`. Only read when `demo` is true;
+  // undefined (a wire run, or a demo run whose record hasn't arrived yet)
+  // renders no rail row at all — never a phantom step.
+  demoRecord?: DemoRecord;
+}
+
+// DEMO_STEP_ID: the demonstration rail's one synthetic step id — exported so
+// callers (RunInspector) can thread it through the same selectedStepId/
+// onSelectStep mechanics a wire step already uses.
+export const DEMO_STEP_ID = 'demo-step';
+
+// demoRouteTag: the demonstration steps rail's route tag, derived from the
+// record's own contract + chain, never hardcoded per demonstration kind, so
+// it stays honest if the frozen fixtures ever change contract/lines. Today's
+// fixtures render exactly "pa.dtr 2.1 -> 2.2 . local" (refusal) and
+// "pa.dtr 2.2 -> 2.1 -> 2.2 . local" (carry) (arrows/dot are the real Unicode
+// characters; ASCII'd here only in this comment) - both asserted literally
+// in FlowMap.test.tsx against the current fixtures. An empty chain
+// (defensive; today's records always carry one) degrades to
+// "{contract} . local" rather than fabricating a path.
+export function demoRouteTag(record: Pick<DemoRecord, 'contract' | 'chain'>): string {
+  if (record.chain.length === 0) return `${record.contract} · local`;
+  const path = [record.chain[0].from, ...record.chain.map((h) => h.to)].join(' → ');
+  return `${record.contract} ${path} · local`;
 }
 
 // Pinned exactly — the honest caption on the remote-zone container.
@@ -228,7 +271,7 @@ function FlowNode({
 }): JSX.Element {
   return (
     <div
-      className={classNames('node', remote && 'remote', lit && 'lit', flash && 'flash')}
+      className={classNames('node', remote && 'remote', lit && 'lit', flash && 'flash', isStatic && 'static')}
       data-node={id}
       data-static={isStatic ? 'true' : undefined}
     >
@@ -246,7 +289,10 @@ export function FlowMap({
   providerLabel: providerLabelOverride,
   replayToken,
   onReplayEnd,
+  demo,
+  demoRecord,
 }: FlowMapProps): JSX.Element {
+  const demoMode = Boolean(demo);
   const steps = story.steps;
 
   // replayCut: while non-null, every node/edge derivation below reads
@@ -295,14 +341,32 @@ export function FlowMap({
 
   const hasSor = effectiveSteps.some((s) => s.kind === 'sor');
 
-  const providerLabel =
-    providerLabelOverride ?? (lane === 'ehr' ? EHR_PROVIDER_LABEL : CONFORMANT_PROVIDER_LABEL);
-  const providerLit = (lane === 'conformant' && hasIngress) || (lane === 'ehr' && hasSor);
-  const providerStatic = lane === 'ehr' && !hasSor;
+  // demoMode overrides providerLabel/providerLit/providerStatic entirely —
+  // it NEVER falls through to `providerLabelOverride` (App's
+  // deriveProviderLabel result), even when a caller passes one: a
+  // demonstration run supplies its own source-node identity
+  // (FROZEN_SOURCE_NODE), routed around that wire-run-only derivation.
+  const providerLabel = demoMode
+    ? FROZEN_SOURCE_NODE
+    : providerLabelOverride ?? (lane === 'ehr' ? EHR_PROVIDER_LABEL : CONFORMANT_PROVIDER_LABEL);
+  const providerLit = !demoMode && ((lane === 'conformant' && hasIngress) || (lane === 'ehr' && hasSor));
+  const providerStatic = demoMode || (lane === 'ehr' && !hasSor);
 
   const flowRef = useRef<HTMLDivElement | null>(null);
   const edgesHandleRef = useRef<FlowEdgesHandle>(null);
-  const edges = edgeStatesFor(effectiveSteps, lane);
+  // demoMode forces the src edge to the SAME 'static' sentinel the ehr
+  // lane's un-instrumented-gateway fallback already uses (edgeStatesFor's
+  // own honest degradation for "nothing was actually observed here") —
+  // never the ordinary computed `{out,back}` pair. Without this override, a
+  // demo run under lane="conformant" (RunInspector's demo call) computes
+  // `{out:false, back:false}` from the empty demo story, which FlowEdges
+  // draws as an ordinary un-lit wire edge with a persistent arrowhead — a
+  // "not yet fired" look that contradicts "nothing crossed the network".
+  // The frozen source node never had anything read from it at all, so the
+  // dashed static treatment (not a lit/unlit real edge) is the honest one.
+  const edges = demoMode
+    ? { ...edgeStatesFor(effectiveSteps, lane), src: 'static' as const }
+    : edgeStatesFor(effectiveSteps, lane);
 
   const selectedStep = steps.find((s) => s.id === selectedStepId);
   const selectedEdge = selectedStep ? edgeForStep(selectedStep, lane) : undefined;
@@ -433,50 +497,94 @@ export function FlowMap({
   return (
     <div className="flow" ref={flowRef}>
       <div className="k">Flow</div>
-      <FlowEdges ref={edgesHandleRef} edges={edges} selectedEdge={selectedEdge} railRef={flowRef} />
+      <FlowEdges ref={edgesHandleRef} edges={edges} selectedEdge={selectedEdge} railRef={flowRef} demo={demoMode} />
       <FlowNode id="provider" label={providerLabel} lit={providerLit} isStatic={providerStatic} />
-      <FlowNode id="gateway" label="Smart Gateway" lit={effectiveSteps.length > 0} flash={gatewayFlash} />
-      <FlowNode id="validator" label="Validator" lit={hasValidate} />
-      <div className={classNames('remote', remoteLit && 'lit', remoteFailed && 'failed')}>
-        <p className="cap">{REMOTE_ZONE_CAPTION}</p>
-        {relayedStatusValue !== undefined && (
+      <FlowNode
+        id="gateway"
+        label="Smart Gateway"
+        lit={demoMode || effectiveSteps.length > 0}
+        flash={gatewayFlash}
+      />
+      {/* No validator node in the demo variant — a local demonstration
+          never runs the validator (nothing was validated); FlowEdges is
+          told via `demo` above so it never queries the now-absent
+          `[data-node="validator"]` rect either. */}
+      {!demoMode && <FlowNode id="validator" label="Validator" lit={hasValidate} />}
+      <div
+        className={classNames(
+          'remote',
+          demoMode && 'not-involved',
+          !demoMode && remoteLit && 'lit',
+          !demoMode && remoteFailed && 'failed',
+        )}
+      >
+        <p className="cap">{demoMode ? DEMO_REMOTE_CAPTION : REMOTE_ZONE_CAPTION}</p>
+        {!demoMode && relayedStatusValue !== undefined && (
           <p className="relayed-status" title={relayedStatusLine(relayedStatusValue)}>
             {relayedStatusLine(relayedStatusValue)}
           </p>
         )}
-        <FlowNode id="hub" label="Hub" lit={remoteLit} remote />
-        <FlowNode id="payer-gateway" label="Payer Smart Gateway" lit={payerLit} remote />
-        <FlowNode id="payer-engine" label="Payer system" lit={payerLit} remote />
+        <FlowNode id="hub" label="Hub" lit={!demoMode && remoteLit} remote />
+        <FlowNode id="payer-gateway" label="Payer Smart Gateway" lit={!demoMode && payerLit} remote />
+        <FlowNode id="payer-engine" label="Payer system" lit={!demoMode && payerLit} remote />
       </div>
 
       <ol className="steps">
-        {steps.map((step) => {
-          const { from, to } = edgeFor(step, lane);
-          const selected = step.id === selectedStepId;
-          return (
-            <li key={step.id}>
+        {demoMode ? (
+          // The demonstration rail: exactly ONE synthetic row — `steps` is
+          // legitimately empty for a demo run (buildRunStory never sees a
+          // demo.* event as one of its recognized types, per inspect.ts's
+          // own comment), so without this branch the rail rendered as an
+          // empty, broken-looking `<ol>`. Uses the SAME selection mechanics
+          // as a wire row
+          // (data-step-id/aria-pressed/.sel/onSelectStep) — just fed a
+          // fixed id and view-model text instead of an observed Step.
+          // demoRecord undefined (the record hasn't arrived yet) renders no
+          // row at all — never a phantom step.
+          demoRecord && (
+            <li>
               <button
                 type="button"
-                className={classNames('step', step.status, selected && 'sel')}
-                data-step-id={step.id}
-                data-from={from}
-                data-to={to}
-                data-status={step.status}
-                aria-pressed={selected}
-                onClick={() => onSelectStep(step.id)}
+                className={classNames('step', 'ok', selectedStepId === DEMO_STEP_ID && 'sel')}
+                data-step-id={DEMO_STEP_ID}
+                aria-pressed={selectedStepId === DEMO_STEP_ID}
+                onClick={() => onSelectStep(DEMO_STEP_ID)}
               >
-                <span className="lt">{step.legType}</span>
-                {step.kind === 'leg' && (
-                  <span className="cp">{step.counterpart ?? 'the hosted counterparty'}</span>
-                )}
-                {step.kind === 'sor' && <span className="cp">{step.sorOp ?? 'read'}</span>}
-                {step.route && routeChipText(step.route) !== undefined && (
-                  <span className="provenance-tag step-route-tag">{routeChipText(step.route)}</span>
-                )}
+                <span className="lt">{DEMO_STEP_LABEL}</span>
+                <span className="cp">{DEMO_STEP_CLASS_CAPTION}</span>
+                <span className="provenance-tag step-route-tag">{demoRouteTag(demoRecord)}</span>
               </button>
             </li>
-          );
-        })}
+          )
+        ) : (
+          steps.map((step) => {
+            const { from, to } = edgeFor(step, lane);
+            const selected = step.id === selectedStepId;
+            return (
+              <li key={step.id}>
+                <button
+                  type="button"
+                  className={classNames('step', step.status, selected && 'sel')}
+                  data-step-id={step.id}
+                  data-from={from}
+                  data-to={to}
+                  data-status={step.status}
+                  aria-pressed={selected}
+                  onClick={() => onSelectStep(step.id)}
+                >
+                  <span className="lt">{step.legType}</span>
+                  {step.kind === 'leg' && (
+                    <span className="cp">{step.counterpart ?? 'the hosted counterparty'}</span>
+                  )}
+                  {step.kind === 'sor' && <span className="cp">{step.sorOp ?? 'read'}</span>}
+                  {step.route && routeChipText(step.route) !== undefined && (
+                    <span className="provenance-tag step-route-tag">{routeChipText(step.route)}</span>
+                  )}
+                </button>
+              </li>
+            );
+          })
+        )}
       </ol>
     </div>
   );

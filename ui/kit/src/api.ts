@@ -14,6 +14,7 @@ import type {
   PatientContext,
   PatientSummary,
   BridgingExhibitResponse,
+  BridgingCapture,
 } from './types';
 import { resolveToken } from './bridge';
 
@@ -239,6 +240,20 @@ export function postBridgingDemo(enabled: boolean): Promise<{ demoMode: boolean 
 // listener is known.
 export function postBridgingExhibit(kind: 'carry' | 'refusal'): Promise<BridgingExhibitResponse> {
   return postJSON<BridgingExhibitResponse>('/api/bridging/exhibit', { kind });
+}
+
+// getBridgingCapture serves GET /api/bridging/capture/{correlationId}: the
+// gateway child's edge-capture passthrough for one bridged leg — the
+// before/after payload pair as it left the gateway's edge, kept in memory
+// only while the compatibility simulation (SHN_DEMO_EDGE_CAPTURE) is on.
+// StepDetail.tsx's TransformCard expander fetches this ON DEMAND (only once
+// the participant expands the "Show transformation" affordance), never
+// eagerly alongside the rest of a step's frames. 404 for BOTH not-found
+// bodies (the flag is off, or there is no capture for this leg) — the
+// expander treats ApiError.status === 404 as "nothing to show," never
+// distinguishing the two wire reasons from each other.
+export function getBridgingCapture(correlationId: string): Promise<BridgingCapture> {
+  return json<BridgingCapture>(`/api/bridging/capture/${encodeURIComponent(correlationId)}`);
 }
 
 export function getHistoryRecord(runId: string): Promise<HistoryRecord> {

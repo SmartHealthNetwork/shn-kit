@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { buildRunStory, parseObserver } from './inspect';
+import { buildRunStory, buildDemoStory, isDemoRun, parseObserver } from './inspect';
 import type { KitEvent } from './types';
 import ehrUc03 from './fixtures/run-ehr-uc03.json';
 import conformantUc03 from './fixtures/run-conformant-uc03.json';
+import runDemoRefusal from './fixtures/run-demo-refusal.json';
+import runDemoCarry from './fixtures/run-demo-carry.json';
 
 const ehrEvents = ehrUc03 as unknown as KitEvent[];
 const conformantEvents = conformantUc03 as unknown as KitEvent[];
+// wireFixtureEvents: any genuine wire-run fixture, used below for the
+// both-direction rejection row — buildDemoStory must never assemble a
+// demonstration story out of a real run's run.*/observer/audit events.
+const wireFixtureEvents = ehrEvents;
 
 function evt(partial: Partial<KitEvent> & { seq: number; type: string }): KitEvent {
   return { time: '2026-07-03T00:00:00Z', runId: 'run-t', ...partial };
@@ -684,5 +690,125 @@ describe('parseObserver — route/status', () => {
     });
     expect(() => parseObserver(malformed)).not.toThrow();
     expect(parseObserver(malformed)?.route).toBeUndefined();
+  });
+});
+
+// Local-demonstration events — a disjoint species from the wire vocabulary
+// (demo.started/demo.exhibit/demo.finished, never observer/audit/run.*).
+// Both rows below are REAL captured local-demonstration runs
+// (test/kitlive's TestBridgingGate_MixedVersion — docs/kit-ci-operations.md's
+// fixture-recapture recipe), never hand-typed: a drift in
+// kit/kitd/bridging.go's own wire shape fails HERE, not silently. `demoEvt`
+// stays only for the one row below a real capture genuinely cannot drive: a
+// JSON-null chain (a nil Go slice with no `omitempty` on demoRecord — the
+// wire producer's own possible shape; today's captured refusal always has a
+// populated chain because gateway/app/demo_endpoint.go's ChainSteps runs
+// before the refusal is even known, so a real capture can never exercise the
+// null case).
+function demoEvt(partial: Partial<KitEvent> & { seq: number; type: string; runId: string }): KitEvent {
+  return { time: '2026-08-16T00:00:00Z', lane: 'demo', ...partial };
+}
+
+const demoRefusalEvents = runDemoRefusal as unknown as KitEvent[];
+const refusalRunId = demoRefusalEvents[0].runId as string;
+
+const demoCarryEvents = runDemoCarry as unknown as KitEvent[];
+const carryRunId = demoCarryEvents[0].runId as string;
+
+describe('isDemoRun', () => {
+  it('is true iff a demo.started with this runId exists', () => {
+    expect(isDemoRun(demoRefusalEvents, refusalRunId)).toBe(true);
+    expect(isDemoRun(demoRefusalEvents, 'run-1')).toBe(false);
+    expect(isDemoRun(wireFixtureEvents, refusalRunId)).toBe(false);
+  });
+});
+
+describe('buildDemoStory', () => {
+  it('assembles a refusal demonstration from demo.* events', () => {
+    const story = buildDemoStory(refusalRunId, demoRefusalEvents);
+    expect(story).toBeDefined();
+    expect(story?.runId).toBe(refusalRunId);
+    expect(story?.uc).toBe('refusal-engine');
+    expect(story?.record.kind).toBe('refusal-engine');
+    expect(story?.record.contract).toBe('pa.dtr');
+    // The refusal fires on the up leg's single hop (pa.dtr 2.1->2.2) — the
+    // attempted chain ChainSteps reports even though the step itself refused.
+    expect(story?.record.chain).toEqual([{ module: 'pa.dtr 2.1->2.2', from: '2.1', to: '2.2', class: 'carry' }]);
+    expect(story?.record.input).toMatchObject({
+      resourceType: 'QuestionnaireResponse',
+      questionnaire: 'http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0',
+    });
+    // The live engine's own wording (gateway/engine/transform_pas.go's
+    // *engine.SemanticChangeError), round-tripped byte-faithfully through
+    // the wire — not a paraphrase.
+    expect(story?.record.refusal).toBe(
+      'shn: semantic-change refusal: pa.dtr 2.1->2.2 (up direction): no honest byte-level source for ' +
+        'QuestionnaireResponse.extension:qr-coverage (ambiguous: 2 Coverage-referencing qr-context entries, multi-coverage source)',
+    );
+    expect(story?.record.semanticChange).toBe(true);
+    expect(story?.verdict).toBe('refused as expected');
+  });
+
+  it('assembles a carry demonstration (intermediate + output + restored)', () => {
+    const story = buildDemoStory(carryRunId, demoCarryEvents);
+    expect(story).toBeDefined();
+    expect(story?.uc).toBe('carry-engine');
+    expect(story?.record.kind).toBe('carry-engine');
+    expect(story?.record.chain).toEqual([
+      { module: 'pa.dtr 2.2->2.1', from: '2.2', to: '2.1', class: 'carry' },
+      { module: 'pa.dtr 2.1->2.2', from: '2.1', to: '2.2', class: 'carry' },
+    ]);
+    expect(story?.record.input).toMatchObject({ resourceType: 'QuestionnaireResponse' });
+    expect(story?.record.intermediate).toMatchObject({ resourceType: 'QuestionnaireResponse' });
+    expect(story?.record.output).toMatchObject({ resourceType: 'QuestionnaireResponse' });
+    expect(story?.record.restored).toBe(true);
+    // Down leg carries itemWeight into shn-carried-content (nothing for the
+    // up leg to carry back — it is restoring what the down leg captured).
+    expect(story?.record.lossReports).toHaveLength(2);
+    expect(story?.record.lossReports?.[0].module).toBe('pa.dtr 2.2->2.1');
+    expect(story?.record.lossReports?.[0].carried).toHaveLength(1);
+    expect(story?.record.lossReports?.[0].carried?.[0].path).toBe(
+      'QuestionnaireResponse.item.answer.extension:itemWeight',
+    );
+    expect(story?.verdict).toBe('restored exactly');
+  });
+
+  it('returns undefined for a wire run (rejection: no demo story from run.*/observer events)', () => {
+    const story = buildDemoStory('run-1', wireFixtureEvents);
+    expect(story).toBeUndefined();
+  });
+
+  it('returns undefined when there is no demo.started/demo.exhibit pair, never throws', () => {
+    expect(buildDemoStory('nonexistent-run', demoRefusalEvents)).toBeUndefined();
+    expect(() => buildDemoStory('nonexistent-run', demoRefusalEvents)).not.toThrow();
+  });
+
+  it('yields zero wire steps from demo events (rejection: demo events never enter a wire story)', () => {
+    const s = buildRunStory(refusalRunId, demoRefusalEvents);
+    expect(s.steps).toHaveLength(0);
+  });
+
+  it('tolerates a JSON-null chain on the refusal record without throwing (a shape a real capture cannot drive today — see the note above demoEvt)', () => {
+    const runId = 'demo-null-chain-1';
+    const events: KitEvent[] = [
+      demoEvt({ seq: 1, type: 'demo.started', runId, uc: 'refusal-engine' }),
+      demoEvt({
+        seq: 2,
+        type: 'demo.exhibit',
+        runId,
+        uc: 'refusal-engine',
+        demo: {
+          kind: 'refusal-engine',
+          contract: 'pa.dtr',
+          chain: null,
+          input: { resourceType: 'QuestionnaireResponse' },
+          refusal: 'no honest byte-level source for a placeholder element',
+          semanticChange: true,
+        },
+      }),
+      demoEvt({ seq: 3, type: 'demo.finished', runId, uc: 'refusal-engine', detail: 'refused as expected' }),
+    ];
+    expect(() => buildDemoStory(runId, events)).not.toThrow();
+    expect(buildDemoStory(runId, events)?.record.chain).toEqual([]);
   });
 });

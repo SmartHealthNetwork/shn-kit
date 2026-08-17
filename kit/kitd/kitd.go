@@ -80,8 +80,9 @@ type Config struct {
 	// BridgingDemo is the seam POST /api/bridging/demo dispatches the
 	// bridging demo-mode toggle through: main wires a closure that restarts
 	// the gateway child with (enabled) or without (disabled) the
-	// SHN_DEMO_EGRESS_NATIVE_LINES knob in its env, resetting the SSE relay's
-	// cursor on the way (supervisor.RestartWithEnv's preSpawn hook). nil ⇒
+	// SHN_DEMO_EGRESS_NATIVE_LINES and SHN_DEMO_EDGE_CAPTURE knobs in its
+	// env, resetting the SSE relay's cursor on the way
+	// (supervisor.RestartWithEnv's preSpawn hook). nil ⇒
 	// the whole feature is absent: the route 404s and GET /api/status omits
 	// its "bridging" block entirely, so a client can tell "this Kit has no
 	// demo mode" from "demo mode is off" — the same nil-Config-field posture
@@ -113,6 +114,14 @@ type Config struct {
 	// since /api/about's body IS the manifest bytes rather than an envelope
 	// that could carry a null.
 	ManifestPath string
+
+	// Clock is the injected time source POST /api/bridging/exhibit uses to
+	// mint local-demonstration run ids (demo-<unixMilli>-<n>, bridging.go's
+	// emitDemoRun) — the SAME source production wires into the event Bus
+	// (main.go's event.NewBus(time.Now)), so a demo run's id timestamp and
+	// its own bus-stamped Event.Time agree. nil defaults to time.Now (set in
+	// New); tests inject a fixed clock for deterministic ids.
+	Clock func() time.Time
 }
 
 // TokenStorage is the Detail() seam Config.TokenStorage satisfies — kitd
@@ -203,6 +212,13 @@ type Daemon struct {
 	// a time, the same posture as the runs routes' single
 	// in-flight run.
 	verifyBusy atomic.Bool
+
+	// demoSeq is the per-process counter POST /api/bridging/exhibit's
+	// emitDemoRun uses alongside cfg.Clock to mint demo-<unixMilli>-<n> run
+	// ids — the runner's own nextRunID idiom (kit/runner/runner.go:206-216),
+	// kept as a separate Daemon-owned counter (never shared with the
+	// runner's own idSeq) since demo runs never touch the runner at all.
+	demoSeq atomic.Uint64
 }
 
 // verifyTimeout bounds every POST /api/verify re-probe: probe funcs make
@@ -232,6 +248,9 @@ func New(cfg Config) (*Daemon, error) {
 		}
 		token = hex.EncodeToString(b)
 	}
+	if cfg.Clock == nil {
+		cfg.Clock = time.Now
+	}
 
 	return &Daemon{
 		cfg:    cfg,
@@ -244,6 +263,10 @@ func New(cfg Config) (*Daemon, error) {
 
 // Addr returns the bound "host:port". Valid only after Ready() has closed.
 func (d *Daemon) Addr() string { return d.addr }
+
+// now returns the Daemon's injected clock (house clock rule) — cfg.Clock is
+// defaulted to time.Now in New, so this is always safe to call.
+func (d *Daemon) now() time.Time { return d.cfg.Clock() }
 
 // Ready returns a channel closed once session.json has been written to
 // StateDir and the daemon is about to start serving.
@@ -483,6 +506,7 @@ func (d *Daemon) handler() http.Handler {
 	gated.HandleFunc("POST /api/children/{name}/restart", d.handleChildRestart)
 	gated.HandleFunc("POST /api/bridging/demo", d.handleBridgingDemo)
 	gated.HandleFunc("POST /api/bridging/exhibit", d.handleBridgingExhibit)
+	gated.HandleFunc("GET /api/bridging/capture/{correlationId}", d.handleBridgingCapture)
 	gated.HandleFunc("GET /api/about", d.handleAbout)
 	gated.HandleFunc("GET /api/support-bundle", d.handleSupportBundle)
 	// Only GET /events is forwarded to the bus's handler; its internal
@@ -618,10 +642,11 @@ type demoRequest struct {
 
 // handleBridgingDemo serves POST /api/bridging/demo: flips the gateway
 // child's bridging demo mode by restarting it with (or without) the
-// SHN_DEMO_EGRESS_NATIVE_LINES knob — a PURPOSE-BUILT gateway restart, not a
-// hole in the generic per-child restart seam's gateway refusal
-// (gatewayRestartRefused): the spec, port, driver keypair and runner wiring
-// are all identical across it; only the env changes.
+// SHN_DEMO_EGRESS_NATIVE_LINES and SHN_DEMO_EDGE_CAPTURE knobs — a
+// PURPOSE-BUILT gateway restart, not a hole in the generic per-child restart
+// seam's gateway refusal (gatewayRestartRefused): the spec, port, driver
+// keypair and runner wiring are all identical across it; only the env
+// changes.
 //
 //   - 404 when Config.BridgingDemo is nil (feature absent — the same
 //     nil-Config-field contract as the bootstrap/history/byo routes).

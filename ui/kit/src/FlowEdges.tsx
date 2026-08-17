@@ -5,8 +5,12 @@
 // edgeStatesFor pure derivation) — an open leg shows an outbound arrow and
 // nothing back. The ehr lane's un-instrumented-gateway fallback
 // (`src: 'static'`) draws ONE dashed path plus the `.src-label` honesty
-// caption instead of a lying lit pair. Arrows are PERSISTENT by design —
-// always attached via CSS `marker-end`, not only on selection.
+// caption instead of a lying lit pair. FlowMap's local-demonstration
+// variant reuses the same `src: 'static'` sentinel for the identical
+// reason (nothing was ever read from the frozen source node), but
+// suppresses the ehr-specific caption text below (`demo` prop). Arrows are
+// PERSISTENT by design — always attached via CSS `marker-end`, not only on
+// selection.
 import {
   forwardRef,
   useCallback,
@@ -28,6 +32,12 @@ export interface FlowEdgesProps {
   edges: EdgeStates;
   selectedEdge?: EdgeKey; // sel/dim treatment; set by FlowMap when a step is selected
   railRef: RefObject<HTMLDivElement | null>; // the .flow container to measure
+  // demo: FlowMap's local-demonstration variant renders no validator node,
+  // so `[data-node="validator"]` doesn't exist to measure — gates OFF both
+  // the val-edge geometry computation (which would otherwise substitute a
+  // zero rect) and the rendered val path elements. undefined/false ⇒
+  // today's wire-run rendering, byte-unchanged.
+  demo?: boolean;
 }
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -54,11 +64,10 @@ function rectRelativeTo(rail: DOMRect, el: Element | null) {
 // the adjacency pair sits at x = provider.left + 78 (out) / +90 (back); the
 // leg pair routes down the left gutter (x = 16 out / 8 back) from the
 // gateway's left edge into the hub's left edge.
-function buildGeometry(rail: HTMLDivElement, isStaticSrc: boolean): Geometry {
+function buildGeometry(rail: HTMLDivElement, isStaticSrc: boolean, hideValidator: boolean): Geometry {
   const railRect = rail.getBoundingClientRect();
   const prov = rectRelativeTo(railRect, rail.querySelector('[data-node="provider"]'));
   const gw = rectRelativeTo(railRect, rail.querySelector('[data-node="gateway"]'));
-  const val = rectRelativeTo(railRect, rail.querySelector('[data-node="validator"]'));
   const hub = rectRelativeTo(railRect, rail.querySelector('[data-node="hub"]'));
 
   const ax = prov.x + 78;
@@ -78,8 +87,15 @@ function buildGeometry(rail: HTMLDivElement, isStaticSrc: boolean): Geometry {
     paths['src.back'] = `M ${bx} ${gw.y - 2} V ${prov.bottom + 2}`;
   }
 
-  paths['val.out'] = `M ${ax} ${gw.bottom + 2} V ${val.y - 2}`;
-  paths['val.back'] = `M ${bx} ${val.y - 2} V ${gw.bottom + 2}`;
+  // hideValidator (FlowMap's demo variant): no `[data-node="validator"]`
+  // exists to measure — querying it would silently substitute a zero rect
+  // (rectRelativeTo's `?? new DOMRect(0,0,0,0)` fallback) and draw a stray
+  // off-canvas path pair. Skip the lookup and the val geometry entirely.
+  if (!hideValidator) {
+    const val = rectRelativeTo(railRect, rail.querySelector('[data-node="validator"]'));
+    paths['val.out'] = `M ${ax} ${gw.bottom + 2} V ${val.y - 2}`;
+    paths['val.back'] = `M ${bx} ${val.y - 2} V ${gw.bottom + 2}`;
+  }
 
   paths['leg.out'] = `M ${gw.x} ${gw.cy - 5} H 16 V ${hub.cy - 5} H ${hub.x - 2}`;
   paths['leg.back'] = `M ${hub.x - 2} ${hub.cy + 5} H 8 V ${gw.cy + 5} H ${gw.x - 2}`;
@@ -96,9 +112,10 @@ function prefersReducedMotion(): boolean {
 }
 
 export const FlowEdges = forwardRef<FlowEdgesHandle, FlowEdgesProps>(function FlowEdges(
-  { edges, selectedEdge, railRef },
+  { edges, selectedEdge, railRef, demo },
   ref,
 ): JSX.Element {
+  const hideValidator = Boolean(demo);
   const [geometry, setGeometry] = useState<Geometry>(EMPTY_GEOMETRY);
   const pulseLayerRef = useRef<SVGGElement | null>(null);
   const pathRefs = useRef<Partial<Record<PathKey, SVGPathElement | null>>>({});
@@ -121,8 +138,8 @@ export const FlowEdges = forwardRef<FlowEdgesHandle, FlowEdgesProps>(function Fl
   const recompute = useCallback(() => {
     const rail = railRef.current;
     if (!rail) return;
-    setGeometry(buildGeometry(rail, isStaticSrc));
-  }, [railRef, isStaticSrc]);
+    setGeometry(buildGeometry(rail, isStaticSrc, hideValidator));
+  }, [railRef, isStaticSrc, hideValidator]);
 
   // railRef is owned by an ANCESTOR host node (FlowMap's `.flow` div wraps
   // this component) — React attaches a host ref to its fiber only after
@@ -274,14 +291,25 @@ export const FlowEdges = forwardRef<FlowEdgesHandle, FlowEdgesProps>(function Fl
               {renderPath('src', 'back')}
             </>
           )}
-          {renderPath('val', 'out')}
-          {renderPath('val', 'back')}
+          {!hideValidator && (
+            <>
+              {renderPath('val', 'out')}
+              {renderPath('val', 'back')}
+            </>
+          )}
           {renderPath('leg', 'out')}
           {renderPath('leg', 'back')}
         </g>
         <g ref={pulseLayerRef} />
       </svg>
-      {isStaticSrc && geometry.srcLabel && (
+      {/* demo (FlowMap's local-demonstration variant) also drives isStaticSrc
+          true (FlowMap forces `edges.src = 'static'`), but "seeded read —
+          not observed" is EHR-lane-specific vocabulary — a demonstration
+          never reads anything at all, so this caption would misdescribe it.
+          The frozen source node's own label (FROZEN_SOURCE_NODE) plus the
+          dashed static edge already say what needs saying; no caption here
+          for that species. */}
+      {isStaticSrc && geometry.srcLabel && !demo && (
         <div
           className="src-label"
           style={{ left: geometry.srcLabel.left, top: geometry.srcLabel.top }}

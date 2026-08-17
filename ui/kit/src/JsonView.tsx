@@ -14,11 +14,19 @@
 // wins over the global baseline, and a search hit force-expands over both.
 import { useMemo, useState } from 'react';
 import type { JSX } from 'react';
+import type { RegionClass } from './xformclassify';
 
 export interface JsonViewProps {
   value: unknown;
   search?: string;
   defaultDepth?: number;
+  // regions: xformclassify's path-keyed classification map. Purely additive —
+  // default undefined renders exactly as before this prop existed. Keys use
+  // the SAME dot-joined path JsonNode already keys nodes
+  // by (root = '', children joined with '.', array indices as their plain
+  // decimal index — see `path` below), so a caller only has to
+  // `region.path.join('.')` to address a node.
+  regions?: Map<string, RegionClass>;
 }
 
 // The global open baseline. 'default' = open while depth < defaultDepth (the
@@ -56,6 +64,27 @@ interface MatchInfo {
   // it — forces that container open regardless of depth/manual-collapse.
   expandPaths: Set<string>;
   count: number;
+}
+
+// regionAncestorPaths: every STRICT ancestor path of a region's own path —
+// forcing those open (the same force-open precedent computeMatches' search
+// hits already use) guarantees a differing region renders regardless of
+// `defaultDepth` or a manual collapse, without expanding the region's own
+// descendants (a region can itself be a large subtree; only the path TO it
+// needs forcing, not everything inside it).
+function regionAncestorPaths(regions: Map<string, RegionClass> | undefined): Set<string> {
+  const paths = new Set<string>();
+  if (!regions) return paths;
+  for (const key of regions.keys()) {
+    if (key === '') continue;
+    const segs = key.split('.');
+    let cur = '';
+    for (let i = 0; i < segs.length - 1; i++) {
+      cur = cur === '' ? segs[i] : `${cur}.${segs[i]}`;
+      paths.add(cur);
+    }
+  }
+  return paths;
 }
 
 // nodeOwnMatchCount counts key-hit and value-hit INDEPENDENTLY: a leaf
@@ -107,7 +136,17 @@ interface JsonNodeProps {
   search: string;
   mode: OpenMode;
   overrides: Record<string, boolean>;
+  regions?: Map<string, RegionClass>;
   onToggle(path: string, nextOpen: boolean): void;
+}
+
+// regionClassName renders the optional `json-region json-region-<cls>` pair
+// for a node's own path — a no-op (empty string) when there's no regions
+// map or no entry for this path, so an untouched call site's className is
+// byte-identical to before this prop existed.
+function regionClassName(regions: Map<string, RegionClass> | undefined, path: string): string {
+  const cls = regions?.get(path);
+  return cls ? ` json-region json-region-${cls}` : '';
 }
 
 function JsonNode({
@@ -120,6 +159,7 @@ function JsonNode({
   search,
   mode,
   overrides,
+  regions,
   onToggle,
 }: JsonNodeProps): JSX.Element {
   const needle = search.trim().toLowerCase();
@@ -129,7 +169,7 @@ function JsonNode({
     const valueStr = formatPrimitive(value);
     const valueMatches = needle !== '' && valueStr.toLowerCase().includes(needle);
     return (
-      <div className="json-node json-leaf" data-path={path}>
+      <div className={`json-node json-leaf${regionClassName(regions, path)}`} data-path={path}>
         {label !== undefined &&
           (keyMatches ? (
             <mark className="json-match json-key-match">{label}</mark>
@@ -158,7 +198,7 @@ function JsonNode({
   const entries = containerEntries(value);
 
   return (
-    <div className="json-node json-container" data-path={path}>
+    <div className={`json-node json-container${regionClassName(regions, path)}`} data-path={path}>
       <button
         type="button"
         className="json-toggle"
@@ -190,6 +230,7 @@ function JsonNode({
               search={search}
               mode={mode}
               overrides={overrides}
+              regions={regions}
               onToggle={onToggle}
             />
           ))}
@@ -202,8 +243,19 @@ function JsonNode({
   );
 }
 
-export function JsonView({ value, search = '', defaultDepth = 2 }: JsonViewProps): JSX.Element {
-  const { expandPaths, count } = useMemo(() => computeMatches(value, search), [value, search]);
+export function JsonView({ value, search = '', defaultDepth = 2, regions }: JsonViewProps): JSX.Element {
+  const { expandPaths: searchExpandPaths, count } = useMemo(() => computeMatches(value, search), [value, search]);
+  // Regions force their own ancestor chain open, same precedent as a search
+  // hit — a caller passing `regions` at a shallow `defaultDepth` (XformDiff's
+  // panes no longer default to full-depth expansion) still gets every
+  // differing region guaranteed reachable.
+  const regionPaths = useMemo(() => regionAncestorPaths(regions), [regions]);
+  const expandPaths = useMemo(() => {
+    if (regionPaths.size === 0) return searchExpandPaths;
+    const merged = new Set(searchExpandPaths);
+    for (const p of regionPaths) merged.add(p);
+    return merged;
+  }, [searchExpandPaths, regionPaths]);
   const trimmedSearch = search.trim();
 
   // Global open baseline + per-node explicit toggles. "Expand/Collapse all"
@@ -252,6 +304,7 @@ export function JsonView({ value, search = '', defaultDepth = 2 }: JsonViewProps
         search={search}
         mode={mode}
         overrides={overrides}
+        regions={regions}
         onToggle={handleToggle}
       />
     </div>

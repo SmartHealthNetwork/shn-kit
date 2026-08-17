@@ -26,16 +26,18 @@ import type {
 import type { EventsView } from './useEvents';
 import { ApiError, postBridgingDemo, postBridgingExhibit, postRun } from './api';
 import { RegisterSwitch } from './RegisterSwitch';
-import { StatusChip } from './StatusChip';
+import { StatusChip, TickIcon } from './StatusChip';
 import {
   BRIDGING_REMOTE_CAPTION,
   CONTRACT_LINE_EXPLAINER,
   DEMO_MODE_BADGE,
-  ENGINE_EXHIBIT_FRAMING,
+  DEMO_RECEIPT_CARRY,
+  DEMO_RECEIPT_REFUSAL,
   REFUSAL_EXHIBIT_FRAMING,
   ROUTE_REFUSAL_GRAMMAR_EXAMPLE,
   STEP_CLASSES,
   STEP_CLASS_META,
+  VIEW_IN_INSPECTOR_LINK,
 } from './bridgingmeta';
 
 export interface BridgingPanelProps {
@@ -166,6 +168,31 @@ type ExhibitState<T> =
   | { kind: 'running' }
   | { kind: 'done'; result: T }
   | { kind: 'error'; message: string };
+
+// ExhibitReceipt is the engine exhibits' shared success-state row — a tick,
+// the kind-pinned receipt sentence, and a link into the inspector where the
+// demonstration itself now lives (RunInspector/StepDetail render the actual
+// engine run; this panel no longer duplicates it inline). Replaces the
+// former inline verdict box (bridging-exhibit-result) for BOTH exhibits.
+function ExhibitReceipt({
+  text,
+  runId,
+  onSelectRun,
+}: {
+  text: string;
+  runId: string;
+  onSelectRun(runId: string): void;
+}): JSX.Element {
+  return (
+    <p className="bridging-exhibit-receipt">
+      {TickIcon}
+      {text}{' '}
+      <button type="button" className="link" onClick={() => onSelectRun(runId)}>
+        {VIEW_IN_INSPECTOR_LINK}
+      </button>
+    </p>
+  );
+}
 
 export function BridgingPanel({
   status,
@@ -448,23 +475,11 @@ export function BridgingPanel({
             </p>
           )}
           {refusalEngineState.kind === 'done' && (
-            <div className="bridging-exhibit-result">
-              <p className="exhibit-framing">{ENGINE_EXHIBIT_FRAMING}</p>
-              <p className="bridging-refusal-text">{refusalEngineState.result.refusal}</p>
-              {/* semanticChange is expected true — that's the whole point of this
-                  exhibit (kitd's bridging.go returns 500, never a 200, when the
-                  fixture doesn't behave as documented, so "false" here should be
-                  unreachable in practice). Flagged, not hidden, if it ever isn't. */}
-              <p
-                className={
-                  refusalEngineState.result.semanticChange
-                    ? 'bridging-refusal-semantic'
-                    : 'bridging-refusal-semantic bridging-exhibit-unexpected'
-                }
-              >
-                semantic change: {refusalEngineState.result.semanticChange ? 'yes' : 'no'}
-              </p>
-            </div>
+            <ExhibitReceipt
+              text={DEMO_RECEIPT_REFUSAL}
+              runId={refusalEngineState.result.runId}
+              onSelectRun={onSelectRun}
+            />
           )}
 
           <div className="bridging-action-row">
@@ -494,32 +509,7 @@ export function BridgingPanel({
             </p>
           )}
           {carryState.kind === 'done' && (
-            <div className="bridging-exhibit-result">
-              <p className="exhibit-framing">{ENGINE_EXHIBIT_FRAMING}</p>
-              {/* restored is expected true — the exhibit's whole claim is a byte-
-                  identical round trip (kitd's bridging.go returns 500, never a 200,
-                  when it isn't), so "false" here should be unreachable in
-                  practice. Flagged, not hidden, if it ever isn't. */}
-              <p
-                className={
-                  carryState.result.restored
-                    ? 'bridging-carry-restored'
-                    : 'bridging-carry-restored bridging-exhibit-unexpected'
-                }
-              >
-                restored: {carryState.result.restored ? 'yes' : 'no'}
-              </p>
-              <ul className="bridging-carry-paths">
-                {carryState.result.lossReports
-                  .flatMap((r) => r.carried ?? [])
-                  .map((entry, i) => (
-                    <li key={`${entry.path}-${i}`}>
-                      {entry.path}
-                      {entry.detail ? ` — ${entry.detail}` : ''}
-                    </li>
-                  ))}
-              </ul>
-            </div>
+            <ExhibitReceipt text={DEMO_RECEIPT_CARRY} runId={carryState.result.runId} onSelectRun={onSelectRun} />
           )}
         </section>
 

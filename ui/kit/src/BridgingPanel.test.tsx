@@ -7,8 +7,11 @@ import {
   BRIDGING_REMOTE_CAPTION,
   CONTRACT_LINE_EXPLAINER,
   DEMO_MODE_BADGE,
+  DEMO_RECEIPT_CARRY,
+  DEMO_RECEIPT_REFUSAL,
   ENGINE_EXHIBIT_FRAMING,
   REFUSAL_EXHIBIT_FRAMING,
+  VIEW_IN_INSPECTOR_LINK,
 } from './bridgingmeta';
 import type { EventsView } from './useEvents';
 import type { KitEvent, Probe, Register, RunResult, StatusResponse } from './types';
@@ -64,6 +67,7 @@ beforeEach(() => {
     kind: 'carry',
     lossReports: [{ module: 'pa.dtr 2.2->2.1', source: '2.2', target: '2.1', carried: [{ path: 'item.answer.extension:itemWeight', detail: 'carried' }] }],
     restored: true,
+    runId: 'demo-run-1',
   });
 });
 
@@ -330,78 +334,66 @@ describe('BridgingPanel — refusal exhibit', () => {
     expect((btn as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('running the engine part posts kind "refusal" and renders the typed text + semanticChange, framed by ENGINE_EXHIBIT_FRAMING', async () => {
+  it('running the engine part posts kind "refusal" and renders the pinned receipt line (tick + DEMO_RECEIPT_REFUSAL + the inspector link) — the old verdict-box markup is gone', async () => {
     vi.mocked(api.postBridgingExhibit).mockResolvedValueOnce({
       kind: 'refusal',
       refusal: 'semantic-change refusal: certificationType/requestType/location[x]/relationship',
       semanticChange: true,
+      runId: 'demo-refusal-1',
     });
     const user = userEvent.setup();
-    renderPanel({ status: onStatus() });
+    const { onSelectRun } = renderPanel({ status: onStatus() });
     await user.click(screen.getByRole('button', { name: 'Run refusal engine exhibit' }));
 
     expect(api.postBridgingExhibit).toHaveBeenCalledWith('refusal');
-    expect(ENGINE_EXHIBIT_FRAMING).toBe(
-      'engine demonstration over frozen reference content — the same modules your live legs route through',
-    );
-    expect(await screen.findByText(ENGINE_EXHIBIT_FRAMING)).toBeDefined();
+    expect(DEMO_RECEIPT_REFUSAL).toBe('Ran just now — refused as expected.');
+    expect(await screen.findByText(DEMO_RECEIPT_REFUSAL)).toBeDefined();
+    expect(VIEW_IN_INSPECTOR_LINK).toBe('View in inspector →');
+
+    // The old verdict-box markup (bridging-exhibit-result, refusal text,
+    // ENGINE_EXHIBIT_FRAMING) no longer renders here — the demonstration
+    // itself lives in the inspector now.
+    expect(document.querySelector('.bridging-exhibit-result')).toBeNull();
     expect(
-      screen.getByText('semantic-change refusal: certificationType/requestType/location[x]/relationship'),
-    ).toBeDefined();
-    expect(screen.getByText(/semantic change: yes/i)).toBeDefined();
+      screen.queryByText('semantic-change refusal: certificationType/requestType/location[x]/relationship'),
+    ).toBeNull();
+    expect(screen.queryByText(/semantic change:/i)).toBeNull();
+    expect(screen.queryByText(ENGINE_EXHIBIT_FRAMING)).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: VIEW_IN_INSPECTOR_LINK }));
+    expect(onSelectRun).toHaveBeenCalledWith('demo-refusal-1');
   });
 
-  it('running the carry exhibit posts kind "carry" and renders the Carried paths + restored, framed by ENGINE_EXHIBIT_FRAMING', async () => {
+  it('running the carry exhibit posts kind "carry" and renders the pinned receipt line (tick + DEMO_RECEIPT_CARRY + the inspector link) — the old verdict-box markup is gone', async () => {
     const user = userEvent.setup();
-    renderPanel({ status: onStatus() });
+    const { onSelectRun } = renderPanel({ status: onStatus() });
     await user.click(screen.getByRole('button', { name: 'Run carry content exhibit' }));
 
     expect(api.postBridgingExhibit).toHaveBeenCalledWith('carry');
-    expect(await screen.findByText(ENGINE_EXHIBIT_FRAMING)).toBeDefined();
-    expect(screen.getByText(/item\.answer\.extension:itemWeight/)).toBeDefined();
-    expect(screen.getByText(/restored: yes/i)).toBeDefined();
+    expect(DEMO_RECEIPT_CARRY).toBe('Ran just now — restored exactly.');
+    expect(await screen.findByText(DEMO_RECEIPT_CARRY)).toBeDefined();
+
+    // The old verdict-box markup (bridging-exhibit-result, carried-paths
+    // list, ENGINE_EXHIBIT_FRAMING) no longer renders here.
+    expect(document.querySelector('.bridging-exhibit-result')).toBeNull();
+    expect(document.querySelector('.bridging-carry-paths')).toBeNull();
+    expect(screen.queryByText(/item\.answer\.extension:itemWeight/)).toBeNull();
+    expect(screen.queryByText(/restored:/i)).toBeNull();
+    expect(screen.queryByText(ENGINE_EXHIBIT_FRAMING)).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: VIEW_IN_INSPECTOR_LINK }));
+    expect(onSelectRun).toHaveBeenCalledWith('demo-run-1');
   });
 
-  // Both exhibits are documented to answer 500 (never a 200) when kitd's own
-  // fixtures don't behave as promised (bridging.go), so restored:false /
-  // semanticChange:false should be unreachable via the real endpoint — this
-  // pins the defensive UI-side visual differentiation anyway, rather than
-  // rendering an unexpected false with the same neutral styling as the
-  // expected-true case.
-  it('an unexpected restored:false gets the visual-differentiation class, not neutral styling', async () => {
-    vi.mocked(api.postBridgingExhibit).mockResolvedValueOnce({
-      kind: 'carry',
-      lossReports: [],
-      restored: false,
-    });
-    const user = userEvent.setup();
-    renderPanel({ status: onStatus() });
-    await user.click(screen.getByRole('button', { name: 'Run carry content exhibit' }));
-
-    const el = await screen.findByText(/restored: no/i);
-    expect(el.className).toContain('bridging-exhibit-unexpected');
-  });
-
-  it('an unexpected semanticChange:false gets the visual-differentiation class, not neutral styling', async () => {
-    vi.mocked(api.postBridgingExhibit).mockResolvedValueOnce({
-      kind: 'refusal',
-      refusal: 'accepted (unexpected)',
-      semanticChange: false,
-    });
+  it('a rejected engine exhibit still shows the byte-untouched role="alert" error branch, not the receipt', async () => {
+    vi.mocked(api.postBridgingExhibit).mockRejectedValueOnce(new Error('engine unavailable'));
     const user = userEvent.setup();
     renderPanel({ status: onStatus() });
     await user.click(screen.getByRole('button', { name: 'Run refusal engine exhibit' }));
 
-    const el = await screen.findByText(/semantic change: no/i);
-    expect(el.className).toContain('bridging-exhibit-unexpected');
-  });
-
-  it('the expected-true cases get NEITHER the unexpected class (regression pin against over-flagging)', async () => {
-    const user = userEvent.setup();
-    renderPanel({ status: onStatus() });
-    await user.click(screen.getByRole('button', { name: 'Run carry content exhibit' }));
-    const el = await screen.findByText(/restored: yes/i);
-    expect(el.className).not.toContain('bridging-exhibit-unexpected');
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'engine unavailable');
+    expect(screen.queryByText(DEMO_RECEIPT_REFUSAL)).toBeNull();
+    expect(screen.queryByText(VIEW_IN_INSPECTOR_LINK)).toBeNull();
   });
 });
 

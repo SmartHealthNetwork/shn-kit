@@ -6,13 +6,16 @@ import {
   REMOTE_ZONE_CAPTION,
   EHR_PROVIDER_LABEL,
   CONFORMANT_PROVIDER_LABEL,
+  DEMO_STEP_ID,
+  demoRouteTag,
   edgeStatesFor,
   edgeForStep,
 } from './FlowMap';
 import { buildRunStory } from './inspect';
 import type { Step, RunStory } from './inspect';
-import type { KitEvent } from './types';
+import type { DemoRecord, KitEvent } from './types';
 import { relayedStatusLine } from './StepDetail';
+import { DEMO_REMOTE_CAPTION, DEMO_STEP_CLASS_CAPTION, DEMO_STEP_LABEL, FROZEN_SOURCE_NODE } from './bridgingmeta';
 import ehrUc03 from './fixtures/run-ehr-uc03.json';
 
 const ehrEvents = ehrUc03 as unknown as KitEvent[];
@@ -834,5 +837,210 @@ describe('FlowMap — step selection replays its edge', () => {
     render(<FlowMap story={story} lane="conformant" selectedStepId="9" onSelectStep={() => {}} />);
     expect(document.querySelector('path.sel')).toBeNull();
     expect(getNode('gateway').className).toContain('flash');
+  });
+});
+
+describe('FlowMap — local-demonstration variant (demo prop)', () => {
+  // lane="conformant" here deliberately (the production shape —
+  // RunInspector's demo call site hardcodes lane="conformant"): lane="ehr"
+  // would accidentally produce edges.src === 'static' on its own (the
+  // ehr-no-sor fallback), masking whether demoMode's own override is doing
+  // anything.
+  it('static frozen-source node, lit gateway, no validator node — never derived from providerLabel/lane', () => {
+    render(
+      <FlowMap
+        story={emptyStory()}
+        lane="conformant"
+        onSelectStep={() => {}}
+        providerLabel="Your EHR (FHIR data source)"
+        demo
+      />,
+    );
+
+    const provider = getNode('provider');
+    expect(provider.textContent).toBe(FROZEN_SOURCE_NODE);
+    expect(provider.getAttribute('data-static')).toBe('true');
+    expect(provider.className).not.toMatch(/\blit\b/);
+
+    expect(getNode('gateway').className).toMatch(/\blit\b/);
+
+    expect(document.querySelector('[data-node="validator"]')).toBeNull();
+  });
+
+  // Regression: under lane="conformant" (the production shape) with the
+  // empty demo story, edgeStatesFor's ordinary computation yields
+  // src:{out:false,back:false} — ORDINARY un-lit edges with a persistent
+  // arrowhead (FlowEdges' `.edge` base marker-end), reading as a live
+  // not-yet-fired wire connection. demoMode must force the SAME `static`
+  // dashed treatment the ehr-lane no-sor fallback uses (consistent with the
+  // frozen/static source node itself) — never a real out/back pair, and
+  // never the ehr-specific "seeded read — not observed" caption text.
+  it('renders the source→gateway edge as the honest static/dashed treatment under lane="conformant" (the production shape) — never an ordinary un-lit out/back pair, never the ehr-specific caption', () => {
+    render(<FlowMap story={emptyStory()} lane="conformant" onSelectStep={() => {}} demo />);
+
+    expect(document.querySelectorAll('[data-edge="src"][data-dir="static"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-edge="src"][data-dir="out"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-edge="src"][data-dir="back"]')).toHaveLength(0);
+    expect(document.querySelector('[data-edge="src"][data-dir="static"]')?.getAttribute('class')).toMatch(/\bstatic\b/);
+    expect(document.querySelector('.src-label')).toBeNull();
+  });
+
+  it('draws no validator edges — no stray path built off a zero-rect validator lookup', () => {
+    render(<FlowMap story={emptyStory()} lane="conformant" onSelectStep={() => {}} demo />);
+    expect(document.querySelectorAll('[data-edge="val"]')).toHaveLength(0);
+  });
+
+  it('dims the remote zone (.not-involved) and swaps in DEMO_REMOTE_CAPTION, replacing REMOTE_ZONE_CAPTION for this species only', () => {
+    render(<FlowMap story={emptyStory()} lane="conformant" onSelectStep={() => {}} demo />);
+
+    const remote = document.querySelector('.remote');
+    expect(remote?.className).toMatch(/\bnot-involved\b/);
+    expect(remote?.className).not.toMatch(/\blit\b/);
+    expect(remote?.className).not.toMatch(/\bfailed\b/);
+    expect(screen.getByText(DEMO_REMOTE_CAPTION)).toBeDefined();
+    expect(screen.queryByText(REMOTE_ZONE_CAPTION)).toBeNull();
+
+    for (const id of ['hub', 'payer-gateway', 'payer-engine']) {
+      expect(getNode(id).className).not.toMatch(/\blit\b/);
+    }
+  });
+
+  it('wire runs (demo omitted) stay byte-untouched: validator node present, real REMOTE_ZONE_CAPTION, no not-involved class', () => {
+    render(<FlowMap story={emptyStory()} lane="conformant" onSelectStep={() => {}} />);
+
+    expect(document.querySelector('[data-node="validator"]')).not.toBeNull();
+    expect(document.querySelector('.remote')?.className).not.toMatch(/\bnot-involved\b/);
+    expect(screen.getByText(REMOTE_ZONE_CAPTION)).toBeDefined();
+    expect(document.querySelectorAll('[data-edge="val"]')).toHaveLength(2);
+  });
+});
+
+// demoRouteTag — derived from the record's own contract + chain (never
+// hardcoded per kind), so it stays honest if the frozen fixtures ever
+// change contract/lines. The two literal renderings
+// below are asserted against the CURRENT fixtures
+// (fixtures/run-demo-refusal.json, fixtures/run-demo-carry.json).
+describe('demoRouteTag', () => {
+  it("the refusal fixture's chain (pa.dtr 2.1->2.2) renders exactly 'pa.dtr 2.1 → 2.2 · local'", () => {
+    expect(
+      demoRouteTag({
+        contract: 'pa.dtr',
+        chain: [{ module: 'pa.dtr 2.1->2.2', from: '2.1', to: '2.2', class: 'carry' }],
+      }),
+    ).toBe('pa.dtr 2.1 → 2.2 · local');
+  });
+
+  it("the carry fixture's down+up chain (pa.dtr 2.2->2.1, 2.1->2.2) renders exactly 'pa.dtr 2.2 → 2.1 → 2.2 · local'", () => {
+    expect(
+      demoRouteTag({
+        contract: 'pa.dtr',
+        chain: [
+          { module: 'pa.dtr 2.2->2.1', from: '2.2', to: '2.1', class: 'carry' },
+          { module: 'pa.dtr 2.1->2.2', from: '2.1', to: '2.2', class: 'carry' },
+        ],
+      }),
+    ).toBe('pa.dtr 2.2 → 2.1 → 2.2 · local');
+  });
+
+  it('an empty chain (e.g. a not-yet-resolved refusal record) degrades to contract + " · local", never a fabricated path', () => {
+    expect(demoRouteTag({ contract: 'pa.dtr', chain: [] })).toBe('pa.dtr · local');
+  });
+});
+
+describe('FlowMap — demonstration steps rail (single synthetic row)', () => {
+  const demoRefusalRecord: DemoRecord = {
+    kind: 'refusal-engine',
+    contract: 'pa.dtr',
+    chain: [{ module: 'pa.dtr 2.1->2.2', from: '2.1', to: '2.2', class: 'carry' }],
+    input: { resourceType: 'QuestionnaireResponse' },
+  };
+
+  const demoCarryRecord: DemoRecord = {
+    kind: 'carry-engine',
+    contract: 'pa.dtr',
+    chain: [
+      { module: 'pa.dtr 2.2->2.1', from: '2.2', to: '2.1', class: 'carry' },
+      { module: 'pa.dtr 2.1->2.2', from: '2.1', to: '2.2', class: 'carry' },
+    ],
+    input: { resourceType: 'QuestionnaireResponse' },
+  };
+
+  it('renders exactly one step row, with the pinned label, the pinned class caption, and the derived route tag — refusal record', () => {
+    render(
+      <FlowMap
+        story={emptyStory()}
+        lane="conformant"
+        onSelectStep={() => {}}
+        demo
+        demoRecord={demoRefusalRecord}
+      />,
+    );
+
+    const rows = document.querySelectorAll('.steps li');
+    expect(rows).toHaveLength(1);
+    expect(screen.getByText(DEMO_STEP_LABEL)).toBeDefined();
+    expect(screen.getByText(DEMO_STEP_CLASS_CAPTION)).toBeDefined();
+    expect(screen.getByText('pa.dtr 2.1 → 2.2 · local')).toBeDefined();
+  });
+
+  it('renders the carry record with its own derived route tag — same label and class caption, different chain', () => {
+    render(
+      <FlowMap
+        story={emptyStory()}
+        lane="conformant"
+        onSelectStep={() => {}}
+        demo
+        demoRecord={demoCarryRecord}
+      />,
+    );
+
+    expect(document.querySelectorAll('.steps li')).toHaveLength(1);
+    expect(screen.getByText(DEMO_STEP_LABEL)).toBeDefined();
+    expect(screen.getByText(DEMO_STEP_CLASS_CAPTION)).toBeDefined();
+    expect(screen.getByText('pa.dtr 2.2 → 2.1 → 2.2 · local')).toBeDefined();
+  });
+
+  it('the demo step row selects/deselects through the SAME mechanics as a wire step (data-step-id, aria-pressed, .sel class, onSelectStep callback)', async () => {
+    const user = userEvent.setup();
+    const onSelectStep = vi.fn();
+    render(
+      <FlowMap
+        story={emptyStory()}
+        lane="conformant"
+        onSelectStep={onSelectStep}
+        demo
+        demoRecord={demoRefusalRecord}
+      />,
+    );
+
+    const row = document.querySelector('.step') as HTMLElement;
+    expect(row.getAttribute('data-step-id')).toBe(DEMO_STEP_ID);
+    expect(row.getAttribute('aria-pressed')).toBe('false');
+
+    await user.click(row);
+    expect(onSelectStep).toHaveBeenCalledTimes(1);
+    expect(onSelectStep).toHaveBeenCalledWith(DEMO_STEP_ID);
+  });
+
+  it('reflects selectedStepId on the demo row exactly like a wire row (.sel class + aria-pressed true)', () => {
+    render(
+      <FlowMap
+        story={emptyStory()}
+        lane="conformant"
+        selectedStepId={DEMO_STEP_ID}
+        onSelectStep={() => {}}
+        demo
+        demoRecord={demoRefusalRecord}
+      />,
+    );
+
+    const row = document.querySelector('.step') as HTMLElement;
+    expect(row.className).toMatch(/\bsel\b/);
+    expect(row.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('demo without a demoRecord renders no rows (defensive — never a phantom step)', () => {
+    render(<FlowMap story={emptyStory()} lane="conformant" onSelectStep={() => {}} demo />);
+    expect(document.querySelectorAll('.steps li')).toHaveLength(0);
   });
 });

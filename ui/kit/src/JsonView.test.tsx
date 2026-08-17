@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { JsonView } from './JsonView';
+import type { RegionClass } from './xformclassify';
 
 describe('JsonView', () => {
   it('renders keys and primitive values of a small object', () => {
@@ -143,5 +144,56 @@ describe('JsonView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
     // The matched path is force-expanded regardless of the collapse-all baseline.
     expect(screen.getByText('Linda Johansson')).toBeDefined();
+  });
+
+  // xformclassify's regions prop (additive — default undefined leaves every test
+  // above byte-identical to today's rendering): a path-keyed class map paints
+  // a `json-region json-region-<cls>` highlight on the matching node, using
+  // the SAME dot-joined path JsonNode already keys nodes by (data-path).
+  it('regions prop paints a highlight class on the matching node path, default undefined leaves nodes unmarked', () => {
+    const { unmount } = render(<JsonView value={{ a: { b: 1 } }} />);
+    const plainNode = document.querySelector('[data-path="a.b"]');
+    expect(plainNode?.className).not.toContain('json-region');
+    unmount();
+
+    const regions = new Map<string, RegionClass>([['a.b', 'carried']]);
+    render(<JsonView value={{ a: { b: 1 } }} regions={regions} />);
+    const node = document.querySelector('[data-path="a.b"]');
+    expect(node?.className).toContain('json-region');
+    expect(node?.className).toContain('json-region-carried');
+  });
+
+  it('a region deeper than defaultDepth is guaranteed visible — its ancestor chain force-expands even with no search active', () => {
+    const value = { nested: { deeper: { itemWeight: 0.5 } } };
+    const regions = new Map<string, RegionClass>([['nested.deeper.itemWeight', 'carried']]);
+    render(<JsonView value={value} defaultDepth={1} regions={regions} />);
+
+    // At defaultDepth 1, 'nested' opens but 'deeper' would ordinarily stay
+    // collapsed — the region's own ancestor chain must force it open anyway.
+    expect(screen.getByText('itemWeight')).toBeDefined();
+    const node = document.querySelector('[data-path="nested.deeper.itemWeight"]');
+    expect(node?.className).toContain('json-region-carried');
+  });
+
+  it('a region\'s forced-open ancestor chain survives "Collapse all", the same as a search hit', () => {
+    const value = { nested: { deeper: { itemWeight: 0.5 } } };
+    const regions = new Map<string, RegionClass>([['nested.deeper.itemWeight', 'carried']]);
+    render(<JsonView value={value} defaultDepth={5} regions={regions} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
+    expect(screen.getByText('itemWeight')).toBeDefined();
+  });
+
+  it('regions prop highlights a container node the same way as a leaf, without disturbing search or expand/collapse', () => {
+    const regions = new Map<string, RegionClass>([['nested', 'rewritten']]);
+    const value = { nested: { deeper: { patientName: 'Linda Johansson' } } };
+    render(<JsonView value={value} defaultDepth={2} search="Johansson" regions={regions} />);
+
+    // The region highlight lands on the container node…
+    const container = document.querySelector('[data-path="nested"]');
+    expect(container?.className).toContain('json-region-rewritten');
+    // …and search force-expansion / match-highlighting still work exactly as
+    // without a regions prop.
+    expect(screen.getByText('Linda Johansson')).toBeDefined();
+    expect(screen.getByText('1 match')).toBeDefined();
   });
 });

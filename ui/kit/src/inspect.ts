@@ -3,7 +3,7 @@
 // has produced (live off the ring, or replayed from a history record — one
 // interpretation pipeline either way) and turns them into a RunStory of
 // Steps a UI can render. Tested against real captured event fixtures.
-import type { KitEvent } from './types';
+import type { BridgingLossEntry, BridgingLossReport, DemoChainHop, DemoRecord, KitEvent } from './types';
 
 // ---------------------------------------------------------------------------
 // Observer frame parsing
@@ -49,6 +49,10 @@ function asString(v: unknown): string | undefined {
 
 function asNumber(v: unknown): number | undefined {
   return typeof v === 'number' ? v : undefined;
+}
+
+function asBoolean(v: unknown): boolean | undefined {
+  return typeof v === 'boolean' ? v : undefined;
 }
 
 function asStringArray(v: unknown): string[] | undefined {
@@ -724,4 +728,126 @@ export function buildRunStory(runId: string, events: KitEvent[]): RunStory {
   }
 
   return { runId, steps, audit, auditNote, startedAt, terminal };
+}
+
+// ---------------------------------------------------------------------------
+// Local-demonstration story assembly — disjoint from buildRunStory above.
+//
+// A demonstration run's events (demo.started/demo.exhibit/demo.finished)
+// never carry an `observer`/`audit` payload and are never one of the types
+// buildRunStory's loop recognizes (run.started/run.finished/run.failed/
+// audit/audit.unavailable/observer) — so they already fall through that
+// loop's final `e.type !== 'observer'` guard untouched, and a demo run
+// yields zero wire Steps for free. This section is the demo-side mirror:
+// its own event-type switch, its own record shape (DemoRecord, not Step),
+// and no shared parsing with the wire path above — the two vocabularies
+// stay genuinely disjoint end to end, not just type-tagged the same.
+// ---------------------------------------------------------------------------
+
+function parseLossEntry(v: unknown): BridgingLossEntry | undefined {
+  if (!isRecord(v)) return undefined;
+  const path = asString(v.path);
+  if (path === undefined) return undefined;
+  return { path, detail: asString(v.detail) };
+}
+
+function parseLossEntryList(v: unknown): BridgingLossEntry[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.map(parseLossEntry).filter((e): e is BridgingLossEntry => e !== undefined);
+}
+
+function parseLossReport(v: unknown): BridgingLossReport | undefined {
+  if (!isRecord(v)) return undefined;
+  const module = asString(v.module);
+  const source = asString(v.source);
+  const target = asString(v.target);
+  if (module === undefined || source === undefined || target === undefined) return undefined;
+  return {
+    module,
+    source,
+    target,
+    carried: parseLossEntryList(v.carried),
+    synthesized: parseLossEntryList(v.synthesized),
+  };
+}
+
+function parseLossReports(v: unknown): BridgingLossReport[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.map(parseLossReport).filter((r): r is BridgingLossReport => r !== undefined);
+}
+
+// parseDemoChain shape-checks demoRecord.chain the never-throw way, and also
+// normalizes the wire's honest `null` (a nil Go slice with no `omitempty` on
+// this field — see kit/kitd/bridging.go's demoRecord) to an empty array,
+// since DemoRecord.chain is declared non-nullable.
+function parseDemoChain(v: unknown): DemoChainHop[] {
+  if (v == null) return [];
+  if (!Array.isArray(v)) return [];
+  return v.map(parseChainStep).filter((c): c is DemoChainHop => c !== undefined);
+}
+
+// parseDemoRecord reads e.demo — an already-parsed-JSON `unknown`, same
+// posture as parseObserver/parseAudit above: shape-checks `kind` and
+// `contract` and returns undefined for anything that isn't a well-formed
+// demonstration record. Never throws.
+function parseDemoRecord(v: unknown): DemoRecord | undefined {
+  if (!isRecord(v)) return undefined;
+  const kind = v.kind;
+  if (kind !== 'refusal-engine' && kind !== 'carry-engine') return undefined;
+  const contract = asString(v.contract);
+  if (contract === undefined) return undefined;
+  return {
+    kind,
+    contract,
+    chain: parseDemoChain(v.chain),
+    input: v.input,
+    refusal: asString(v.refusal),
+    semanticChange: asBoolean(v.semanticChange),
+    intermediate: v.intermediate,
+    output: v.output,
+    restored: asBoolean(v.restored),
+    lossReports: parseLossReports(v.lossReports),
+  };
+}
+
+// isDemoRun reports whether runId identifies a local demonstration —
+// true iff a demo.started event with this runId exists in events. Used by
+// callers to decide which of buildDemoStory/buildRunStory to route a run
+// through before either has been asked to interpret it.
+export function isDemoRun(events: KitEvent[], runId: string): boolean {
+  return events.some((e) => e.type === 'demo.started' && e.runId === runId);
+}
+
+export interface DemoStory {
+  runId: string;
+  uc: 'refusal-engine' | 'carry-engine';
+  record: DemoRecord;
+  startedAt?: string;
+  verdict: string; // demo.finished's detail
+}
+
+// buildDemoStory turns one local-demonstration run's stamped events into a
+// DemoStory. Returns undefined when there is no demo.started/demo.exhibit
+// pair for the run, or when the demo.exhibit event's payload doesn't
+// shape-check as a DemoRecord — never throws. demo.finished is read for the
+// verdict line when present, but its absence alone does not invalidate an
+// otherwise well-formed story.
+export function buildDemoStory(runId: string, events: KitEvent[]): DemoStory | undefined {
+  const runEvents = events.filter((e) => e.runId === runId);
+  const started = runEvents.find((e) => e.type === 'demo.started');
+  const exhibit = runEvents.find((e) => e.type === 'demo.exhibit');
+  if (!started || !exhibit) return undefined;
+
+  const record = parseDemoRecord(exhibit.demo);
+  if (!record) return undefined;
+
+  const finished = runEvents.find((e) => e.type === 'demo.finished');
+
+  return {
+    runId,
+    uc: record.kind,
+    record,
+    startedAt: started.time,
+    verdict: finished?.detail ?? '',
+  };
 }

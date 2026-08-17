@@ -41,11 +41,25 @@ const (
 	TypeChild            = "child"
 	TypeBootstrap        = "bootstrap"
 	TypeVerify           = "verify"
+
+	// TypeDemoStarted, TypeDemoExhibit, and TypeDemoFinished are the
+	// local-demonstration vocabulary: a scripted, in-process walkthrough of a
+	// substrate property (e.g. a refusal path) that never touches a real
+	// wire leg. The "demo." prefix is deliberately disjoint from run.* (and
+	// from observer/audit, which only ever carry relayed/fetched wire data)
+	// so a demonstration event can never be mistaken for one — a viewer that
+	// only forwards run.*/observer/audit still shows nothing but genuine
+	// wire activity.
+	TypeDemoStarted  = "demo.started"
+	TypeDemoExhibit  = "demo.exhibit"
+	TypeDemoFinished = "demo.finished"
 )
 
 // Event is one entry on the Kit's run timeline. Exactly one of the payload
-// fields (Observer/Audit) is set for those types; both are raw JSON so the
-// relay stays byte-faithful to what the gateway/Audit Plane emitted.
+// fields (Observer/Audit/Demo) is set for those types; all three are raw
+// JSON so the relay stays byte-faithful to what the gateway/Audit Plane
+// emitted, and a demo payload stays byte-faithful to what the demonstration
+// script produced.
 type Event struct {
 	Seq      uint64          `json:"seq"`
 	Time     time.Time       `json:"time"`
@@ -58,6 +72,7 @@ type Event struct {
 	Detail   string          `json:"detail,omitempty"`
 	Observer json.RawMessage `json:"observer,omitempty"`
 	Audit    json.RawMessage `json:"audit,omitempty"`
+	Demo     json.RawMessage `json:"demo,omitempty"`
 }
 
 // Bus fan-outs Kit run-timeline events to SSE subscribers. Zero value is not
@@ -116,6 +131,30 @@ func (b *Bus) Since(after uint64) []Event {
 	for _, bs := range b.buf {
 		var e Event
 		if json.Unmarshal(bs, &e) == nil && e.Seq > after {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Seq returns the bus's current sequence number — the "after" cursor a
+// caller snapshots before emitting a run's events, to later pass to Since or
+// SinceRun and get back only what it just emitted.
+func (b *Bus) Seq() uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.seq
+}
+
+// SinceRun returns the buffered events with Seq > after and RunID == runID,
+// decoded, oldest first — the same read path as Since, filtered to one run.
+func (b *Bus) SinceRun(after uint64, runID string) []Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []Event
+	for _, bs := range b.buf {
+		var e Event
+		if json.Unmarshal(bs, &e) == nil && e.Seq > after && e.RunID == runID {
 			out = append(out, e)
 		}
 	}

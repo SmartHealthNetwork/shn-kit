@@ -45,6 +45,14 @@ export function RunHistory({
           return (
             <li key={h.runId} data-testid={`history-row-${h.runId}`} className={rowClass}>
               <div className="run-history-facts">
+                {/* Species-aware for free: a local-demonstration record's
+                    Summary.Lane is the literal string "demo" (kit/kitd/
+                    bridging.go's emitDemoRun), so this same lane/uc
+                    template renders "demo/refusal-engine" /
+                    "demo/carry-engine" without a separate branch — no
+                    species dispatch needed here. Demo records also always
+                    carry an empty Branch, so the branch element below never
+                    renders for one. */}
                 <span className="run-history-lane-uc">{`${h.lane}/${h.uc}`}</span>
                 {h.branch && (
                   <span className="run-history-branch" data-testid={`history-branch-${h.runId}`}>

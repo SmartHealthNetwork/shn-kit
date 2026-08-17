@@ -19,10 +19,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import type { HistorySummary, KitEvent, Lane, Register, RunResult } from './types';
 import type { RunSource } from './useRunEvents';
-import { buildRunStory } from './inspect';
+import { buildDemoStory, buildRunStory, isDemoRun } from './inspect';
 import { FlowMap } from './FlowMap';
-import { StepDetail, type InspectorView, type ValidatorPosture } from './StepDetail';
+import { DemoStepDetail, StepDetail, type InspectorView, type ValidatorPosture } from './StepDetail';
 import { StatusChip } from './StatusChip';
+import { DemoResultChip, LocalDemoChip } from './DemoChips';
+import { DEMO_REPLAY_FAILURE_NOTE } from './bridgingmeta';
 
 export interface RunInspectorProps {
   runId?: string;
@@ -45,6 +47,21 @@ export interface RunInspectorProps {
   // undefined ⇒ StepDetail's own 'overview' default, the same
   // not-yet-wired-up posture this prop replaces.
   register?: Register;
+  // onReplayDemo: the demonstration species' Replay control — a semantic
+  // fork off the ordinary wire-run "Replay run" button (handleReplayClick,
+  // below), which only ever re-plays the flow map's own ANIMATION. A local
+  // demonstration has no wire animation to replay, and this component has
+  // no api access of its own, so demonstration runs re-execute the exhibit
+  // through this callback instead — unlike wire runs, whose Replay replays
+  // the flow-map animation only. `kind` is handed the same 'carry'/'refusal'
+  // vocabulary api.ts's postBridgingExhibit takes, so App can wire this prop
+  // straight to it. undefined ⇒ the demo Replay button is a harmless no-op
+  // (e.g. tests that don't exercise it). Returning a Promise (App's real
+  // implementation does) lets this component track in-flight/failure the
+  // same way it already tracks the wire-run `replaying` state below — a
+  // bare `void` return (e.g. a synchronous test double) is also accepted
+  // and treated as an immediate success.
+  onReplayDemo?(kind: 'carry' | 'refusal'): void | Promise<void>;
 }
 
 function laneFromEvent(v: string | undefined): Lane {
@@ -60,6 +77,7 @@ export function RunInspector({
   providerLabel,
   posture,
   register,
+  onReplayDemo,
 }: RunInspectorProps): JSX.Element {
   const story = runId !== undefined ? buildRunStory(runId, events) : undefined;
   const steps = story?.steps ?? [];
@@ -73,6 +91,16 @@ export function RunInspector({
   // below; it only ever ADDS a disable, never removes one.
   const [replayToken, setReplayToken] = useState(0);
   const [replaying, setReplaying] = useState(false);
+  // replayingDemo/demoReplayError: the demonstration species' Replay-control
+  // state, mirroring `replaying` immediately above — set true on click,
+  // cleared once onReplayDemo's promise settles either way. Unlike the wire
+  // species (a flow-map animation FlowMap itself signals the end of),
+  // re-executing the exhibit can genuinely fail (503/502/500 from the
+  // gateway child), so a rejection also sets an inline role="alert" message
+  // rather than swallowing it — App.tsx's handleReplayDemo used to swallow
+  // rejections silently, leaving a failed replay with zero feedback.
+  const [replayingDemo, setReplayingDemo] = useState(false);
+  const [demoReplayError, setDemoReplayError] = useState<string | undefined>(undefined);
   const manualPickRef = useRef(false);
   const prevRunIdRef = useRef<string | undefined>(undefined);
   const prevStepCountRef = useRef(0);
@@ -90,6 +118,11 @@ export function RunInspector({
       // to a fresh run must never inherit a stale in-flight flag that would
       // leave THIS run's Replay button wedged disabled.
       setReplaying(false);
+      // Same defensive reset for the demo species: a fresh run (including a
+      // fresh demo run) never inherits a previous run's in-flight flag or
+      // stale failure message.
+      setReplayingDemo(false);
+      setDemoReplayError(undefined);
       return;
     }
 
@@ -112,6 +145,24 @@ export function RunInspector({
   const handleReplayClick = () => {
     setReplaying(true);
     setReplayToken((t) => t + 1);
+  };
+
+  // handleReplayDemoClick: the demo species' Replay click handler. Guards on
+  // onReplayDemo being present (undefined ⇒ a harmless no-op, per the prop's
+  // own doc comment) and wraps its return in Promise.resolve() so a bare
+  // `void`-returning test double (or a future caller) never throws trying to
+  // .then() it — it just resolves immediately, same as a genuine success.
+  const handleReplayDemoClick = (kind: 'carry' | 'refusal') => {
+    if (!onReplayDemo) return;
+    setDemoReplayError(undefined);
+    setReplayingDemo(true);
+    Promise.resolve(onReplayDemo(kind)).then(
+      () => setReplayingDemo(false),
+      () => {
+        setReplayingDemo(false);
+        setDemoReplayError(DEMO_REPLAY_FAILURE_NOTE);
+      },
+    );
   };
 
   const handleReplayEnd = () => {
@@ -153,6 +204,84 @@ export function RunInspector({
     );
   }
   const activeStory = story;
+
+  // Species branch: a local demonstration (an engine exhibit, identified
+  // structurally by its demo.started event — inspect.ts's isDemoRun) is
+  // rendered entirely separately from here down. buildRunStory already
+  // yields zero steps for demo.* events (they carry no observer/audit
+  // frames), so `activeStory` above is honestly empty for one — reused
+  // as-is for FlowMap's demo variant below rather than built twice.
+  // Wire-run rendering below this block is otherwise byte-untouched.
+  if (isDemoRun(events, runId)) {
+    const demoStory = buildDemoStory(runId, events);
+    if (demoStory === undefined) {
+      // demo.started has streamed in but demo.exhibit hasn't landed yet (a
+      // brief SSE-ordering window, kitd emits the pair back-to-back) — the
+      // same honest "still arriving" treatment as source==='loading' above,
+      // never a fabricated demo header from a half-arrived record.
+      return (
+        <div className="insp loading-state">
+          <p>Loading this run…</p>
+        </div>
+      );
+    }
+    return (
+      <div className="insp">
+        <div className="insp-head">
+          <div className="insp-title">
+            <span className="mono">{`demo/${demoStory.uc}`}</span>
+            <div className="insp-tools">
+              <button
+                type="button"
+                className="ctl"
+                disabled={replayingDemo}
+                onClick={() =>
+                  handleReplayDemoClick(demoStory.uc === 'refusal-engine' ? 'refusal' : 'carry')
+                }
+              >
+                Replay run
+              </button>
+              {/* A demonstration never crosses a leg, so it never produces the
+                  observer/audit frames this toggle switches between — there
+                  is honestly nothing here to show. Disabled, not hidden, so
+                  the control stays in its usual place. */}
+              <label className="toggle">
+                <input type="checkbox" checked={false} disabled onChange={() => undefined} />
+                <span className="sw" />
+                Substrate view
+              </label>
+            </div>
+          </div>
+          <div className="insp-meta">
+            <LocalDemoChip />
+            <DemoResultChip kind={demoStory.uc} />
+          </div>
+        </div>
+
+        {demoReplayError && (
+          <p role="alert" className="demo-replay-error">
+            {demoReplayError}
+          </p>
+        )}
+
+        <div className="insp-body">
+          <FlowMap
+            story={activeStory}
+            lane="conformant"
+            selectedStepId={selectedStepId}
+            onSelectStep={handleSelectStep}
+            demo
+            demoRecord={demoStory.record}
+          />
+
+          <div className="insp-detail">
+            <DemoStepDetail record={demoStory.record} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const runStartedEvent = events.find((e) => e.runId === runId && e.type === 'run.started');
   const lane = laneFromEvent(runStartedEvent?.lane);
   const uc = runStartedEvent?.uc ?? '';
@@ -218,7 +347,15 @@ export function RunInspector({
 
         <div className="insp-detail">
           {selectedStep ? (
-            <StepDetail step={selectedStep} view={view} posture={posture} register={register} />
+            // key={selectedStep.id}: without it, switching the selected step
+            // re-renders StepDetail in place — React reconciles the SAME
+            // TransformExpander fiber across the switch, so its expanded/
+            // fetched-capture state (a useState local to that component)
+            // survives the prop change and keeps showing the PREVIOUS
+            // step's payload under the newly selected step's card. Keying
+            // on the step id forces a fresh mount per step, so a fresh
+            // step always starts its expander collapsed and unfetched.
+            <StepDetail key={selectedStep.id} step={selectedStep} view={view} posture={posture} register={register} />
           ) : (
             <p className="no-steps-note">No steps recorded for this run yet.</p>
           )}

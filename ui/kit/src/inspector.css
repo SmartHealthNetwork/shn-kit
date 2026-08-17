@@ -100,6 +100,17 @@
   gap: 9px;
 }
 
+/* .chip.local-demo — DemoChips.tsx's LocalDemoChip, the local-demonstration
+   species marker. Deliberately unlike the pass/fail `.chip` treatments
+   (primitives.css) — dashed + neutral ink, since this chip marks WHAT the
+   run is (never touched the network), not an outcome; DemoResultChip
+   (same file) carries the outcome on the existing `.chip.pass` tick. */
+.chip.local-demo {
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+}
+
 /* ── substrate-view toggle (switch) ───────────────────────────────── */
 /* The real checkbox drives state but is visually hidden (sr-only pattern)
    — `.sw` is the mockup's rendered slider pill, kept in sync purely via the
@@ -168,6 +179,19 @@
    this has no direct equivalent; synthesized on the red tokens already
    used throughout. */
 .run-terminal-detail {
+  margin: 0 18px;
+  padding: 8px 12px;
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid var(--red-border);
+  border-radius: var(--r);
+  font-size: 13px;
+}
+
+/* .demo-replay-error — the demonstration species' Replay-control failure
+   message, same placement/idiom as .run-terminal-detail immediately above
+   (between .insp-head and .insp-body). */
+.demo-replay-error {
   margin: 0 18px;
   padding: 8px 12px;
   background: var(--red-bg);
@@ -265,7 +289,14 @@
   box-shadow: 0 0 0 3px rgba(58, 85, 230, 0.16);
 }
 
-.node[data-static='true'] {
+/* `.node.static` is a class-based alias of the same rule (FlowNode's
+   demonstration-mode source node carries BOTH the existing `data-static`
+   attribute and this class — the attribute stays the load-bearing selector
+   every existing wire-run test already queries, the class exists so a
+   future demo-only override has a normal class hook instead of an
+   attribute selector). Same declaration, not a second design. */
+.node[data-static='true'],
+.node.static {
   font-style: italic;
 }
 
@@ -309,6 +340,15 @@
 
 .remote.failed {
   border-color: var(--red-border);
+}
+
+/* .remote.not-involved — FlowMap's local-demonstration variant: nothing
+   crossed the network for this run, so the hosted-side container is shown
+   dimmed rather than omitted (the map's three-zone shape stays legible)
+   while DEMO_REMOTE_CAPTION replaces REMOTE_ZONE_CAPTION inside it. Never
+   combined with `.lit`/`.failed` — a demonstration run lights neither. */
+.remote.not-involved {
+  opacity: 0.55;
 }
 
 .remote .cap {
@@ -714,6 +754,125 @@
   border-radius: 2px;
 }
 
+/* JsonView's additive `regions` prop (xformclassify.ts) — a differing region's
+   own node (leaf or container) gets a background wash + left rule in its
+   class's color, laid over the same dark `.json-view` surface. Distinct
+   hues from `.json-match`'s amber so a search hit and a diff region read as
+   two different kinds of thing even when they land on the same node.
+   Colors mirror the design note's mock legend: carried amber, synthesized
+   green, rewritten a neutral slate (a fourth swatch beyond the mock's
+   original three-swatch legend, added because unclassified real changes
+   must still be visibly marked, not left to render as if unchanged). */
+.json-region {
+  border-radius: 2px;
+  box-shadow: -3px 0 0 0 var(--json-region-accent, transparent);
+  padding-left: 4px;
+  margin-left: -4px;
+}
+
+.json-region-carried {
+  --json-region-accent: #e8a840;
+  background: rgba(232, 168, 64, 0.16);
+}
+
+.json-region-synthesized {
+  --json-region-accent: #5ac88c;
+  background: rgba(90, 200, 140, 0.14);
+}
+
+.json-region-rewritten {
+  --json-region-accent: #8c96b4;
+  background: rgba(140, 150, 180, 0.14);
+}
+
+/* ── transformation diff (XformDiff.tsx) ──────────────────────────── */
+/* The side-by-side before/after payload panes a TransformCard expander
+   opens into. No mockup markup equivalent (the mockup's
+   `.xform-*` rules are a static illustration, not the real interactive
+   component — see JsonView's own comment above for the same precedent);
+   ported onto theme.css's tokens rather than the mockup's literal colors,
+   except the legend swatches, which reuse the `.json-region-*` accent
+   colors directly so the legend and the highlighted nodes it explains never
+   drift apart. */
+.xform-diff {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.xform-diff-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+.xform-diff-summary {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.xform-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.xform-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.xform-legend-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: #232b42;
+}
+
+.xform-legend-carried .xform-legend-swatch {
+  background: rgba(232, 168, 64, 0.5);
+}
+
+.xform-legend-synthesized .xform-legend-swatch {
+  background: rgba(90, 200, 140, 0.45);
+}
+
+.xform-legend-rewritten .xform-legend-swatch {
+  background: rgba(140, 150, 180, 0.45);
+}
+
+.xform-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.xform-pane {
+  min-width: 0;
+}
+
+.xform-pane-label {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+@media (max-width: 720px) {
+  .xform-panes {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── validation badge (StepDetail's ValidationBadge) ──────────────── */
 /* Class names stay `validation-*` (test-pinned via `.toContain`); restyled
    here in the mockup's `.vbadge`/`.vnote` pill-and-caption idiom. */
@@ -926,6 +1085,87 @@
   font-size: 11px;
   color: var(--ink-2);
   font-weight: 600;
+}
+
+/* ── on-demand transformation expander (StepDetail's TransformExpander) ──
+   No mockup equivalent. The toggle borrows this file's existing inline
+   disclosure/link-button look (primitives.css's `.link`); the expanded body
+   reuses the card's own spacing scale so XformDiff and the posture note
+   read as a continuation of the transform card, not a bolted-on box. */
+.transform-expander {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transform-expander-toggle {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: 0;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.transform-expander-toggle:hover {
+  text-decoration: underline;
+}
+
+.transform-expander-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transform-expander-loading {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.capture-posture-note,
+.capture-unavailable-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.transform-expander-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 9px;
+  background: var(--red-bg);
+  border: 1px solid var(--red-border);
+  border-radius: var(--r);
+}
+
+.transform-expander-error-message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--red);
+}
+
+.transform-expander-retry {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--red);
+  background: 0;
+  border: 1px solid var(--red-border);
+  border-radius: var(--r);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.transform-expander-retry:hover {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
 }
 
 /* ── refusal card, three species (StepDetail's RefusalCard: transform,
@@ -1263,4 +1503,21 @@
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* Local-demonstration species (StepDetail.tsx's DemoStepDetail) — the
+   framing line mirrors .substrate-framing's tone; the restored verdict
+   mirrors .relayed-status's plain-fact weight. */
+.local-demo-framing {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.demo-restored-verdict {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink);
 }

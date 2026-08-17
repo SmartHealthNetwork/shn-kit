@@ -1,0 +1,372 @@
+[
+ {
+  "seq": 101,
+  "time": "2026-08-16T19:27:03.571226-04:00",
+  "type": "demo.started",
+  "runId": "demo-1786922823571-1",
+  "lane": "demo",
+  "uc": "carry-engine"
+ },
+ {
+  "seq": 102,
+  "time": "2026-08-16T19:27:03.571235-04:00",
+  "type": "demo.exhibit",
+  "runId": "demo-1786922823571-1",
+  "lane": "demo",
+  "uc": "carry-engine",
+  "demo": {
+   "kind": "carry-engine",
+   "contract": "pa.dtr",
+   "chain": [
+    {
+     "module": "pa.dtr 2.2-\u003e2.1",
+     "from": "2.2",
+     "to": "2.1",
+     "class": "carry"
+    },
+    {
+     "module": "pa.dtr 2.1-\u003e2.2",
+     "from": "2.1",
+     "to": "2.2",
+     "class": "carry"
+    }
+   ],
+   "input": {
+    "authored": "2026-06-04T00:00:00Z",
+    "extension": [
+     {
+      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-coverage",
+      "valueReference": {
+       "reference": "Coverage/MBR-COVERED"
+      }
+     },
+     {
+      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+      "valueReference": {
+       "reference": "ServiceRequest/sr-MBR-COVERED"
+      }
+     },
+     {
+      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
+      "valueCodeableConcept": {
+       "coding": [
+        {
+         "code": "withpa",
+         "display": "Information needed for a prior authorization",
+         "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/coverage-information-codes"
+        }
+       ]
+      }
+     }
+    ],
+    "item": [
+     {
+      "answer": [
+       {
+        "extension": [
+         {
+          "extension": [
+           {
+            "url": "source",
+            "valueCode": "auto-client"
+           }
+          ],
+          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+         },
+         {
+          "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+          "valueDecimal": 0.5
+         }
+        ],
+        "valueInteger": 6
+       }
+      ],
+      "linkId": "conservative-therapy-weeks"
+     },
+     {
+      "answer": [
+       {
+        "extension": [
+         {
+          "extension": [
+           {
+            "url": "source",
+            "valueCode": "auto-client"
+           }
+          ],
+          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+         }
+        ],
+        "valueBoolean": false
+       }
+      ],
+      "linkId": "neuro-deficit"
+     },
+     {
+      "answer": [
+       {
+        "extension": [
+         {
+          "extension": [
+           {
+            "url": "source",
+            "valueCode": "auto-client"
+           }
+          ],
+          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+         }
+        ],
+        "valueBoolean": true
+       }
+      ],
+      "linkId": "prior-imaging"
+     }
+    ],
+    "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
+    "resourceType": "QuestionnaireResponse",
+    "status": "completed",
+    "subject": {
+     "reference": "Patient/MBR-COVERED"
+    }
+   },
+   "semanticChange": false,
+   "intermediate": {
+    "authored": "2026-06-04T00:00:00Z",
+    "extension": [
+     {
+      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+      "valueReference": {
+       "reference": "Coverage/MBR-COVERED"
+      }
+     },
+     {
+      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+      "valueReference": {
+       "reference": "ServiceRequest/sr-MBR-COVERED"
+      }
+     },
+     {
+      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
+      "valueCodeableConcept": {
+       "coding": [
+        {
+         "code": "withpa",
+         "display": "Information needed for a prior authorization",
+         "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/temp"
+        }
+       ]
+      }
+     }
+    ],
+    "item": [
+     {
+      "answer": [
+       {
+        "extension": [
+         {
+          "extension": [
+           {
+            "url": "source",
+            "valueCode": "auto"
+           }
+          ],
+          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+         },
+         {
+          "extension": [
+           {
+            "url": "path",
+            "valueString": "QuestionnaireResponse.item.answer.extension:itemWeight"
+           },
+           {
+            "url": "sourceLine",
+            "valueString": "2.2"
+           },
+           {
+            "url": "content",
+            "valueString": "{\"url\":\"http://hl7.org/fhir/StructureDefinition/itemWeight\",\"valueDecimal\":0.5}"
+           }
+          ],
+          "url": "http://smarthealth.network/fhir/StructureDefinition/shn-carried-content"
+         }
+        ],
+        "valueInteger": 6
+       }
+      ],
+      "linkId": "conservative-therapy-weeks"
+     },
+     {
+      "answer": [
+       {
+        "extension": [
+         {
+          "extension": [
+           {
+            "url": "source",
+            "valueCode": "auto"
+           }
+          ],
+          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+         }
+        ],
+        "valueBoolean": false
+       }
+      ],
+      "linkId": "neuro-deficit"
+     },
+     {
+      "answer": [
+       {
+        "extension": [
+         {
+          "extension": [
+           {
+            "url": "source",
+            "valueCode": "auto"
+           }
+          ],
+          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+         }
+        ],
+        "valueBoolean": true
+       }
+      ],
+      "linkId": "prior-imaging"
+     }
+    ],
+    "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
+    "resourceType": "QuestionnaireResponse",
+    "status": "completed",
+    "subject": {
+     "reference": "Patient/MBR-COVERED"
+    }
+   },
+   "output": {
+    "authored": "2026-06-04T00:00:00Z",
+    "extension": [
+     {
+      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-coverage",
+      "valueReference": {
+       "reference": "Coverage/MBR-COVERED"
+      }
+     },
+     {
+      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+      "valueReference": {
+       "reference": "ServiceRequest/sr-MBR-COVERED"
+      }
+     },
+     {
+      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
+      "valueCodeableConcept": {
+       "coding": [
+        {
+         "code": "withpa",
+         "display": "Information needed for a prior authorization",
+         "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/coverage-information-codes"
+        }
+       ]
+      }
+     }
+    ],
+    "item": [
+     {
+      "answer": [
+       {
+        "extension": [
+         {
+          "extension": [
+           {
+            "url": "source",
+            "valueCode": "auto-client"
+           }
+          ],
+          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+         },
+         {
+          "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+          "valueDecimal": 0.5
+         }
+        ],
+        "valueInteger": 6
+       }
+      ],
+      "linkId": "conservative-therapy-weeks"
+     },
+     {
+      "answer": [
+       {
+        "extension": [
+         {
+          "extension": [
+           {
+            "url": "source",
+            "valueCode": "auto-client"
+           }
+          ],
+          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+         }
+        ],
+        "valueBoolean": false
+       }
+      ],
+      "linkId": "neuro-deficit"
+     },
+     {
+      "answer": [
+       {
+        "extension": [
+         {
+          "extension": [
+           {
+            "url": "source",
+            "valueCode": "auto-client"
+           }
+          ],
+          "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+         }
+        ],
+        "valueBoolean": true
+       }
+      ],
+      "linkId": "prior-imaging"
+     }
+    ],
+    "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
+    "resourceType": "QuestionnaireResponse",
+    "status": "completed",
+    "subject": {
+     "reference": "Patient/MBR-COVERED"
+    }
+   },
+   "restored": true,
+   "lossReports": [
+    {
+     "module": "pa.dtr 2.2-\u003e2.1",
+     "source": "2.2",
+     "target": "2.1",
+     "carried": [
+      {
+       "path": "QuestionnaireResponse.item.answer.extension:itemWeight",
+       "detail": "carried; source line 2.2 (no 2.1 slot)"
+      }
+     ]
+    },
+    {
+     "module": "pa.dtr 2.1-\u003e2.2",
+     "source": "2.1",
+     "target": "2.2"
+    }
+   ]
+  }
+ },
+ {
+  "seq": 103,
+  "time": "2026-08-16T19:27:03.571271-04:00",
+  "type": "demo.finished",
+  "runId": "demo-1786922823571-1",
+  "lane": "demo",
+  "uc": "carry-engine",
+  "detail": "restored exactly"
+ }
+]

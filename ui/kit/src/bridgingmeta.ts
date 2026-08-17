@@ -2,9 +2,9 @@
 // participant-facing, both registers, true to asserted outcomes, no
 // SHN-internal vocabulary in this file's exported strings; Da Vinci-domain
 // terms — contract line, CRD, DTR, PAS, PDex, prior authorization — stay).
-// Four strings below are PINNED: exported verbatim, asserted both rendered
-// (BridgingPanel) and literal (BridgingPanel.test.tsx), the existing
-// VALIDATOR_POSTURE_LABEL idiom (StepDetail.tsx).
+// The strings below are PINNED: exported verbatim, asserted both rendered
+// (BridgingPanel/StepDetail, per string) and literal (the matching
+// *.test.tsx), the existing VALIDATOR_POSTURE_LABEL idiom (StepDetail.tsx).
 import type { Register } from './types';
 
 // ---- Pinned exports — verbatim, do not paraphrase or reformat.
@@ -24,6 +24,16 @@ export const ENGINE_EXHIBIT_FRAMING =
 // Pinned exactly; do not paraphrase.
 export const REFUSAL_EXHIBIT_FRAMING =
   'a refusal is the successful outcome here: the network refuses loudly rather than guessing at clinical content, and nothing is sent';
+
+// ---- BridgingPanel's exhibit receipt copy — the panel's own success-state
+// replaces its former inline verdict box with a one-line receipt (tick +
+// this text + the inspector link); the demonstration itself now lives in
+// the run inspector (RunInspector/StepDetail), not in this panel. Pinned
+// exactly; do not paraphrase.
+
+export const DEMO_RECEIPT_REFUSAL = 'Ran just now — refused as expected.';
+export const DEMO_RECEIPT_CARRY = 'Ran just now — restored exactly.';
+export const VIEW_IN_INSPECTOR_LINK = 'View in inspector →';
 
 // ---- Explainer copy: contract lines + the three compat-manifest step
 // classes, both registers, driven by the existing RegisterSwitch. ----
@@ -73,6 +83,62 @@ export const STEP_CLASS_META: Record<StepClass, StepClassMeta> = {
     },
   },
 };
+
+// ---- Local-demonstration species copy — RunInspector/FlowMap/DemoChips'
+// rendering of an engine exhibit as an inspector run, a disjoint species
+// from every wire-run string above. Pinned exactly; do not paraphrase.
+
+// LocalDemoChip's text (DemoChips.tsx) — every demonstration run's species
+// marker, distinct from a genuine result.
+export const LOCAL_DEMO_CHIP = 'local demonstration — no network';
+
+// DemoResultChip's kind-keyed verdict text (DemoChips.tsx) — the
+// demonstration's own outcome sentence, rendered only for the one state a
+// demonstration record can carry (passed; see kit/kitd/bridging.go's
+// emitDemoRun, called from the success path only).
+export const DEMO_RESULT_REFUSAL = 'Refused as expected';
+export const DEMO_RESULT_CARRY = 'Restored exactly';
+
+// FlowMap's demonstration-variant remote-zone caption (FlowMap.tsx) —
+// replaces REMOTE_ZONE_CAPTION for this species only; a demonstration never
+// crosses the network, so there is nothing "derived from" to describe.
+export const DEMO_REMOTE_CAPTION =
+  'not involved — this demonstration never left your Smart Gateway';
+
+// FlowMap's demonstration-variant source-node label (FlowMap.tsx) — the
+// static/italic node naming the embedded fixture the exhibit ran over.
+export const FROZEN_SOURCE_NODE = 'Frozen reference content';
+
+// StepDetail's demonstration framing line — ENGINE_EXHIBIT_FRAMING carries
+// no terminal period by design (the panel composed it into its own
+// sentence); this appends the inspector's closing sentence with an
+// explicit '.' separator, which is load-bearing, not decorative.
+export const LOCAL_DEMO_FRAMING = `${ENGINE_EXHIBIT_FRAMING}. Nothing crossed the network for this run.`;
+
+// FlowMap's demonstration steps rail — the single
+// synthetic row's fixed label and class caption. The row's third piece, the
+// route tag, is DERIVED per record (FlowMap.tsx's demoRouteTag) from the
+// record's own contract + chain rather than pinned as a fixed string, so it
+// stays honest if the frozen fixtures ever change contract/lines.
+export const DEMO_STEP_LABEL = 'dtr-questionnaire-response';
+export const DEMO_STEP_CLASS_CAPTION = 'engine demonstration';
+
+// DEMO_RESTORED_VERDICT: the byte-identical-round-trip verdict line, shared
+// by BOTH of XformDiff.tsx's render paths — its own internal summary
+// computation (a live leg's identity chain, or the carry demonstration fed
+// locally) and StepDetail.tsx's DemoStepDetail (the carry species' own
+// restored-verdict line, computed independently over the record's input/
+// output pair via computeXformDiff, never trusted off the wire's `restored`
+// flag alone). ONE exported constant, both sites read it, so the claim can
+// never drift between the two surfaces that make it. Pinned exactly; do not
+// paraphrase.
+export const DEMO_RESTORED_VERDICT = '0 regions differ — byte-identical';
+
+// RunInspector's demo-species Replay control — the inline role="alert"
+// message on a rejected re-execution (App's handleReplayDemo posts to the
+// same postBridgingExhibit endpoint the panel's own exhibit buttons use).
+// Pinned exactly; do not paraphrase.
+export const DEMO_REPLAY_FAILURE_NOTE = 'Replay failed — the exhibit could not run.';
 
 // ---- Static route-refusal grammar, verbatim — displayed as reference
 // COPY, never produced live in this demo

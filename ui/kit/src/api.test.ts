@@ -733,6 +733,95 @@ describe('getHistoryRecord', () => {
   });
 });
 
+describe('getBridgingCapture', () => {
+  it('GETs /api/bridging/capture/{correlationId} with the resolved bearer token and parses BridgingCapture', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    const capture = {
+      correlationId: 'c-t1',
+      legType: 'dtr-questionnaire-fetch',
+      contract: 'pa.dtr',
+      from: '2.2',
+      to: '2.1',
+      chain: [{ module: 'pa.dtr 2.2->2.1', from: '2.2', to: '2.1', class: 'carry' }],
+      lossReports: [
+        {
+          module: 'pa.dtr 2.2->2.1',
+          source: '2.2',
+          target: '2.1',
+          carried: [{ path: 'QuestionnaireResponse.item.answer.extension:itemWeight' }],
+        },
+      ],
+      before: { resourceType: 'QuestionnaireResponse', id: 'built' },
+      after: { resourceType: 'QuestionnaireResponse', id: 'sent' },
+      capturedAt: '2026-08-16T00:00:00Z',
+    };
+    const stub = makeFetch(true, 200, capture);
+    vi.stubGlobal('fetch', stub);
+
+    const { getBridgingCapture } = await freshApi();
+    const result = await getBridgingCapture('c-t1');
+
+    const [url, init] = stub.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/bridging/capture/c-t1');
+    const headers = init.headers as Headers;
+    expect(headers.get('Authorization')).toBe('Bearer t-1');
+    expect(result).toEqual(capture);
+  });
+
+  it('encodes the correlation id in the path', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    const stub = makeFetch(true, 200, {
+      correlationId: 'c/weird id',
+      legType: 'dtr-questionnaire-fetch',
+      contract: 'pa.dtr',
+      from: '2.2',
+      to: '2.1',
+      chain: [],
+      lossReports: [],
+      before: null,
+      after: null,
+      capturedAt: '2026-08-16T00:00:00Z',
+    });
+    vi.stubGlobal('fetch', stub);
+
+    const { getBridgingCapture } = await freshApi();
+    await getBridgingCapture('c/weird id');
+
+    const [url] = stub.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/bridging/capture/c%2Fweird%20id');
+  });
+
+  it('404 (compatibility simulation off) -> ApiError(404)', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    vi.stubGlobal('fetch', makeFetch(false, 404, { error: 'edge capture is not enabled' }));
+
+    const { getBridgingCapture, ApiError } = await freshApi();
+    try {
+      await getBridgingCapture('c-t1');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as InstanceType<typeof ApiError>).status).toBe(404);
+      expect((e as Error).message).toBe('edge capture is not enabled');
+    }
+  });
+
+  it('404 (no capture recorded for this leg) -> ApiError(404) — the SAME status as the flag-off body, never distinguished client-side', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    vi.stubGlobal('fetch', makeFetch(false, 404, { error: 'no capture for this leg' }));
+
+    const { getBridgingCapture, ApiError } = await freshApi();
+    try {
+      await getBridgingCapture('c-missing');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as InstanceType<typeof ApiError>).status).toBe(404);
+      expect((e as Error).message).toBe('no capture for this leg');
+    }
+  });
+});
+
 describe('getAbout', () => {
   it('GETs /api/about with the resolved bearer token and parses AboutManifest', async () => {
     sessionStorage.setItem('kitToken', 't-1');

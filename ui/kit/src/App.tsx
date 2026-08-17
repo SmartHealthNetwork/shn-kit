@@ -15,7 +15,16 @@ import type {
   RunResult,
   StatusResponse,
 } from './types';
-import { ApiError, getBYO, getBootstrap, getHistory, getHistoryRecord, getRuns, getStatus } from './api';
+import {
+  ApiError,
+  getBYO,
+  getBootstrap,
+  getHistory,
+  getHistoryRecord,
+  getRuns,
+  getStatus,
+  postBridgingExhibit,
+} from './api';
 import { canRestart, openExternal, resolveToken, restartKit } from './bridge';
 import { useEvents } from './useEvents';
 import SignIn from './SignIn';
@@ -409,6 +418,26 @@ export default function App() {
   const handleSelectRun = (runId: string) => {
     manualPickRef.current = true;
     setSelectedRunId(runId);
+  };
+
+  // handleReplayDemo: RunInspector's local-demonstration Replay control —
+  // demonstration runs' Replay re-executes the exhibit end-to-end (wire
+  // runs keep their animation-only Replay), through the same engine
+  // endpoint BridgingPanel's own exhibit buttons already post to. On
+  // success, re-points the inspector at the freshly-minted run — the SAME
+  // select-on-success pattern BridgingPanel's own exhibit/wire-run handlers
+  // use (handleSelectRun) — so the ruled re-execute semantics actually land
+  // the operator on the run that just ran, not the stale one still open.
+  // A rejected replay is intentionally NOT swallowed here — the returned
+  // promise propagates the rejection to RunInspector, whose own in-flight/
+  // failure state (mirroring its wire-run `replaying` state) renders the
+  // inline role="alert" message: from Run history, BridgingPanel (the
+  // primary run surface) isn't even mounted, so swallowing the failure here
+  // used to leave a 503/502/500 with zero feedback.
+  const handleReplayDemo = (kind: 'carry' | 'refusal'): Promise<void> => {
+    return postBridgingExhibit(kind).then((res) => {
+      handleSelectRun(res.runId);
+    });
   };
 
   // Compare toggles: clicking Compare on the already-compared row closes
@@ -836,6 +865,7 @@ export default function App() {
                     providerLabel={deriveProviderLabel(selectedRunId, latestRunId, runEvents.events, byo)}
                     posture={status?.validator}
                     register={register}
+                    onReplayDemo={handleReplayDemo}
                   />
                   <RunInspector
                     runId={compareRunId}
@@ -846,6 +876,7 @@ export default function App() {
                     providerLabel={deriveProviderLabel(compareRunId, latestRunId, compareEvents.events, byo)}
                     posture={status?.validator}
                     register={register}
+                    onReplayDemo={handleReplayDemo}
                   />
                 </div>
               ) : (
@@ -859,6 +890,7 @@ export default function App() {
                     providerLabel={deriveProviderLabel(selectedRunId, latestRunId, runEvents.events, byo)}
                     posture={status?.validator}
                     register={register}
+                    onReplayDemo={handleReplayDemo}
                   />
                 </div>
               )}

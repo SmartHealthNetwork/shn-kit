@@ -300,6 +300,7 @@ func main() {
 		BridgingDemo:  bridgingDemo,
 		TokenStorage:  tokenStorage,
 		ManifestPath:  *manifestPath,
+		Clock:         time.Now, // same source as the bus above (event.NewBus(time.Now))
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "shnkitd: new daemon: %v\n", err)
@@ -776,9 +777,10 @@ type envRestarter func(ctx context.Context, name string, env []string, preSpawn 
 
 // newBridgingDemo builds kitd.Config.BridgingDemo's closure: it flips the
 // gateway child's bridging demo mode by restarting it with (enabled) or
-// without (disabled) the SHN_DEMO_EGRESS_NATIVE_LINES knob. A PURPOSE-BUILT
-// gateway restart — same spec, same port, same driver keypair, same runner
-// wiring, only the env differs — which is why it does not reopen kitd's
+// without (disabled) the SHN_DEMO_EGRESS_NATIVE_LINES and SHN_DEMO_EDGE_CAPTURE
+// knobs. A PURPOSE-BUILT gateway restart — same spec, same port, same driver
+// keypair, same runner wiring, only the env differs — which is why it does not
+// reopen kitd's
 // generic per-child restart seam, which still refuses the gateway outright.
 //
 // The relay's ResetCursor rides RestartWithEnv's preSpawn hook, NEVER a call
@@ -829,6 +831,10 @@ func newBridgingDemo(restart envRestarter, bus *event.Bus, rlyPtr *atomic.Pointe
 		env := append([]string(nil), *base...)
 		if enabled {
 			env = append(env, "SHN_DEMO_EGRESS_NATIVE_LINES="+demoEgressNativeLine)
+			// Edge capture rides the simulation: it exists exactly while the
+			// operator is driving bridged legs on purpose, never on its own
+			// knob, so production posture stays off by construction.
+			env = append(env, "SHN_DEMO_EDGE_CAPTURE=true")
 		}
 		var preSpawn func()
 		if r := rlyPtr.Load(); r != nil {

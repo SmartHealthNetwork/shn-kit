@@ -184,6 +184,64 @@ func TestBus_Since(t *testing.T) {
 	}
 }
 
+// TestDemoEventRoundTrip: the demo.* vocabulary round-trips through Emit
+// (Seq/Time stamped) and SinceRun (decoded, oldest first, Demo payload
+// byte-faithful) exactly like the run.* vocabulary does.
+func TestDemoEventRoundTrip(t *testing.T) {
+	b := NewBus(fixedClock)
+	before := b.Seq()
+	b.Emit(Event{Type: TypeDemoStarted, RunID: "demo-1", Lane: "demo", UC: "refusal-engine"})
+	b.Emit(Event{Type: TypeDemoExhibit, RunID: "demo-1", Lane: "demo", UC: "refusal-engine", Demo: json.RawMessage(`{"kind":"refusal-engine"}`)})
+	b.Emit(Event{Type: TypeDemoFinished, RunID: "demo-1", Lane: "demo", UC: "refusal-engine", Detail: "refused as expected"})
+
+	got := b.SinceRun(before, "demo-1")
+	if len(got) != 3 {
+		t.Fatalf("SinceRun returned %d events, want 3: %+v", len(got), got)
+	}
+	if got[0].Type != TypeDemoStarted || got[1].Type != TypeDemoExhibit || got[2].Type != TypeDemoFinished {
+		t.Fatalf("SinceRun order = %q,%q,%q, want started,exhibit,finished", got[0].Type, got[1].Type, got[2].Type)
+	}
+	if got[0].Seq != before+1 || got[1].Seq != before+2 || got[2].Seq != before+3 {
+		t.Fatalf("SinceRun seqs = %d,%d,%d, want %d,%d,%d", got[0].Seq, got[1].Seq, got[2].Seq, before+1, before+2, before+3)
+	}
+	for i, e := range got {
+		if !e.Time.Equal(fixedClock()) {
+			t.Fatalf("SinceRun[%d].Time not stamped from clock: %v", i, e.Time)
+		}
+	}
+	if string(got[1].Demo) != `{"kind":"refusal-engine"}` {
+		t.Fatalf("Demo payload = %s, want byte-faithful round-trip", got[1].Demo)
+	}
+	if got[2].Detail != "refused as expected" {
+		t.Fatalf("Detail = %q, want %q", got[2].Detail, "refused as expected")
+	}
+}
+
+// TestSinceRunFiltersOtherRuns: SinceRun filters to the requested runID even
+// when another run's events are interleaved on the same bus.
+func TestSinceRunFiltersOtherRuns(t *testing.T) {
+	b := NewBus(fixedClock)
+	before := b.Seq()
+	b.Emit(Event{Type: TypeDemoStarted, RunID: "demo-1", Lane: "demo", UC: "refusal-engine"})
+	b.Emit(Event{Type: TypeRunStarted, RunID: "run-7", Lane: "ehr", UC: "UC-01"})
+	b.Emit(Event{Type: TypeDemoExhibit, RunID: "demo-1", Lane: "demo", UC: "refusal-engine", Demo: json.RawMessage(`{"kind":"refusal-engine"}`)})
+	b.Emit(Event{Type: TypeRunFinished, RunID: "run-7", Lane: "ehr", UC: "UC-01"})
+	b.Emit(Event{Type: TypeDemoFinished, RunID: "demo-1", Lane: "demo", UC: "refusal-engine", Detail: "refused as expected"})
+
+	got := b.SinceRun(before, "demo-1")
+	if len(got) != 3 {
+		t.Fatalf("SinceRun(\"demo-1\") returned %d events, want 3: %+v", len(got), got)
+	}
+	for _, e := range got {
+		if e.RunID != "demo-1" {
+			t.Fatalf("SinceRun(\"demo-1\") leaked another run's event: %+v", e)
+		}
+	}
+	if got[0].Type != TypeDemoStarted || got[1].Type != TypeDemoExhibit || got[2].Type != TypeDemoFinished {
+		t.Fatalf("SinceRun(\"demo-1\") order = %q,%q,%q, want started,exhibit,finished", got[0].Type, got[1].Type, got[2].Type)
+	}
+}
+
 // TestBus_EmitNonBlockingUnderSlowSubscriber: a subscriber that never drains
 // its channel must not block Emit — fan-out is lossy by design (package
 // doc), not backpressuring.

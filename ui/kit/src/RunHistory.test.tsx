@@ -97,6 +97,23 @@ describe('RunHistory — rows', () => {
     expect(onExport).toHaveBeenCalledWith('run-1');
   });
 
+  it('renders a species-aware row label for a local-demonstration history record: demo/<uc>, no branch element (demo runs always carry an empty branch)', () => {
+    const demoRow = summary({
+      runId: 'demo-1755302400000-1',
+      lane: 'demo',
+      uc: 'refusal-engine',
+      branch: '',
+      state: 'passed',
+      detail: 'refused as expected',
+    });
+    render(<RunHistory history={[demoRow]} onOpen={vi.fn()} onCompare={vi.fn()} onExport={vi.fn()} />);
+
+    expect(screen.getByText('demo/refusal-engine')).toBeDefined();
+    expect(screen.queryByTestId(`history-branch-${demoRow.runId}`)).toBeNull();
+    const passedChip = screen.getByText('Passed');
+    expect(passedChip.className).toMatch(/\bpass\b/);
+  });
+
   it('the selected row is marked; other rows are not', () => {
     render(
       <RunHistory
