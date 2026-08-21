@@ -36,7 +36,8 @@ import (
 )
 
 // bridgingCarryInput is the embedded golden QR (2.2, with a hand-injected
-// item.answer.extension:itemWeight) the "carry" exhibit runs down (2.2->2.1,
+// item.answer.value.extension:itemWeight — the locus the extension's own SD
+// contexts it to) the "carry" exhibit runs down (2.2->2.1,
 // carries itemWeight into shn-carried-content) then up (2.1->2.2, restores
 // it) — see bridgingassets/README.md for full provenance and the
 // regeneration recipe.

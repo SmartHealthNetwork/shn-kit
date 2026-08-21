@@ -1,17 +1,17 @@
 [
  {
   "seq": 101,
-  "time": "2026-08-16T19:27:03.571226-04:00",
+  "time": "2026-08-18T09:57:26.471801-04:00",
   "type": "demo.started",
-  "runId": "demo-1786922823571-1",
+  "runId": "demo-1787061446471-1",
   "lane": "demo",
   "uc": "carry-engine"
  },
  {
   "seq": 102,
-  "time": "2026-08-16T19:27:03.571235-04:00",
+  "time": "2026-08-18T09:57:26.471812-04:00",
   "type": "demo.exhibit",
-  "runId": "demo-1786922823571-1",
+  "runId": "demo-1787061446471-1",
   "lane": "demo",
   "uc": "carry-engine",
   "demo": {
@@ -63,6 +63,14 @@
      {
       "answer": [
        {
+        "_valueInteger": {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+           "valueDecimal": 0.5
+          }
+         ]
+        },
         "extension": [
          {
           "extension": [
@@ -72,10 +80,6 @@
            }
           ],
           "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-         },
-         {
-          "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
-          "valueDecimal": 0.5
          }
         ],
         "valueInteger": 6
@@ -162,6 +166,27 @@
      {
       "answer": [
        {
+        "_valueInteger": {
+         "extension": [
+          {
+           "extension": [
+            {
+             "url": "path",
+             "valueString": "QuestionnaireResponse.item.answer.value.extension:itemWeight"
+            },
+            {
+             "url": "sourceLine",
+             "valueString": "2.2"
+            },
+            {
+             "url": "content",
+             "valueString": "{\"url\":\"http://hl7.org/fhir/StructureDefinition/itemWeight\",\"valueDecimal\":0.5}"
+            }
+           ],
+           "url": "http://smarthealth.network/fhir/StructureDefinition/shn-carried-content"
+          }
+         ]
+        },
         "extension": [
          {
           "extension": [
@@ -171,23 +196,6 @@
            }
           ],
           "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-         },
-         {
-          "extension": [
-           {
-            "url": "path",
-            "valueString": "QuestionnaireResponse.item.answer.extension:itemWeight"
-           },
-           {
-            "url": "sourceLine",
-            "valueString": "2.2"
-           },
-           {
-            "url": "content",
-            "valueString": "{\"url\":\"http://hl7.org/fhir/StructureDefinition/itemWeight\",\"valueDecimal\":0.5}"
-           }
-          ],
-          "url": "http://smarthealth.network/fhir/StructureDefinition/shn-carried-content"
          }
         ],
         "valueInteger": 6
@@ -273,6 +281,14 @@
      {
       "answer": [
        {
+        "_valueInteger": {
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+           "valueDecimal": 0.5
+          }
+         ]
+        },
         "extension": [
          {
           "extension": [
@@ -282,10 +298,6 @@
            }
           ],
           "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-         },
-         {
-          "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
-          "valueDecimal": 0.5
          }
         ],
         "valueInteger": 6
@@ -347,7 +359,7 @@
      "target": "2.1",
      "carried": [
       {
-       "path": "QuestionnaireResponse.item.answer.extension:itemWeight",
+       "path": "QuestionnaireResponse.item.answer.value.extension:itemWeight",
        "detail": "carried; source line 2.2 (no 2.1 slot)"
       }
      ]
@@ -362,9 +374,9 @@
  },
  {
   "seq": 103,
-  "time": "2026-08-16T19:27:03.571271-04:00",
+  "time": "2026-08-18T09:57:26.471845-04:00",
   "type": "demo.finished",
-  "runId": "demo-1786922823571-1",
+  "runId": "demo-1787061446471-1",
   "lane": "demo",
   "uc": "carry-engine",
   "detail": "restored exactly"

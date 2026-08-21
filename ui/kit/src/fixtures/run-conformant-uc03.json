@@ -1,22 +1,22 @@
 [
  {
   "seq": 384,
-  "time": "2026-08-15T19:50:00.028351-04:00",
+  "time": "2026-08-21T01:23:47.379232-04:00",
   "type": "run.started",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03"
  },
  {
   "seq": 385,
-  "time": "2026-08-15T19:50:00.032821-04:00",
+  "time": "2026-08-21T01:23:47.383211-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 200,
-   "time": "2026-08-15T19:50:00.032661-04:00",
+   "time": "2026-08-21T01:23:47.383088-04:00",
    "kind": "ingress.received",
    "legType": "crd-ingress",
    "direction": "ingress",
@@ -97,14 +97,14 @@
  },
  {
   "seq": 386,
-  "time": "2026-08-15T19:50:00.032982-04:00",
+  "time": "2026-08-21T01:23:47.383356-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 201,
-   "time": "2026-08-15T19:50:00.032895-04:00",
+   "time": "2026-08-21T01:23:47.383297-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -113,14 +113,14 @@
  },
  {
   "seq": 387,
-  "time": "2026-08-15T19:50:00.032995-04:00",
+  "time": "2026-08-21T01:23:47.383372-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 202,
-   "time": "2026-08-15T19:50:00.032931-04:00",
+   "time": "2026-08-21T01:23:47.383323-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -129,14 +129,14 @@
  },
  {
   "seq": 388,
-  "time": "2026-08-15T19:50:00.032999-04:00",
+  "time": "2026-08-21T01:23:47.383377-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 203,
-   "time": "2026-08-15T19:50:00.032934-04:00",
+   "time": "2026-08-21T01:23:47.383327-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -145,14 +145,14 @@
  },
  {
   "seq": 389,
-  "time": "2026-08-15T19:50:00.033002-04:00",
+  "time": "2026-08-21T01:23:47.383386-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 204,
-   "time": "2026-08-15T19:50:00.032936-04:00",
+   "time": "2026-08-21T01:23:47.383329-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -161,18 +161,18 @@
  },
  {
   "seq": 390,
-  "time": "2026-08-15T19:50:00.033132-04:00",
+  "time": "2026-08-21T01:23:47.383525-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 205,
-   "time": "2026-08-15T19:50:00.033049-04:00",
+   "time": "2026-08-21T01:23:47.383429-04:00",
    "kind": "leg.originated",
    "legType": "crd-order-select",
    "direction": "originate",
-   "correlationId": "390f869901380927c925bb692916023d",
+   "correlationId": "818500aee85d1c02c968829d2265778a",
    "counterpart": "payer",
    "authorityFrame": "provider-tpo",
    "op": "crd-order-select",
@@ -276,18 +276,18 @@
  },
  {
   "seq": 391,
-  "time": "2026-08-15T19:50:00.038941-04:00",
+  "time": "2026-08-21T01:23:47.388559-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 206,
-   "time": "2026-08-15T19:50:00.038748-04:00",
+   "time": "2026-08-21T01:23:47.388447-04:00",
    "kind": "leg.response",
    "legType": "crd-order-select",
    "direction": "originate",
-   "correlationId": "390f869901380927c925bb692916023d",
+   "correlationId": "818500aee85d1c02c968829d2265778a",
    "counterpart": "payer",
    "authorityFrame": "payer-coverage",
    "op": "crd-cards",
@@ -310,14 +310,14 @@
  },
  {
   "seq": 392,
-  "time": "2026-08-15T19:50:00.038959-04:00",
+  "time": "2026-08-21T01:23:47.388578-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 207,
-   "time": "2026-08-15T19:50:00.038798-04:00",
+   "time": "2026-08-21T01:23:47.388473-04:00",
    "kind": "ingress.responded",
    "legType": "crd-ingress",
    "direction": "ingress",
@@ -341,14 +341,14 @@
  },
  {
   "seq": 393,
-  "time": "2026-08-15T19:50:00.040685-04:00",
+  "time": "2026-08-21T01:23:47.390318-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 208,
-   "time": "2026-08-15T19:50:00.04057-04:00",
+   "time": "2026-08-21T01:23:47.390168-04:00",
    "kind": "ingress.received",
    "legType": "dtr-ingress",
    "direction": "ingress",
@@ -414,14 +414,14 @@
  },
  {
   "seq": 394,
-  "time": "2026-08-15T19:50:00.040837-04:00",
+  "time": "2026-08-21T01:23:47.390416-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 209,
-   "time": "2026-08-15T19:50:00.040738-04:00",
+   "time": "2026-08-21T01:23:47.390318-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -430,18 +430,18 @@
  },
  {
   "seq": 395,
-  "time": "2026-08-15T19:50:00.040905-04:00",
+  "time": "2026-08-21T01:23:47.390476-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 210,
-   "time": "2026-08-15T19:50:00.040788-04:00",
+   "time": "2026-08-21T01:23:47.39036-04:00",
    "kind": "leg.originated",
    "legType": "dtr-questionnaire-fetch",
    "direction": "originate",
-   "correlationId": "59ec531b61be86dcc1696c08d332a9f3",
+   "correlationId": "c10b39815f0604d18d18a3879dc48be4",
    "counterpart": "payer",
    "authorityFrame": "provider-tpo",
    "op": "dtr-questionnaire-fetch",
@@ -497,18 +497,18 @@
  },
  {
   "seq": 396,
-  "time": "2026-08-15T19:50:00.045173-04:00",
+  "time": "2026-08-21T01:23:47.395334-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 211,
-   "time": "2026-08-15T19:50:00.045048-04:00",
+   "time": "2026-08-21T01:23:47.395186-04:00",
    "kind": "leg.response",
    "legType": "dtr-questionnaire-fetch",
    "direction": "originate",
-   "correlationId": "59ec531b61be86dcc1696c08d332a9f3",
+   "correlationId": "c10b39815f0604d18d18a3879dc48be4",
    "counterpart": "payer",
    "authorityFrame": "payer-coverage",
    "op": "dtr-questionnaire",
@@ -529,93 +529,114 @@
        "status": "active",
        "item": [
         {
-         "extension": [
+         "linkId": "clinical-history",
+         "text": "Clinical history",
+         "type": "group",
+         "item": [
           {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "ConservativeTherapyWeeks"
-           }
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "language": "text/cql",
+              "expression": "ConservativeTherapyWeeks"
+             }
+            }
+           ],
+           "linkId": "conservative-therapy-weeks",
+           "text": "Weeks of conservative therapy completed",
+           "type": "integer"
+          },
+          {
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "language": "text/cql",
+              "expression": "NeuroDeficit"
+             }
+            }
+           ],
+           "linkId": "neuro-deficit",
+           "text": "Progressive neurological deficit present?",
+           "type": "boolean"
+          },
+          {
+           "linkId": "prior-treatment",
+           "text": "Prior treatment",
+           "type": "group",
+           "item": [
+            {
+             "extension": [
+              {
+               "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+               "valueExpression": {
+                "language": "text/cql",
+                "expression": "PriorImaging"
+               }
+              }
+             ],
+             "linkId": "prior-imaging",
+             "text": "Prior imaging performed?",
+             "type": "boolean"
+            },
+            {
+             "extension": [
+              {
+               "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+               "valueExpression": {
+                "language": "text/cql",
+                "expression": "PriorSurgery"
+               }
+              }
+             ],
+             "linkId": "prior-surgery",
+             "text": "Prior lumbar surgery?",
+             "type": "boolean"
+            }
+           ]
           }
-         ],
-         "linkId": "conservative-therapy-weeks",
-         "text": "Weeks of conservative therapy completed",
-         "type": "integer"
+         ]
         },
         {
-         "extension": [
+         "linkId": "functional-status",
+         "text": "Functional status",
+         "type": "group",
+         "item": [
           {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "NeuroDeficit"
-           }
-          }
-         ],
-         "linkId": "neuro-deficit",
-         "text": "Progressive neurological deficit present?",
-         "type": "boolean"
-        },
-        {
-         "extension": [
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "language": "text/cql",
+              "expression": "HighDisability"
+             }
+            }
+           ],
+           "linkId": "high-disability",
+           "text": "High disability index flag?",
+           "type": "boolean"
+          },
           {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "PriorImaging"
-           }
-          }
-         ],
-         "linkId": "prior-imaging",
-         "text": "Prior imaging performed?",
-         "type": "boolean"
-        },
-        {
-         "extension": [
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "language": "text/cql",
+              "expression": "PatientReportedRequired"
+             }
+            }
+           ],
+           "linkId": "patient-reported-required",
+           "text": "Patient-reported functional status required?",
+           "type": "boolean"
+          },
           {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "PriorSurgery"
-           }
+           "linkId": "functional-status-oswestry",
+           "text": "Oswestry disability index (clinician-attested)",
+           "type": "text"
           }
-         ],
-         "linkId": "prior-surgery",
-         "text": "Prior lumbar surgery?",
-         "type": "boolean"
-        },
-        {
-         "extension": [
-          {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "HighDisability"
-           }
-          }
-         ],
-         "linkId": "high-disability",
-         "text": "High disability index flag?",
-         "type": "boolean"
-        },
-        {
-         "extension": [
-          {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "PatientReportedRequired"
-           }
-          }
-         ],
-         "linkId": "patient-reported-required",
-         "text": "Patient-reported functional status required?",
-         "type": "boolean"
-        },
-        {
-         "linkId": "functional-status-oswestry",
-         "text": "Oswestry disability index (clinician-attested)",
-         "type": "text"
+         ]
         }
        ],
        "resourceType": "Questionnaire"
@@ -629,14 +650,14 @@
  },
  {
   "seq": 397,
-  "time": "2026-08-15T19:50:00.045208-04:00",
+  "time": "2026-08-21T01:23:47.395353-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 212,
-   "time": "2026-08-15T19:50:00.04508-04:00",
+   "time": "2026-08-21T01:23:47.395226-04:00",
    "kind": "ingress.responded",
    "legType": "dtr-ingress",
    "direction": "ingress",
@@ -657,93 +678,114 @@
        "status": "active",
        "item": [
         {
-         "extension": [
+         "linkId": "clinical-history",
+         "text": "Clinical history",
+         "type": "group",
+         "item": [
           {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "ConservativeTherapyWeeks"
-           }
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "language": "text/cql",
+              "expression": "ConservativeTherapyWeeks"
+             }
+            }
+           ],
+           "linkId": "conservative-therapy-weeks",
+           "text": "Weeks of conservative therapy completed",
+           "type": "integer"
+          },
+          {
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "language": "text/cql",
+              "expression": "NeuroDeficit"
+             }
+            }
+           ],
+           "linkId": "neuro-deficit",
+           "text": "Progressive neurological deficit present?",
+           "type": "boolean"
+          },
+          {
+           "linkId": "prior-treatment",
+           "text": "Prior treatment",
+           "type": "group",
+           "item": [
+            {
+             "extension": [
+              {
+               "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+               "valueExpression": {
+                "language": "text/cql",
+                "expression": "PriorImaging"
+               }
+              }
+             ],
+             "linkId": "prior-imaging",
+             "text": "Prior imaging performed?",
+             "type": "boolean"
+            },
+            {
+             "extension": [
+              {
+               "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+               "valueExpression": {
+                "language": "text/cql",
+                "expression": "PriorSurgery"
+               }
+              }
+             ],
+             "linkId": "prior-surgery",
+             "text": "Prior lumbar surgery?",
+             "type": "boolean"
+            }
+           ]
           }
-         ],
-         "linkId": "conservative-therapy-weeks",
-         "text": "Weeks of conservative therapy completed",
-         "type": "integer"
+         ]
         },
         {
-         "extension": [
+         "linkId": "functional-status",
+         "text": "Functional status",
+         "type": "group",
+         "item": [
           {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "NeuroDeficit"
-           }
-          }
-         ],
-         "linkId": "neuro-deficit",
-         "text": "Progressive neurological deficit present?",
-         "type": "boolean"
-        },
-        {
-         "extension": [
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "language": "text/cql",
+              "expression": "HighDisability"
+             }
+            }
+           ],
+           "linkId": "high-disability",
+           "text": "High disability index flag?",
+           "type": "boolean"
+          },
           {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "PriorImaging"
-           }
-          }
-         ],
-         "linkId": "prior-imaging",
-         "text": "Prior imaging performed?",
-         "type": "boolean"
-        },
-        {
-         "extension": [
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "language": "text/cql",
+              "expression": "PatientReportedRequired"
+             }
+            }
+           ],
+           "linkId": "patient-reported-required",
+           "text": "Patient-reported functional status required?",
+           "type": "boolean"
+          },
           {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "PriorSurgery"
-           }
+           "linkId": "functional-status-oswestry",
+           "text": "Oswestry disability index (clinician-attested)",
+           "type": "text"
           }
-         ],
-         "linkId": "prior-surgery",
-         "text": "Prior lumbar surgery?",
-         "type": "boolean"
-        },
-        {
-         "extension": [
-          {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "HighDisability"
-           }
-          }
-         ],
-         "linkId": "high-disability",
-         "text": "High disability index flag?",
-         "type": "boolean"
-        },
-        {
-         "extension": [
-          {
-           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-           "valueExpression": {
-            "language": "text/cql",
-            "expression": "PatientReportedRequired"
-           }
-          }
-         ],
-         "linkId": "patient-reported-required",
-         "text": "Patient-reported functional status required?",
-         "type": "boolean"
-        },
-        {
-         "linkId": "functional-status-oswestry",
-         "text": "Oswestry disability index (clinician-attested)",
-         "type": "text"
+         ]
         }
        ],
        "resourceType": "Questionnaire"
@@ -758,14 +800,14 @@
  },
  {
   "seq": 398,
-  "time": "2026-08-15T19:50:00.047151-04:00",
+  "time": "2026-08-21T01:23:47.397333-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 213,
-   "time": "2026-08-15T19:50:00.047038-04:00",
+   "time": "2026-08-21T01:23:47.397189-04:00",
    "kind": "ingress.received",
    "legType": "pas-ingress",
    "direction": "ingress",
@@ -870,62 +912,72 @@
        "subject": {
         "reference": "Patient/MBR-COVERED"
        },
-       "authored": "2026-08-15T23:50:00Z",
+       "authored": "2026-08-21T05:23:47Z",
        "item": [
         {
-         "linkId": "conservative-therapy-weeks",
-         "answer": [
+         "linkId": "clinical-history",
+         "item": [
           {
-           "extension": [
+           "linkId": "conservative-therapy-weeks",
+           "answer": [
             {
              "extension": [
               {
-               "url": "source",
-               "valueCode": "auto"
+               "extension": [
+                {
+                 "url": "source",
+                 "valueCode": "auto"
+                }
+               ],
+               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
               }
              ],
-             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+             "valueInteger": 6
             }
-           ],
-           "valueInteger": 6
-          }
-         ]
-        },
-        {
-         "linkId": "neuro-deficit",
-         "answer": [
+           ]
+          },
           {
-           "extension": [
+           "linkId": "neuro-deficit",
+           "answer": [
             {
              "extension": [
               {
-               "url": "source",
-               "valueCode": "auto"
+               "extension": [
+                {
+                 "url": "source",
+                 "valueCode": "auto"
+                }
+               ],
+               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
               }
              ],
-             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+             "valueBoolean": false
             }
-           ],
-           "valueBoolean": false
-          }
-         ]
-        },
-        {
-         "linkId": "prior-imaging",
-         "answer": [
+           ]
+          },
           {
-           "extension": [
+           "linkId": "prior-treatment",
+           "item": [
             {
-             "extension": [
+             "linkId": "prior-imaging",
+             "answer": [
               {
-               "url": "source",
-               "valueCode": "auto"
+               "extension": [
+                {
+                 "extension": [
+                  {
+                   "url": "source",
+                   "valueCode": "auto"
+                  }
+                 ],
+                 "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+                }
+               ],
+               "valueBoolean": true
               }
-             ],
-             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+             ]
             }
-           ],
-           "valueBoolean": true
+           ]
           }
          ]
         }
@@ -941,14 +993,14 @@
  },
  {
   "seq": 399,
-  "time": "2026-08-15T19:50:00.047293-04:00",
+  "time": "2026-08-21T01:23:47.39749-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 214,
-   "time": "2026-08-15T19:50:00.047217-04:00",
+   "time": "2026-08-21T01:23:47.397398-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -957,18 +1009,18 @@
  },
  {
   "seq": 400,
-  "time": "2026-08-15T19:50:00.047462-04:00",
+  "time": "2026-08-21T01:23:47.397688-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 215,
-   "time": "2026-08-15T19:50:00.04735-04:00",
+   "time": "2026-08-21T01:23:47.39754-04:00",
    "kind": "leg.originated",
    "legType": "pas-claim",
    "direction": "originate",
-   "correlationId": "94177423001c4471cc5444c1656b5457",
+   "correlationId": "9ba92a3d0182707a27c79241460fedd3",
    "counterpart": "payer",
    "authorityFrame": "provider-tpo",
    "op": "pas-submit",
@@ -1073,62 +1125,72 @@
        "subject": {
         "reference": "Patient/MBR-COVERED"
        },
-       "authored": "2026-08-15T23:50:00Z",
+       "authored": "2026-08-21T05:23:47Z",
        "item": [
         {
-         "linkId": "conservative-therapy-weeks",
-         "answer": [
+         "linkId": "clinical-history",
+         "item": [
           {
-           "extension": [
+           "linkId": "conservative-therapy-weeks",
+           "answer": [
             {
              "extension": [
               {
-               "url": "source",
-               "valueCode": "auto"
+               "extension": [
+                {
+                 "url": "source",
+                 "valueCode": "auto"
+                }
+               ],
+               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
               }
              ],
-             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+             "valueInteger": 6
             }
-           ],
-           "valueInteger": 6
-          }
-         ]
-        },
-        {
-         "linkId": "neuro-deficit",
-         "answer": [
+           ]
+          },
           {
-           "extension": [
+           "linkId": "neuro-deficit",
+           "answer": [
             {
              "extension": [
               {
-               "url": "source",
-               "valueCode": "auto"
+               "extension": [
+                {
+                 "url": "source",
+                 "valueCode": "auto"
+                }
+               ],
+               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
               }
              ],
-             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+             "valueBoolean": false
             }
-           ],
-           "valueBoolean": false
-          }
-         ]
-        },
-        {
-         "linkId": "prior-imaging",
-         "answer": [
+           ]
+          },
           {
-           "extension": [
+           "linkId": "prior-treatment",
+           "item": [
             {
-             "extension": [
+             "linkId": "prior-imaging",
+             "answer": [
               {
-               "url": "source",
-               "valueCode": "auto"
+               "extension": [
+                {
+                 "extension": [
+                  {
+                   "url": "source",
+                   "valueCode": "auto"
+                  }
+                 ],
+                 "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+                }
+               ],
+               "valueBoolean": true
               }
-             ],
-             "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
+             ]
             }
-           ],
-           "valueBoolean": true
+           ]
           }
          ]
         }
@@ -1144,18 +1206,18 @@
  },
  {
   "seq": 401,
-  "time": "2026-08-15T19:50:00.051184-04:00",
+  "time": "2026-08-21T01:23:47.401755-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 216,
-   "time": "2026-08-15T19:50:00.051078-04:00",
+   "time": "2026-08-21T01:23:47.40163-04:00",
    "kind": "leg.response",
    "legType": "pas-claim",
    "direction": "originate",
-   "correlationId": "94177423001c4471cc5444c1656b5457",
+   "correlationId": "9ba92a3d0182707a27c79241460fedd3",
    "counterpart": "payer",
    "authorityFrame": "payer-coverage",
    "op": "pas-response",
@@ -1179,7 +1241,7 @@
     "patient": {
      "reference": "Patient/MBR-COVERED"
     },
-    "created": "2026-08-15T23:50:00Z",
+    "created": "2026-08-21T05:23:47Z",
     "insurer": {
      "reference": "Organization/payer"
     },
@@ -1187,12 +1249,12 @@
     "identifier": [
      {
       "system": "urn:shn:correlation",
-      "value": "94177423001c4471cc5444c1656b5457"
+      "value": "9ba92a3d0182707a27c79241460fedd3"
      }
     ],
-    "preAuthRef": "PA-f3757af9a917",
+    "preAuthRef": "PA-f786fb1356c9",
     "preAuthPeriod": {
-     "end": "2026-11-13"
+     "end": "2026-11-19"
     },
     "item": [
      {
@@ -1235,14 +1297,14 @@
  },
  {
   "seq": 402,
-  "time": "2026-08-15T19:50:00.051195-04:00",
+  "time": "2026-08-21T01:23:47.401767-04:00",
   "type": "observer",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
    "seq": 217,
-   "time": "2026-08-15T19:50:00.051116-04:00",
+   "time": "2026-08-21T01:23:47.401674-04:00",
    "kind": "ingress.responded",
    "legType": "pas-ingress",
    "direction": "ingress",
@@ -1266,7 +1328,7 @@
     "patient": {
      "reference": "Patient/MBR-COVERED"
     },
-    "created": "2026-08-15T23:50:00Z",
+    "created": "2026-08-21T05:23:47Z",
     "insurer": {
      "reference": "Organization/payer"
     },
@@ -1274,12 +1336,12 @@
     "identifier": [
      {
       "system": "urn:shn:correlation",
-      "value": "94177423001c4471cc5444c1656b5457"
+      "value": "9ba92a3d0182707a27c79241460fedd3"
      }
     ],
-    "preAuthRef": "PA-f3757af9a917",
+    "preAuthRef": "PA-f786fb1356c9",
     "preAuthPeriod": {
-     "end": "2026-11-13"
+     "end": "2026-11-19"
     },
     "item": [
      {
@@ -1323,14 +1385,14 @@
  },
  {
   "seq": 403,
-  "time": "2026-08-15T19:50:00.052521-04:00",
+  "time": "2026-08-21T01:23:47.403652-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 149,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "shn-kit-live01",
    "recipient": "authz",
    "transactionType": "authz-decision:crd-order-select",
@@ -1342,14 +1404,14 @@
  },
  {
   "seq": 404,
-  "time": "2026-08-15T19:50:00.052532-04:00",
+  "time": "2026-08-21T01:23:47.403664-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 150,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "shn-kit-live01",
    "recipient": "payer",
    "transactionType": "crd-order-select",
@@ -1361,14 +1423,14 @@
  },
  {
   "seq": 405,
-  "time": "2026-08-15T19:50:00.052534-04:00",
+  "time": "2026-08-21T01:23:47.403667-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 151,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "payer",
    "recipient": "authz",
    "transactionType": "authz-decision:crd-cards",
@@ -1380,14 +1442,14 @@
  },
  {
   "seq": 406,
-  "time": "2026-08-15T19:50:00.052536-04:00",
+  "time": "2026-08-21T01:23:47.40367-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 152,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "payer",
    "recipient": "shn-kit-live01",
    "transactionType": "crd-order-select",
@@ -1399,14 +1461,14 @@
  },
  {
   "seq": 407,
-  "time": "2026-08-15T19:50:00.05254-04:00",
+  "time": "2026-08-21T01:23:47.403672-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 153,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "shn-kit-live01",
    "recipient": "authz",
    "transactionType": "authz-decision:dtr-questionnaire-fetch",
@@ -1418,14 +1480,14 @@
  },
  {
   "seq": 408,
-  "time": "2026-08-15T19:50:00.052543-04:00",
+  "time": "2026-08-21T01:23:47.403675-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 154,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "shn-kit-live01",
    "recipient": "payer",
    "transactionType": "dtr-questionnaire-fetch",
@@ -1437,14 +1499,14 @@
  },
  {
   "seq": 409,
-  "time": "2026-08-15T19:50:00.052545-04:00",
+  "time": "2026-08-21T01:23:47.403677-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 155,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "payer",
    "recipient": "authz",
    "transactionType": "authz-decision:dtr-questionnaire",
@@ -1456,14 +1518,14 @@
  },
  {
   "seq": 410,
-  "time": "2026-08-15T19:50:00.052547-04:00",
+  "time": "2026-08-21T01:23:47.403679-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 156,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "payer",
    "recipient": "shn-kit-live01",
    "transactionType": "dtr-questionnaire-fetch",
@@ -1475,14 +1537,14 @@
  },
  {
   "seq": 411,
-  "time": "2026-08-15T19:50:00.05255-04:00",
+  "time": "2026-08-21T01:23:47.403681-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 157,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "shn-kit-live01",
    "recipient": "authz",
    "transactionType": "authz-decision:pas-submit",
@@ -1494,14 +1556,14 @@
  },
  {
   "seq": 412,
-  "time": "2026-08-15T19:50:00.052553-04:00",
+  "time": "2026-08-21T01:23:47.403684-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 158,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "shn-kit-live01",
    "recipient": "payer",
    "transactionType": "pas-claim",
@@ -1513,14 +1575,14 @@
  },
  {
   "seq": 413,
-  "time": "2026-08-15T19:50:00.052555-04:00",
+  "time": "2026-08-21T01:23:47.403686-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 159,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "payer",
    "recipient": "authz",
    "transactionType": "authz-decision:pas-response",
@@ -1532,14 +1594,14 @@
  },
  {
   "seq": 414,
-  "time": "2026-08-15T19:50:00.052557-04:00",
+  "time": "2026-08-21T01:23:47.403689-04:00",
   "type": "audit",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
    "seq": 160,
-   "timestamp": "2026-08-15T19:50:00-04:00",
+   "timestamp": "2026-08-21T01:23:47-04:00",
    "sender": "payer",
    "recipient": "shn-kit-live01",
    "transactionType": "pas-claim",
@@ -1551,11 +1613,11 @@
  },
  {
   "seq": 415,
-  "time": "2026-08-15T19:50:00.052559-04:00",
+  "time": "2026-08-21T01:23:47.40369-04:00",
   "type": "run.finished",
-  "runId": "run-1786837800028-15",
+  "runId": "run-1787289827379-15",
   "lane": "conformant",
   "uc": "uc03",
-  "detail": "CRD card + DTR package + PAS submit approved via direct-mint ingress, auth PA-f3757af9a917"
+  "detail": "CRD card + DTR package + PAS submit approved via direct-mint ingress, auth PA-f786fb1356c9"
  }
 ]

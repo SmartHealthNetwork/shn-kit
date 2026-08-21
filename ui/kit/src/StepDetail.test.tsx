@@ -583,7 +583,7 @@ describe('StepDetail — substrate view', () => {
 // ---------------------------------------------------------------------------
 
 const SHN_LOSS_REPORT_EXT_URL = 'http://smarthealth.network/fhir/StructureDefinition/shn-loss-report';
-const CARRY_PATH_MARKER = 'QuestionnaireResponse.item.answer.extension:itemWeight';
+const CARRY_PATH_MARKER = 'QuestionnaireResponse.item.answer.value.extension:itemWeight';
 const SYNTH_PATH_MARKER = 'Claim.item.extension:itemTraceNumber';
 
 function transformProvenancePayload(reports: unknown[]): Record<string, unknown> {
@@ -1373,7 +1373,7 @@ function demoCarryRecord(): DemoRecord {
         target: '2.1',
         carried: [
           {
-            path: 'QuestionnaireResponse.item.answer.extension:itemWeight',
+            path: 'QuestionnaireResponse.item.answer.value.extension:itemWeight',
             detail: 'itemWeight extension carried; source line 2.2',
           },
         ],
@@ -1494,7 +1494,7 @@ describe('StepDetail — DemoStepDetail, carry demonstration', () => {
     expect(within(chainHops as HTMLElement).getByText('2.1 → 2.2')).toBeDefined();
 
     // loss entries (existing LossEntryList subcomponent, reused directly)
-    expect(screen.getByText('QuestionnaireResponse.item.answer.extension:itemWeight')).toBeDefined();
+    expect(screen.getByText('QuestionnaireResponse.item.answer.value.extension:itemWeight')).toBeDefined();
     expect(document.body.textContent).toContain('itemWeight extension carried; source line 2.2');
 
     // both JsonViews present, scoped so an identical byte-for-byte

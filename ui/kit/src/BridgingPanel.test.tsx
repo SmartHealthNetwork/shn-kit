@@ -65,7 +65,7 @@ beforeEach(() => {
   vi.mocked(api.postBridgingDemo).mockResolvedValue({ demoMode: true });
   vi.mocked(api.postBridgingExhibit).mockResolvedValue({
     kind: 'carry',
-    lossReports: [{ module: 'pa.dtr 2.2->2.1', source: '2.2', target: '2.1', carried: [{ path: 'item.answer.extension:itemWeight', detail: 'carried' }] }],
+    lossReports: [{ module: 'pa.dtr 2.2->2.1', source: '2.2', target: '2.1', carried: [{ path: 'item.answer.value.extension:itemWeight', detail: 'carried' }] }],
     restored: true,
     runId: 'demo-run-1',
   });

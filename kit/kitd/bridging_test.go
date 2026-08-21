@@ -205,7 +205,7 @@ func TestBridgingExhibit_CarryHappyPath(t *testing.T) {
 				LossReports: []bridgingLossReport{{
 					Module: "pa.dtr 2.2->2.1", Source: "2.2", Target: "2.1",
 					Carried: []bridgingLossEntry{{
-						Path:   "QuestionnaireResponse.item.answer.extension:itemWeight",
+						Path:   "QuestionnaireResponse.item.answer.value.extension:itemWeight",
 						Detail: "carried; source line 2.2 (no 2.1 slot)",
 					}},
 				}},
@@ -243,7 +243,7 @@ func TestBridgingExhibit_CarryHappyPath(t *testing.T) {
 	if len(resp.LossReports) != 2 {
 		t.Fatalf("lossReports = %+v, want 2 entries (down leg + up leg)", resp.LossReports)
 	}
-	if len(resp.LossReports[0].Carried) != 1 || resp.LossReports[0].Carried[0].Path != "QuestionnaireResponse.item.answer.extension:itemWeight" {
+	if len(resp.LossReports[0].Carried) != 1 || resp.LossReports[0].Carried[0].Path != "QuestionnaireResponse.item.answer.value.extension:itemWeight" {
 		t.Fatalf("down leg report Carried = %+v, want exactly the itemWeight path", resp.LossReports[0].Carried)
 	}
 
@@ -411,9 +411,32 @@ func TestBridgingCarryInputAsset_ParsesAndHasItemWeight(t *testing.T) {
 	if doc["resourceType"] != "QuestionnaireResponse" {
 		t.Fatalf("carry input asset resourceType = %v, want QuestionnaireResponse", doc["resourceType"])
 	}
+	// The sandbox questionnaire groups its leaves, so the weeks item sits inside
+	// clinical-history — walk every depth (both QR nesting axes), not the top level.
+	var flatten func(items []any) []any
+	flatten = func(items []any) []any {
+		var out []any
+		for _, it := range items {
+			im, ok := it.(map[string]any)
+			if !ok {
+				continue
+			}
+			out = append(out, im)
+			sub, _ := im["item"].([]any)
+			out = append(out, flatten(sub)...)
+			answers, _ := im["answer"].([]any)
+			for _, a := range answers {
+				if am, ok := a.(map[string]any); ok {
+					asub, _ := am["item"].([]any)
+					out = append(out, flatten(asub)...)
+				}
+			}
+		}
+		return out
+	}
 	items, _ := doc["item"].([]any)
 	found := false
-	for _, it := range items {
+	for _, it := range flatten(items) {
 		im, ok := it.(map[string]any)
 		if !ok || im["linkId"] != "conservative-therapy-weeks" {
 			continue
@@ -426,22 +449,42 @@ func TestBridgingCarryInputAsset_ParsesAndHasItemWeight(t *testing.T) {
 		if !ok {
 			continue
 		}
-		exts, _ := am["extension"].([]any)
-		for _, e := range exts {
+		// The itemWeight extension must sit on the answer's VALUE, not on the
+		// answer. The extension's SD contexts it to
+		// QuestionnaireResponse.item.answer.value (and Coding); the answer-level
+		// slice DTR 2.2.0 declares is unsatisfiable on the wire, and the engine
+		// reads the SD. This answer is valueInteger, a primitive, so its
+		// extensions live on the sibling "_valueInteger" object.
+		//
+		// Literal, not imported: this package deliberately does not depend on
+		// gateway/engine (kit's go.mod boundary — see bridging.go's header).
+		// Mirrors engine/transform_dtr.go's dtrItemWeightExt constant with no
+		// compile-time link; if that constant's value ever changes, this string
+		// must be updated by hand or this test silently stops proving anything.
+		under, _ := am["_valueInteger"].(map[string]any)
+		if under == nil {
+			t.Fatalf("carry input asset answer has no _valueInteger container — the itemWeight cannot be at its context-legal locus")
+		}
+		underExts, _ := under["extension"].([]any)
+		for _, e := range underExts {
 			em, ok := e.(map[string]any)
-			// Literal, not imported: this package deliberately does not depend on
-			// gateway/engine (kit's go.mod boundary — see bridging.go's header).
-			// Mirrors engine/transform_dtr.go's dtrItemWeightExt constant with no
-			// compile-time link; if that constant's value ever changes, this
-			// string must be updated by hand or this test silently stops proving
-			// anything about the real extension.
 			if ok && em["url"] == "http://hl7.org/fhir/StructureDefinition/itemWeight" {
 				found = true
 			}
 		}
+		// Negative half: the old, context-illegal locus must be empty of
+		// itemWeight, or the exhibit would demonstrate a shape no conformant
+		// peer can send and the engine no longer carries.
+		answerExts, _ := am["extension"].([]any)
+		for _, e := range answerExts {
+			em, ok := e.(map[string]any)
+			if ok && em["url"] == "http://hl7.org/fhir/StructureDefinition/itemWeight" {
+				t.Fatal("carry input asset still carries itemWeight at answer.extension — that locus is context-illegal")
+			}
+		}
 	}
 	if !found {
-		t.Fatalf("carry input asset has no item.answer.extension:itemWeight on conservative-therapy-weeks")
+		t.Fatalf("carry input asset has no item.answer.value.extension:itemWeight on conservative-therapy-weeks")
 	}
 }
 
@@ -598,7 +641,7 @@ func TestBridgingExhibit_CarryProducesDemonstrationRun(t *testing.T) {
 				LossReports: []bridgingLossReport{{
 					Module: "pa.dtr 2.2->2.1", Source: "2.2", Target: "2.1",
 					Carried: []bridgingLossEntry{{
-						Path:   "QuestionnaireResponse.item.answer.extension:itemWeight",
+						Path:   "QuestionnaireResponse.item.answer.value.extension:itemWeight",
 						Detail: "carried; source line 2.2 (no 2.1 slot)",
 					}},
 				}},

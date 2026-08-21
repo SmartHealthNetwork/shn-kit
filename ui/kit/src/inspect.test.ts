@@ -768,7 +768,7 @@ describe('buildDemoStory', () => {
     expect(story?.record.lossReports?.[0].module).toBe('pa.dtr 2.2->2.1');
     expect(story?.record.lossReports?.[0].carried).toHaveLength(1);
     expect(story?.record.lossReports?.[0].carried?.[0].path).toBe(
-      'QuestionnaireResponse.item.answer.extension:itemWeight',
+      'QuestionnaireResponse.item.answer.value.extension:itemWeight',
     );
     expect(story?.verdict).toBe('restored exactly');
   });

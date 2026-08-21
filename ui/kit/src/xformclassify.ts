@@ -174,36 +174,110 @@ function segmentsOf(lossPath: string): string[] {
   });
 }
 
+// VALUE_CHOICE_KEY: a FHIR value[x] choice key in either JSON encoding —
+// `valueCoding` (a complex type, extensions on the value object) or
+// `_valueInteger` (a primitive, extensions on the sibling object). The
+// uppercase-led type name keeps real field names that merely begin with
+// "value" (valueSet) out of the fold.
+//
+// HAND-MIRROR of tools/xmatrix/locus.go's valueChoiceKey + NormalizeDiffPath,
+// including the scope condition. There is no CI tie across the language
+// boundary; if you change one, change the other.
+//
+// ONE deliberate exception: the Go side ALSO folds QuestionnaireResponse's item
+// recursion (item.item and item.answer.item both collapse onto item), and this
+// side does not need to. LocusCovers matches a locus as a PREFIX, so extra
+// nesting segments in the middle break it; suffixMatches compares a TAIL, so the
+// same segments fall off the front and nested regions already match. A fold
+// here would therefore be a harmless NO-OP rather than a fix: a recursion fold
+// only removes redundant segments earlier in the chain, never the trailing
+// segments suffixMatches actually compares, so the classification outcome is
+// structurally invariant to whether the fold exists. (Confirmed directly: a
+// scratch jsonKeysOf carrying the same fold left every case in
+// xformclassify.test.ts, including the nested ones, unchanged.) Those nested
+// cases pin the carried/rewritten classification and the dependency on
+// suffixMatches — not the absence of a fold, which this comment records instead.
+const VALUE_CHOICE_KEY = /^_?value[A-Z][a-zA-Z0-9]*$/;
+
 // jsonKeysOf strips array indices from a region path, leaving only the
-// object-key chain — array indices are always ignored for suffix matching.
+// object-key chain — array indices are always ignored for suffix matching —
+// and folds an answer's value[x] key onto the class-level `value` segment so a
+// LossEntry.Path naming ...item.answer.value.extension:<slice> can match a
+// region whose actual JSON key is `_valueInteger` or `valueCoding` (the itemWeight
+// extension is contexted to the answer's VALUE).
+//
+// The fold belongs HERE, on the observed region path, not in segmentsOf: the
+// loss path already says `value`, and it is the region that carries the
+// concrete key. Same side as the Go rule.
 function jsonKeysOf(path: (string | number)[]): string[] {
-  return path.filter((p): p is string => typeof p === 'string');
+  const keys = path.filter((p): p is string => typeof p === 'string');
+  return keys.map((k, i) => (i > 0 && keys[i - 1] === 'answer' && VALUE_CHOICE_KEY.test(k) ? 'value' : k));
 }
 
-// suffixMatches drops the loss entry's leading resource-type segment — a
-// LossEntry.Path is always resource-rooted, e.g.
-// "QuestionnaireResponse.item.answer.extension", but `before`/`after` here
-// ARE the resource itself, so the resource-type name never appears as an
-// actual JSON key — and then requires what's left to be a TRUE suffix of
-// the region's JSON-key chain: the region path must be AT LEAST as long as
-// the (stripped) loss path, and every remaining loss segment must line up
-// with the region path's tail in order.
+interface EnclosingResource {
+  type: string;
+  depth: number; // path prefix length at which the resource object sits
+}
+
+// enclosingResource: the NEAREST strict ancestor of `path` in `root` (the
+// root itself included, at depth 0) that is a FHIR resource — a plain object
+// carrying a string `resourceType`. A region's content belongs to that
+// resource: the whole tree when `before`/`after` ARE the resource, the
+// `entry[i].resource` when they are a Bundle, the contained resource when the
+// region sits inside `contained[i]`. The walk stops at the first missing
+// prefix, so an after-only region is resolved against the tree that has it.
+function enclosingResource(root: unknown, path: (string | number)[]): EnclosingResource | undefined {
+  let found: EnclosingResource | undefined;
+  for (let i = 0; i < path.length; i++) {
+    const at = getAtPath(root, path.slice(0, i));
+    if (!at.exists) break;
+    if (isPlainObject(at.value) && typeof at.value.resourceType === 'string') {
+      found = { type: at.value.resourceType, depth: i };
+    }
+  }
+  return found;
+}
+
+// suffixMatches anchors a loss entry to the region's enclosing resource and
+// then requires the entry's remaining segments to be a TRUE suffix of the
+// region's JSON-key chain RELATIVE to that resource.
 //
-// The length floor is load-bearing, not incidental: without it, a shallow
-// region (e.g. a root-level `extension` key) would satisfy a deep loss
-// entry (e.g. "...item.answer.extension") merely because SOME short common
-// tail exists — silently mislabeling an unrelated root-level rewrite as
-// carried. Requiring the full stripped loss path to fit inside the region
-// path rejects that, while still matching a Bundle-wrapped resource whose
-// region path is DEEPER than the loss path — the extra `entry.resource`-
-// style prefix segments simply fall outside the compared tail.
-function suffixMatches(path: (string | number)[], lossPath: string): boolean {
-  const want = segmentsOf(lossPath).slice(1);
+// A LossEntry.Path is always resource-rooted, e.g.
+// "QuestionnaireResponse.item.answer.extension": its first segment is a
+// resource type, never a JSON key, and the rest name a location inside that
+// resource. So the match has two halves, both load-bearing:
+//
+//  1. The resource type must equal the enclosing resource's `resourceType`,
+//     in either tree. Without this, the stripped tail of a shallow entry —
+//     `ClaimResponse.extension:<slice>` leaves the lone segment ['extension']
+//     — claimed ANY region whose chain ended in `extension`, including a
+//     QuestionnaireResponse's embedded in the same bundle (the mixed-bundle shape).
+//     A tree with no `resourceType` anywhere has no enclosing resource and
+//     is claimed by nothing; every real payload the inspector sees is a FHIR
+//     resource and carries the key.
+//  2. The chain from the resource down to the region must be at least as
+//     long as the stripped entry, and the entry must line up with its tail
+//     in order. The length floor stops a shallow region (a root-level
+//     `extension`) from satisfying a deep entry ("...item.answer.extension")
+//     on the strength of a short common tail. Measuring from the resource,
+//     not the tree root, is what lets a Bundle-wrapped region still match —
+//     the `entry.resource` prefix is outside the resource and outside the
+//     compared chain — while keeping the floor honest for the resource's own
+//     root-level keys.
+function suffixMatches(path: (string | number)[], lossPath: string, before: unknown, after: unknown): boolean {
+  const segments = segmentsOf(lossPath);
+  const resourceType = segments[0];
+  const want = segments.slice(1);
   if (want.length === 0) return false;
-  const have = jsonKeysOf(path);
-  if (want.length > have.length) return false;
-  const haveTail = have.slice(have.length - want.length);
-  return want.every((w, i) => w === haveTail[i]);
+  for (const tree of [before, after]) {
+    const enclosing = enclosingResource(tree, path);
+    if (enclosing === undefined || enclosing.type !== resourceType) continue;
+    const have = jsonKeysOf(path.slice(enclosing.depth));
+    if (want.length > have.length) continue;
+    const haveTail = have.slice(have.length - want.length);
+    if (want.every((w, i) => w === haveTail[i])) return true;
+  }
+  return false;
 }
 
 function classify(
@@ -225,14 +299,14 @@ function classify(
   }
 
   const carriedPaths = lossReports.flatMap((r) => (r.carried ?? []).map((e) => e.path));
-  if (carriedPaths.some((p) => suffixMatches(path, p))) {
+  if (carriedPaths.some((p) => suffixMatches(path, p, before, after))) {
     return { cls: 'carried', side: 'both' };
   }
 
   const afterOnly = !beforeAt.exists && afterAt.exists;
   if (afterOnly) {
     const synthesizedPaths = lossReports.flatMap((r) => (r.synthesized ?? []).map((e) => e.path));
-    if (synthesizedPaths.some((p) => suffixMatches(path, p))) {
+    if (synthesizedPaths.some((p) => suffixMatches(path, p, before, after))) {
       return { cls: 'synthesized', side: 'after' };
     }
   }
