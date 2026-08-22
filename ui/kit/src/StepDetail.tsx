@@ -300,8 +300,8 @@ function parseLossReport(v: unknown): ParsedLossReport | undefined {
 // byte-for-byte. ui/kit is a separate module pinned against published
 // shn-gateway/shn-sdk releases (kit/go.mod) — it cannot import the Go sdk to
 // read the constant live, so this is a literal copy, same precedent as
-// kit/kitd/bridgingassets/README.md's hand-regenerated golden copies (Task
-// 13): if sdk/carry.go's LossReportExtURL ever changes, this string goes
+// kit/kitd/bridgingassets/README.md's hand-regenerated golden copies: if
+// sdk/carry.go's LossReportExtURL ever changes, this string goes
 // stale silently — there is no cross-module CI tie — and the parse below
 // just finds no matching extension (degrades to `undefined`, never throws).
 const SHN_LOSS_REPORT_EXT_URL = 'http://smarthealth.network/fhir/StructureDefinition/shn-loss-report';

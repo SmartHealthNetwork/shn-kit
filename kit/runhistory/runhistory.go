@@ -70,8 +70,7 @@ func NewStore(dir string, keep int) *Store {
 // fileName is the on-disk filename for rec: the run's own clock-derived Time
 // (rec.Time.UnixNano(), zero-padded so lexical and chronological file-name
 // order agree), not a wall-clock read of Save's own — Save takes no read of
-// its own so a Record's filename is fully determined by its contents (review
-// finding 7).
+// its own so a Record's filename is fully determined by its contents.
 func fileName(rec Record) string {
 	return fmt.Sprintf("%020d-%s.json", rec.Time.UnixNano(), rec.RunID)
 }
