@@ -6,12 +6,15 @@
 // seq-window (kit/auditread) — sound only because Kit runs are
 // sequential-only in v1 (see the auditread package doc).
 //
-// Two lanes exercise the same eight Prior Authorization scenarios (UC-01…08)
-// two different ways: "ehr" drives the child's
-// /scenario/* provider-data origination routes (the config-only-gateway
-// path make-e2e's harness also drives); "conformant" drives the Da Vinci
-// ingress directly (CRD/DTR/PAS, UDAP B2B direct bearer) — the row tables
-// live in rows_ehr.go / rows_conformant.go.
+// Three lanes exercise the same eight Prior Authorization scenarios (UC-01…08)
+// three different ways: "ehr" drives the child's /scenario/* origination
+// routes on the sandbox profile (the config-only-gateway path make-e2e's
+// harness also drives); "conformant" drives the Da Vinci ingress directly
+// (CRD/DTR/PAS, UDAP B2B direct bearer); "provider-data" drives the SECOND
+// gateway child's /scenario/* routes on the provider-data origination profile
+// (every scenario read off the bundled FHIR data server, routed to the hosted
+// Da Vinci reference payer) — available only with the Java trio. The row
+// tables live in rows_ehr.go / rows_conformant.go / rows_providerdata.go.
 package runner
 
 import (
@@ -76,14 +79,19 @@ type Sink interface{ RunCompleted(res Result) }
 
 // Config wires a Runner to the pieces it brackets a row with.
 type Config struct {
-	Driver   *scenariodriver.Driver // the child's transport core (required)
-	Bus      *event.Bus             // the Kit run-timeline bus (required)
-	Relay    *relay.Relay           // nil ok — unit tests without a live observer
-	AuditURL string                 // "" ⇒ merge skipped, one audit.unavailable event per run
-	HTTP     *http.Client           // nil → http.DefaultClient
-	Now      func() time.Time       // nil → time.Now
-	NewRunID func() string          // nil → monotonic "run-N"
-	UC07PCI  func() (string, error) // patient-surface PCI resolver
+	Driver *scenariodriver.Driver // the child's transport core (required)
+	// ProviderDataDriver is the provider-data lane's transport: the SECOND
+	// gateway child's /scenario/* base (kitd.Stack.ProviderDataDriver). nil ⇒
+	// the lane is unavailable (no Java trio) and Run/Start refuse it with
+	// providerDataLaneUnavailable before any run is created.
+	ProviderDataDriver *scenariodriver.Driver
+	Bus                *event.Bus             // the Kit run-timeline bus (required)
+	Relay              relay.Stamper          // nil ok — unit tests without a live observer; a relay.Multi when several children emit
+	AuditURL           string                 // "" ⇒ merge skipped, one audit.unavailable event per run
+	HTTP               *http.Client           // nil → http.DefaultClient
+	Now                func() time.Time       // nil → time.Now
+	NewRunID           func() string          // nil → monotonic "run-N"
+	UC07PCI            func() (string, error) // patient-surface PCI resolver
 	// PatientSurfaceReadable reports whether the hosted patient-surface reads
 	// (/personas, /authorizations) are reachable by this (machine) client. shnkitd
 	// sets it from a boot-time probe: in the HOSTED topology the discovery-advertised
@@ -234,7 +242,7 @@ func (r *Runner) InFlight() bool { return r.inFlight.Load() }
 // blocks for its duration, so caller cancellation is meaningful here —
 // unlike Start).
 func (r *Runner) Run(ctx context.Context, req Req) (Result, error) {
-	row, err := validateRow(req)
+	row, err := r.validate(req)
 	if err != nil {
 		return Result{}, err
 	}
@@ -256,7 +264,7 @@ func (r *Runner) Run(ctx context.Context, req Req) (Result, error) {
 // spawned run executes under r.baseCtx (see the field doc: the caller's ctx
 // is typically an HTTP request context that dies as the handler returns).
 func (r *Runner) Start(_ context.Context, req Req) (string, error) {
-	row, err := validateRow(req)
+	row, err := r.validate(req)
 	if err != nil {
 		return "", err
 	}
@@ -654,15 +662,27 @@ func (r *Runner) fail(runID, lane, uc, branch string, err error) Result {
 	return Result{RunID: runID, Lane: lane, UC: uc, Branch: branch, State: StateFailed, Detail: detail}
 }
 
+// validate is Run/Start's shared pre-flight: the lane must be AVAILABLE on
+// this Kit (the provider-data lane needs its gateway child, i.e. the Java
+// trio — refused with providerDataLaneUnavailable, no run created), then the
+// row shape (validateRow).
+func (r *Runner) validate(req Req) (rowFunc, error) {
+	if req.Lane == "provider-data" && r.cfg.ProviderDataDriver == nil {
+		return nil, fmt.Errorf("runner: %s", providerDataLaneUnavailable)
+	}
+	return validateRow(req)
+}
+
 // validateRow checks req against this package's row shape (package doc;
-// branches: uc01 covered|notcovered (both lanes); uc05 lane "conformant"
-// takes no branch, lane "ehr" takes ""|consent|noconsent; uc07 lane
-// "conformant" takes no branch, lane "ehr" takes ""|hcpcs; uc03 lane
-// "conformant" takes ""|bridge-demo, lane "ehr" takes ""|bridge-refuse
-// (the two bridge personas are lane-exclusive); every other UC
-// takes no branch) and returns the row func to execute. An
-// unknown lane/UC/branch is an error and the run is never created (no lock
-// taken, no bus events emitted) — the "unknown row" contract.
+// branches: uc01 covered|notcovered (every lane); uc05 lane "conformant"
+// takes no branch, lanes "ehr" and "provider-data" take ""|consent|noconsent;
+// uc07 lanes "conformant" and "provider-data" take no branch, lane "ehr" takes
+// ""|hcpcs; uc03 lane "conformant" takes ""|bridge-demo, lane "ehr" takes
+// ""|bridge-refuse (the two bridge personas are lane-exclusive), lane
+// "provider-data" takes no branch; every other UC takes no branch) and
+// returns the row func to execute. An unknown lane/UC/branch is an error and
+// the run is never created (no lock taken, no bus events emitted) — the
+// "unknown row" contract.
 //
 // uc "freeform" is NOT a table row — it is a
 // closure built here over req.Member (rows_ehr.go's ehrFreeform), requiring
@@ -701,8 +721,10 @@ func validateRow(req Req) (rowFunc, error) {
 		table = ehrRows
 	case "conformant":
 		table = conformantRows
+	case "provider-data":
+		table = providerDataRows
 	default:
-		return nil, fmt.Errorf("runner: unknown lane %q (want ehr|conformant)", lane)
+		return nil, fmt.Errorf("runner: unknown lane %q (want ehr|conformant|provider-data)", lane)
 	}
 	row, ok := table[uc]
 	if !ok {
@@ -722,9 +744,11 @@ func validateRow(req Req) (rowFunc, error) {
 			return nil, fmt.Errorf("runner: uc05 branch must be \"\"|consent|noconsent, got %q", branch)
 		}
 	case "uc07":
-		if lane == "conformant" {
+		if lane != "ehr" {
+			// The hcpcs branch (the HCPCS persona + patient-surface read-back)
+			// lives on the ehr lane only.
 			if branch != "" {
-				return nil, fmt.Errorf("runner: conformant uc07 takes no branch, got %q", branch)
+				return nil, fmt.Errorf("runner: %s uc07 takes no branch, got %q", lane, branch)
 			}
 		} else if branch != "" && branch != "hcpcs" {
 			return nil, fmt.Errorf("runner: uc07 branch must be \"\"|hcpcs, got %q", branch)
@@ -736,7 +760,12 @@ func validateRow(req Req) (rowFunc, error) {
 		// refusal); the bridge-refuse persona is ehr-lane-only (its
 		// promoted runCRDThenDTROrder sites fire the gated chain + the typed
 		// refusal). Neither lane takes the other's branch.
-		if lane == "conformant" {
+		if lane == "provider-data" {
+			// Neither bridge persona is seeded on the provider-data lane.
+			if branch != "" {
+				return nil, fmt.Errorf("runner: provider-data uc03 takes no branch, got %q", branch)
+			}
+		} else if lane == "conformant" {
 			if branch != "" && branch != "bridge-demo" {
 				return nil, fmt.Errorf("runner: conformant uc03 branch must be \"\"|bridge-demo, got %q", branch)
 			}

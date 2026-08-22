@@ -1,6 +1,8 @@
-// ModeSwitch.tsx — the two-lane segmented control, now part of the
-// persistent TopBar chrome (formerly UCCards' own .lane-tabs block). Pure
-// presentational + dispatch: the caller (App, via TopBar) owns `lane` state.
+// ModeSwitch.tsx — the lane segmented control, part of the persistent TopBar
+// chrome (formerly UCCards' own .lane-tabs block). Pure presentational +
+// dispatch: the caller (App, via TopBar) owns `lane` state and decides which
+// lanes exist on this Kit (`lanes` — the provider-data lane only with the
+// packaged Java trio; defaults to every lane).
 import type { JSX } from 'react';
 import type { Lane } from './types';
 import { LANE_LABELS, LANES } from './ucmeta';
@@ -8,12 +10,13 @@ import { LANE_LABELS, LANES } from './ucmeta';
 export interface ModeSwitchProps {
   lane: Lane;
   onLane(l: Lane): void;
+  lanes?: Lane[];
 }
 
-export function ModeSwitch({ lane, onLane }: ModeSwitchProps): JSX.Element {
+export function ModeSwitch({ lane, onLane, lanes = LANES }: ModeSwitchProps): JSX.Element {
   return (
     <div className="seg" role="tablist" aria-label="lane">
-      {LANES.map((l) => (
+      {lanes.map((l) => (
         <button
           key={l}
           type="button"

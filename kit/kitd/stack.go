@@ -29,6 +29,16 @@ import (
 
 const (
 	gatewayChildName = "gateway"
+	// providerDataChildName is the SECOND gateway child: the same binary on the
+	// provider-data origination profile (BuildStack, trio only).
+	providerDataChildName = "gateway-provider-data"
+	// providerDataPayer is the holder id the provider-data gateway child's static
+	// payer directory routes the demo payer identity (00001) to: the hosted
+	// conformance payer that fronts the Da Vinci reference payer — the published
+	// onboarding contract for a gateway that originates off its own provider
+	// data. Not a knob: an installed Kit has exactly one counterparty for this
+	// lane, and the hermetic gate's stand-in holder carries the same id.
+	providerDataPayer = "conformance-payer"
 
 	// ingressClientID is the shn-kit driver's registered UDAP B2B client_id —
 	// the JWT iss the scenariodriver mints its direct bearers under.
@@ -51,9 +61,7 @@ type StackConfig struct {
 	PHGURL        string
 	ConsentURL    string
 	FHIRDataURL   string // "" ⇒ memstub SoR (the gate posture without provider data configured)
-	// OriginationProfile is "" by default; a later flip enables provider-data origination.
-	OriginationProfile string
-	FakeValidator      bool // true when no packaged validator is configured
+	FakeValidator bool   // true when no packaged validator is configured
 	// GatewayPort is 0 ⇒ allocate; non-zero when the caller pre-registered
 	// the holder BaseURL (the gate does).
 	GatewayPort int
@@ -198,6 +206,17 @@ type Stack struct {
 	DataServerURL string
 	BRProviderURL string
 
+	// ProviderDataURL / ProviderDataObserverURL / ProviderDataObserverHealthURL
+	// are the provider-data gateway child's own bases — "" when no trio is
+	// configured (the child exists only with it). ProviderDataDriver is the
+	// scenario driver config for that child's /scenario/* routes: the
+	// provider-data lane's transport, distinct from Driver (the existing
+	// child's), so each lane drives the gateway that runs its profile.
+	ProviderDataURL               string
+	ProviderDataObserverURL       string
+	ProviderDataObserverHealthURL string
+	ProviderDataDriver            scenariodriver.Config
+
 	// GatewayEnv is the FULL env BuildStack assembled for the gateway child —
 	// value-identical to the gateway ChildSpec's own Env. Exported for ONE
 	// consumer: shnkitd's bridging demo toggle, which restarts the gateway
@@ -291,6 +310,7 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	if trio {
 		need += 2                   // data server, br-provider
 		need += len(validatorLines) // one validator port per configured line (1 by default)
+		need += 2                   // the provider-data gateway child + its own observer
 	}
 	ports, err := supervisor.AllocatePorts(need)
 	if err != nil {
@@ -308,8 +328,9 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	if gatewayPort == 0 {
 		gatewayPort = nextPort()
 	}
-	var validatorPort, dataServerPort, brProviderPort int
+	var validatorPort, dataServerPort, brProviderPort, providerDataPort int
 	var validatorURL, dataServerURL, brProviderURL string
+	var providerDataURL, providerDataObserverAddr, providerDataObserverURL, providerDataObserverHealthURL string
 	additionalValidatorURLs := map[string]string{}
 	additionalValidatorPorts := map[string]int{}
 	if trio {
@@ -324,6 +345,12 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		brProviderPort = nextPort()
 		dataServerURL = fmt.Sprintf("http://127.0.0.1:%d", dataServerPort)
 		brProviderURL = fmt.Sprintf("http://127.0.0.1:%d", brProviderPort)
+		providerDataPort = nextPort()
+		providerDataObserverPort := nextPort()
+		providerDataURL = fmt.Sprintf("http://127.0.0.1:%d", providerDataPort)
+		providerDataObserverAddr = fmt.Sprintf("127.0.0.1:%d", providerDataObserverPort)
+		providerDataObserverURL = fmt.Sprintf("http://%s/events", providerDataObserverAddr)
+		providerDataObserverHealthURL = fmt.Sprintf("http://%s/health", providerDataObserverAddr)
 	}
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -472,9 +499,6 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 			"PROVIDER_DTR_POPULATE_URL="+dataServerURL+"/fhir/provider/Questionnaire/$populate",
 		)
 	}
-	if cfg.OriginationProfile != "" {
-		env = append(env, "ORIGINATION_PROFILE="+cfg.OriginationProfile)
-	}
 	// The SMART quad: gated on FHIRTokenURL, mirroring gateway/app/app.go's
 	// own FHIR_TOKEN_URL emptiness guard (loadConfig:256-266) — a half-set
 	// quad (e.g. FHIRClientID alone, with FHIRTokenURL "") must never trip
@@ -567,6 +591,43 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 			}
 			deferredChildren = append(deferredChildren, extraSpec)
 		}
+
+		// The provider-data gateway child: the SAME binary, derived from the SAME
+		// env recipe (deriveProviderDataEnv — one recipe, never two that can
+		// drift), on ORIGINATION_PROFILE=provider-data, with a static payer
+		// directory routing the demo payer identity to the hosted conformance
+		// payer. It boots LAST: it reads the data server the trio just brought up
+		// and mounts no ingress of its own (the existing child keeps that role),
+		// so its ready probe is the plain /health the gateway serves in every
+		// posture. Its FHIR_DATA_URL is ALWAYS the bundled data server's provider
+		// tenant — never cfg.FHIRDataURL — because the profile's operated
+		// $populate evaluates clinical logic against that same server; a
+		// bring-your-own EHR swap applies to the existing child only.
+		payerDirectoryPath := filepath.Join(cfg.StateDir, "payer-directory.json")
+		dirJSON, err := json.MarshalIndent([]map[string]string{{
+			"system":   demoPayerIdentitySystem,
+			"value":    demoPayerIdentityValue,
+			"holderId": providerDataPayer,
+		}}, "", "  ")
+		if err != nil {
+			return Stack{}, fmt.Errorf("kitd: marshal payer-directory.json: %w", err)
+		}
+		if err := os.WriteFile(payerDirectoryPath, dirJSON, 0600); err != nil {
+			return Stack{}, fmt.Errorf("kitd: write payer-directory.json: %w", err)
+		}
+		children = append(children, supervisor.ChildSpec{
+			Name:    providerDataChildName,
+			Command: cfg.GatewayBinary,
+			Env:     deriveProviderDataEnv(env, providerDataPort, providerDataObserverAddr, dataServerURL+"/fhir/provider", payerDirectoryPath),
+			Dir:     cfg.StateDir,
+			LogPath: filepath.Join(cfg.StateDir, "gateway-provider-data.log"),
+			ReadyURLs: []string{
+				providerDataURL + "/health",
+				providerDataObserverHealthURL,
+			},
+			ReadyTimeout: gatewayReadyTimeout,
+			RestartMax:   gatewayRestartMax,
+		})
 	}
 	children = append(children, cfg.ExtraChildren...)
 
@@ -592,6 +653,10 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		DataServerURL:     dataServerURL,
 		BRProviderURL:     brProviderURL,
 		Driver:            driverCfg,
+
+		ProviderDataURL:               providerDataURL,
+		ProviderDataObserverURL:       providerDataObserverURL,
+		ProviderDataObserverHealthURL: providerDataObserverHealthURL,
 		// A COPY, not the spec's own backing array: the demo toggle appends
 		// its knob to this baseline, and an append that happened to land in
 		// spare capacity of the shared array would rewrite the registered
@@ -601,7 +666,61 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	if len(additionalValidatorURLs) > 0 {
 		stack.AdditionalValidatorURLs = additionalValidatorURLs
 	}
+	if trio {
+		stack.ProviderDataDriver = scenariodriver.Config{ProviderDataURL: providerDataURL, PHGURL: cfg.PHGURL}
+	}
 	return stack, nil
+}
+
+// demoPayerIdentitySystem / demoPayerIdentityValue is the payer identity every
+// bundled provider-data persona's Coverage names (the published seed bundles'
+// own value) — the ONE row the provider-data child's static directory maps.
+const (
+	demoPayerIdentitySystem = "urn:oid:2.16.840.1.113883.6.300"
+	demoPayerIdentityValue  = "00001"
+)
+
+// providerDataEnvDrop lists the env keys the provider-data gateway child does
+// NOT inherit from the existing child's recipe: its own port, observer and
+// data URL are re-set by deriveProviderDataEnv; it mounts no Da Vinci ingress
+// (the existing child keeps that role); and the bring-your-own SMART quad
+// authenticates the partner EHR the EXISTING child may be pointed at — the
+// provider-data child always reads the bundled data server, unauthenticated.
+var providerDataEnvDrop = map[string]bool{
+	"PORT":                              true,
+	"OBSERVER_ADDR":                     true,
+	"FHIR_DATA_URL":                     true,
+	"PROVIDER_DAVINCI_INGRESS":          true,
+	"PROVIDER_DAVINCI_INGRESS_BASE_URL": true,
+	"INGRESS_CLIENTS_FILE":              true,
+	"FHIR_TOKEN_URL":                    true,
+	"FHIR_CLIENT_ID":                    true,
+	"FHIR_CLIENT_KEY":                   true,
+	"FHIR_CLIENT_ALG":                   true,
+	"FHIR_CLIENT_SCOPE":                 true,
+	"FHIR_CLIENT_KID":                   true,
+}
+
+// deriveProviderDataEnv derives the provider-data gateway child's env from the
+// existing child's assembled env (one recipe): every key in providerDataEnvDrop
+// is removed, then the child's own port/observer/data URL, the origination
+// profile and the static payer directory are appended.
+func deriveProviderDataEnv(base []string, port int, observerAddr, fhirDataURL, payerDirectoryPath string) []string {
+	out := make([]string, 0, len(base)+5)
+	for _, kv := range base {
+		key, _, _ := strings.Cut(kv, "=")
+		if providerDataEnvDrop[key] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out,
+		fmt.Sprintf("PORT=%d", port),
+		"OBSERVER_ADDR="+observerAddr,
+		"FHIR_DATA_URL="+fhirDataURL,
+		"ORIGINATION_PROFILE=provider-data",
+		"PAYER_DIRECTORY="+payerDirectoryPath,
+	)
 }
 
 // selfSignedCert generates a minimal self-signed X.509 certificate for key,

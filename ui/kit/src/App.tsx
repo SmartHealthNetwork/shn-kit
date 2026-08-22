@@ -25,6 +25,7 @@ import {
   getStatus,
   postBridgingExhibit,
 } from './api';
+import { visibleLanes } from './ucmeta';
 import { canRestart, openExternal, resolveToken, restartKit } from './bridge';
 import { useEvents } from './useEvents';
 import SignIn from './SignIn';
@@ -198,7 +199,9 @@ export function deriveProviderLabel(
 
   // State-derived: honest only for the current live/latest run.
   if (runId !== latestRunId) return undefined;
-  const runLane = started?.lane === 'ehr' ? 'ehr' : 'conformant';
+  // The provider-data lane always reads the Kit's own data server — never a
+  // swapped-in partner EHR — so the BYO label applies to the ehr lane alone.
+  const runLane = started?.lane === 'ehr' ? 'ehr' : started?.lane === 'provider-data' ? 'provider-data' : 'conformant';
   if (runLane === 'ehr' && byo?.ehr?.applied) return 'Your EHR (FHIR data source)';
   if (runLane === 'conformant' && started?.uc === 'external' && byo?.davinci?.applied) {
     return 'Your Da Vinci system';
@@ -222,6 +225,15 @@ export default function App() {
   const [runsLive, setRunsLive] = useState(false);
   const [results, setResults] = useState<RunResult[]>([]);
   const [lane, setLane] = useState<Lane>('conformant');
+  // The lanes this Kit offers: the provider-data lane exists iff the Kit
+  // booted its provider-data gateway child (status.providerDataUrl). A
+  // selected lane that the status no longer offers falls back to the default.
+  const providerDataUrl = status?.providerDataUrl;
+  const lanes = visibleLanes(providerDataUrl);
+  useEffect(() => {
+    // Keyed on the status fact, not on `lanes` (a fresh array every render).
+    if (!visibleLanes(providerDataUrl).includes(lane)) setLane('conformant');
+  }, [providerDataUrl, lane]);
   // The scenario-card detail level (Overview | Technical). A single global
   // choice, threaded to UCCards; kept in App (not UCCards-local) so it survives
   // nav changes, mirroring how `lane` is held. Defaults to the plain register.
@@ -637,6 +649,7 @@ export default function App() {
         <TopBar
           lane={lane}
           onLane={setLane}
+          lanes={lanes}
           sseState={events.sseState}
           children={status?.children ?? []}
           identity={{ email: boot.email, holderId: boot.holderId }}
@@ -675,6 +688,7 @@ export default function App() {
         <TopBar
           lane={lane}
           onLane={setLane}
+          lanes={lanes}
           sseState={events.sseState}
           children={status?.children ?? []}
           identity={{ email: boot.email, holderId: boot.holderId }}
@@ -718,6 +732,7 @@ export default function App() {
       <TopBar
         lane={lane}
         onLane={setLane}
+        lanes={lanes}
         sseState={events.sseState}
         children={status?.children ?? []}
         identity={{ email: boot.email, holderId: boot.holderId }}

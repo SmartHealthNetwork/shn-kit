@@ -65,7 +65,8 @@ export interface RunInspectorProps {
 }
 
 function laneFromEvent(v: string | undefined): Lane {
-  return v === 'ehr' ? 'ehr' : 'conformant';
+  if (v === 'ehr' || v === 'provider-data') return v;
+  return 'conformant';
 }
 
 export function RunInspector({

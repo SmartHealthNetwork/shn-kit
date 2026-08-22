@@ -48,9 +48,8 @@ func TestBuildStack_EnvRecipe(t *testing.T) {
 		PHGURL:        "http://127.0.0.1:9003",
 		ConsentURL:    "http://127.0.0.1:9004",
 		FakeValidator: true,
-		// FHIRDataURL and OriginationProfile left "" deliberately (the
-		// pre-trio posture): the recipe must omit both entries, not emit
-		// them empty.
+		// FHIRDataURL left "" deliberately (the pre-trio posture): the recipe
+		// must omit the entry, not emit it empty.
 	}
 
 	stack, err := BuildStack(cfg)
@@ -119,16 +118,17 @@ func TestBuildStack_EnvRecipe(t *testing.T) {
 }
 
 // TestBuildStack_EnvRecipe_OptionalFieldsPresent proves the omit-when-empty
-// rules run in both directions: FHIR_DATA_URL and ORIGINATION_PROFILE show up
-// (with the configured value, in recipe order) when the caller sets them.
+// rule runs in both directions: FHIR_DATA_URL shows up (with the configured
+// value) when the caller sets it. The origination profile is NEVER an option on
+// this child: it belongs to the provider-data child alone
+// (TestBuildStack_TrioAbsent_NoProviderDataChild pins the absence here).
 func TestBuildStack_EnvRecipe_OptionalFieldsPresent(t *testing.T) {
 	cfg := StackConfig{
-		GatewayBinary:      "/bin/true",
-		StateDir:           t.TempDir(),
-		SecretsDir:         "/secrets/provider",
-		DiscoveryURL:       "http://127.0.0.1:9001/discovery",
-		FHIRDataURL:        "http://127.0.0.1:9010/fhir/provider",
-		OriginationProfile: "provider-data",
+		GatewayBinary: "/bin/true",
+		StateDir:      t.TempDir(),
+		SecretsDir:    "/secrets/provider",
+		DiscoveryURL:  "http://127.0.0.1:9001/discovery",
+		FHIRDataURL:   "http://127.0.0.1:9010/fhir/provider",
 	}
 	stack, err := BuildStack(cfg)
 	if err != nil {
@@ -138,24 +138,8 @@ func TestBuildStack_EnvRecipe_OptionalFieldsPresent(t *testing.T) {
 	if !hasEnv(spec.Env, "FHIR_DATA_URL=http://127.0.0.1:9010/fhir/provider") {
 		t.Errorf("Env = %q, want FHIR_DATA_URL set", spec.Env)
 	}
-	if !hasEnv(spec.Env, "ORIGINATION_PROFILE=provider-data") {
-		t.Errorf("Env = %q, want ORIGINATION_PROFILE set", spec.Env)
-	}
 	if hasEnv(spec.Env, "SHN_FAKE_VALIDATOR=1") {
 		t.Errorf("Env = %q, want SHN_FAKE_VALIDATOR omitted (cfg.FakeValidator false)", spec.Env)
-	}
-	// FHIR_DATA_URL must precede ORIGINATION_PROFILE (recipe order).
-	fi, oi := -1, -1
-	for i, e := range spec.Env {
-		if strings.HasPrefix(e, "FHIR_DATA_URL=") {
-			fi = i
-		}
-		if strings.HasPrefix(e, "ORIGINATION_PROFILE=") {
-			oi = i
-		}
-	}
-	if fi == -1 || oi == -1 || fi > oi {
-		t.Errorf("Env order = %q, want FHIR_DATA_URL before ORIGINATION_PROFILE", spec.Env)
 	}
 }
 
@@ -617,13 +601,13 @@ func TestBuildStack_TrioPresent_ChildrenOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	wantNames := []string{"gateway", "validator", "data-server", "br-provider"}
+	wantNames := []string{"gateway", "validator", "data-server", "br-provider", providerDataChildName}
 	if len(stack.Children) != len(wantNames) {
 		t.Fatalf("Children = %d, want %d: %+v", len(stack.Children), len(wantNames), stack.Children)
 	}
 	for i, want := range wantNames {
 		if stack.Children[i].Name != want {
-			t.Errorf("Children[%d].Name = %q, want %q (gateway first, then the trio — its ready probe is fast; the trio is the real wait)", i, stack.Children[i].Name, want)
+			t.Errorf("Children[%d].Name = %q, want %q (gateway first, then the trio — its ready probe is fast; the trio is the real wait — then the provider-data gateway that reads the trio's data server)", i, stack.Children[i].Name, want)
 		}
 	}
 }
@@ -884,8 +868,8 @@ func TestBuildStack_LineUnset_ByteIdenticalToSingleLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	if len(stack.Children) != 4 {
-		t.Fatalf("Children = %d, want 4 (no extra validators boot by default)", len(stack.Children))
+	if len(stack.Children) != 5 {
+		t.Fatalf("Children = %d, want 5 (the core four + the provider-data gateway; no extra validators boot by default)", len(stack.Children))
 	}
 	if stack.Children[1].Name != "validator" {
 		t.Errorf("Children[1].Name = %q, want validator (unqualified default line)", stack.Children[1].Name)
@@ -914,8 +898,8 @@ func TestBuildStack_NonDefaultLine_SuffixedEnvNoDoubleBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	if len(stack.Children) != 4 {
-		t.Fatalf("Children = %d, want 4 (Line alone must not add a child)", len(stack.Children))
+	if len(stack.Children) != 5 {
+		t.Fatalf("Children = %d, want 5 (the core four + the provider-data gateway; Line alone must not add a child)", len(stack.Children))
 	}
 	if stack.Children[1].Name != "validator-2.1" {
 		t.Errorf("Children[1].Name = %q, want validator-2.1", stack.Children[1].Name)
@@ -945,9 +929,9 @@ func TestBuildStack_AdditionalValidatorLines_ExtraChildrenAndEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	wantNames := []string{"gateway", "validator", "data-server", "br-provider"}
+	wantNames := []string{"gateway", "validator", "data-server", "br-provider", providerDataChildName}
 	if len(stack.Children) != len(wantNames) {
-		t.Fatalf("Children = %d, want %d (the core four only): %+v", len(stack.Children), len(wantNames), stack.Children)
+		t.Fatalf("Children = %d, want %d (the core four + the provider-data gateway, no extra validator): %+v", len(stack.Children), len(wantNames), stack.Children)
 	}
 	for i, want := range wantNames {
 		if stack.Children[i].Name != want {
@@ -1032,10 +1016,174 @@ func TestBuildStack_AdditionalValidatorLines_DuplicateOfPrimary_NoExtraChild(t *
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
-	if len(stack.Children) != 4 {
-		t.Fatalf("Children = %d, want 4 (an AdditionalValidatorLines entry equal to the primary must not add a child)", len(stack.Children))
+	if len(stack.Children) != 5 {
+		t.Fatalf("Children = %d, want 5 (the core four + the provider-data gateway; an AdditionalValidatorLines entry equal to the primary must not add a child)", len(stack.Children))
 	}
 	if len(stack.AdditionalValidatorURLs) != 0 {
 		t.Errorf("AdditionalValidatorURLs = %v, want empty", stack.AdditionalValidatorURLs)
+	}
+}
+
+// TestBuildStack_TrioPresent_ProviderDataChild proves the trio boots a SECOND
+// gateway child on the provider-data origination profile, routed by a static
+// payer directory to the hosted conformance payer, reading the trio's own data
+// server, with no ingress of its own and its own observer hub.
+func TestBuildStack_TrioPresent_ProviderDataChild(t *testing.T) {
+	cfg := trioCfg(t, func(c *StackConfig) {
+		c.PHGURL = "http://127.0.0.1:9030"
+		// A bring-your-own SMART quad on the EXISTING child must NOT leak into
+		// the provider-data child (it reads the bundled server, unauthenticated).
+		c.FHIRTokenURL = "http://127.0.0.1:9040/token"
+		c.FHIRClientID = "partner-ehr"
+		c.FHIRClientKeyPath = "/secrets/ehr.key"
+		c.FHIRClientAlg = "RS384"
+		c.FHIRDataURL = "http://127.0.0.1:9050/fhir" // the swap target for the existing child only
+	})
+	stack, err := BuildStack(cfg)
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	pd := stack.Children[len(stack.Children)-1]
+	if pd.Name != providerDataChildName {
+		t.Fatalf("last child = %q, want %q (boots after the trio it depends on)", pd.Name, providerDataChildName)
+	}
+	dirPath := filepath.Join(cfg.StateDir, "payer-directory.json")
+	for _, want := range []string{
+		"ROLE=provider",
+		"ORIGINATION_PROFILE=provider-data",
+		"PAYER_DIRECTORY=" + dirPath,
+		"FHIR_DATA_URL=" + stack.DataServerURL + "/fhir/provider",
+		"PROVIDER_DTR_NATIVE=true",
+		"PROVIDER_DTR_POPULATE_URL=" + stack.DataServerURL + "/fhir/provider/Questionnaire/$populate",
+		"FHIR_VALIDATE_URL=" + stack.ValidatorURL + "/fhir",
+		"SHN_SECRETS=" + cfg.SecretsDir,
+		"SHN_DISCOVERY_URL=" + cfg.DiscoveryURL,
+		"PHG_URL=" + cfg.PHGURL,
+		"PORT=" + strings.TrimPrefix(stack.ProviderDataURL, "http://127.0.0.1:"),
+		"OBSERVER_ADDR=" + strings.TrimPrefix(strings.TrimSuffix(stack.ProviderDataObserverURL, "/events"), "http://"),
+	} {
+		if !hasEnv(pd.Env, want) {
+			t.Errorf("provider-data child env lacks %q: %v", want, pd.Env)
+		}
+	}
+	for _, bad := range []string{
+		"PROVIDER_DAVINCI_INGRESS=", "PROVIDER_DAVINCI_INGRESS_BASE_URL=", "INGRESS_CLIENTS_FILE=",
+		"FHIR_TOKEN_URL=", "FHIR_CLIENT_ID=", "FHIR_CLIENT_KEY=", "FHIR_CLIENT_ALG=",
+		"FHIR_DATA_URL=http://127.0.0.1:9050/fhir",
+	} {
+		for _, e := range pd.Env {
+			if strings.HasPrefix(e, bad) {
+				t.Errorf("provider-data child env carries %q — no ingress, no partner SMART quad, never the swap target", e)
+			}
+		}
+	}
+	// Exactly one PORT / OBSERVER_ADDR / FHIR_DATA_URL (the derivation replaced, not duplicated).
+	for _, key := range []string{"PORT=", "OBSERVER_ADDR=", "FHIR_DATA_URL="} {
+		n := 0
+		for _, e := range pd.Env {
+			if strings.HasPrefix(e, key) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("provider-data child env carries %d %s entries, want exactly 1", n, key)
+		}
+	}
+	// The existing child is untouched by the new one.
+	gw := stack.Children[0]
+	for _, e := range gw.Env {
+		if strings.HasPrefix(e, "ORIGINATION_PROFILE=") || strings.HasPrefix(e, "PAYER_DIRECTORY=") {
+			t.Errorf("the existing gateway child carries %q — the profile is the second child's, never this one's", e)
+		}
+	}
+	if !hasEnv(gw.Env, "FHIR_DATA_URL=http://127.0.0.1:9050/fhir") || !hasEnv(gw.Env, "FHIR_TOKEN_URL=http://127.0.0.1:9040/token") {
+		t.Errorf("the existing child lost its own swap target / SMART quad: %v", gw.Env)
+	}
+	// The directory: exactly one row, 00001 → conformance-payer (the published
+	// counterparty id — not a knob).
+	raw, err := os.ReadFile(dirPath)
+	if err != nil {
+		t.Fatalf("read payer-directory.json: %v", err)
+	}
+	var rows []map[string]string
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatalf("unmarshal payer-directory.json: %v", err)
+	}
+	if len(rows) != 1 || rows[0]["system"] != "urn:oid:2.16.840.1.113883.6.300" || rows[0]["value"] != "00001" || rows[0]["holderId"] != "conformance-payer" {
+		t.Fatalf("payer-directory.json = %v, want exactly [{00001 → conformance-payer}]", rows)
+	}
+	// Its own observer + ready probes; the lane's driver points at it; the
+	// existing lane's driver did not move.
+	if stack.ProviderDataObserverURL == "" || stack.ProviderDataObserverURL == stack.ObserverURL {
+		t.Errorf("ProviderDataObserverURL = %q, want its own hub (main = %q)", stack.ProviderDataObserverURL, stack.ObserverURL)
+	}
+	if stack.ProviderDataURL == "" || stack.ProviderDataURL == stack.GatewayURL {
+		t.Errorf("ProviderDataURL = %q, want its own port (main = %q)", stack.ProviderDataURL, stack.GatewayURL)
+	}
+	wantReady := []string{stack.ProviderDataURL + "/health", stack.ProviderDataObserverHealthURL}
+	if len(pd.ReadyURLs) != 2 || pd.ReadyURLs[0] != wantReady[0] || pd.ReadyURLs[1] != wantReady[1] {
+		t.Errorf("ReadyURLs = %v, want %v (no ingress ⇒ no smart-configuration route; /health is served in every posture)", pd.ReadyURLs, wantReady)
+	}
+	if pd.LogPath != filepath.Join(cfg.StateDir, "gateway-provider-data.log") {
+		t.Errorf("LogPath = %q", pd.LogPath)
+	}
+	if stack.ProviderDataDriver.ProviderDataURL != stack.ProviderDataURL || stack.ProviderDataDriver.PHGURL != cfg.PHGURL {
+		t.Errorf("ProviderDataDriver = %+v, want ProviderDataURL=%s PHGURL=%s", stack.ProviderDataDriver, stack.ProviderDataURL, cfg.PHGURL)
+	}
+	if stack.Driver.ProviderDataURL != stack.GatewayURL {
+		t.Errorf("the existing lane's driver moved: Driver.ProviderDataURL = %q, want %q", stack.Driver.ProviderDataURL, stack.GatewayURL)
+	}
+}
+
+// TestBuildStack_TrioAbsent_NoProviderDataChild is the rejection row: without
+// the trio there is no operated $populate, so there is no provider-data child,
+// no directory file, no lane driver — and the existing child never carries the
+// profile.
+func TestBuildStack_TrioAbsent_NoProviderDataChild(t *testing.T) {
+	cfg := StackConfig{
+		GatewayBinary: "/bin/true",
+		StateDir:      t.TempDir(),
+		SecretsDir:    "/secrets/provider",
+		DiscoveryURL:  "http://127.0.0.1:9001/discovery",
+	}
+	stack, err := BuildStack(cfg)
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	for _, c := range stack.Children {
+		if c.Name == providerDataChildName {
+			t.Fatalf("provider-data child present without the trio")
+		}
+	}
+	if stack.ProviderDataURL != "" || stack.ProviderDataObserverURL != "" || stack.ProviderDataObserverHealthURL != "" || stack.ProviderDataDriver.ProviderDataURL != "" {
+		t.Errorf("provider-data URLs set without the trio: %q %q %q %q", stack.ProviderDataURL, stack.ProviderDataObserverURL, stack.ProviderDataObserverHealthURL, stack.ProviderDataDriver.ProviderDataURL)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, "payer-directory.json")); err == nil {
+		t.Error("payer-directory.json written without the trio")
+	}
+	for _, e := range stack.Children[0].Env {
+		if strings.HasPrefix(e, "ORIGINATION_PROFILE=") || strings.HasPrefix(e, "PAYER_DIRECTORY=") {
+			t.Errorf("the existing gateway child carries %q — the profile is the second child's, never this one's", e)
+		}
+	}
+}
+
+// TestDeriveProviderDataEnv_Table pins the derivation: dropped keys are gone,
+// kept keys survive verbatim and in order, the five appended keys land last.
+func TestDeriveProviderDataEnv_Table(t *testing.T) {
+	base := []string{
+		"ROLE=provider", "PORT=1", "HOST=127.0.0.1", "OBSERVER_ADDR=127.0.0.1:2",
+		"PROVIDER_DAVINCI_INGRESS=1", "PROVIDER_DAVINCI_INGRESS_BASE_URL=http://127.0.0.1:1", "INGRESS_CLIENTS_FILE=/s/ingress-clients.json",
+		"FHIR_DATA_URL=http://partner/fhir", "FHIR_TOKEN_URL=http://partner/token", "FHIR_CLIENT_ID=x", "FHIR_CLIENT_KEY=/k", "FHIR_CLIENT_ALG=RS384", "FHIR_CLIENT_SCOPE=s", "FHIR_CLIENT_KID=k",
+		"PROVIDER_DTR_NATIVE=true", "PATH=/usr/bin",
+	}
+	got := deriveProviderDataEnv(base, 7, "127.0.0.1:8", "http://data/fhir/provider", "/s/payer-directory.json")
+	want := []string{
+		"ROLE=provider", "HOST=127.0.0.1", "PROVIDER_DTR_NATIVE=true", "PATH=/usr/bin",
+		"PORT=7", "OBSERVER_ADDR=127.0.0.1:8", "FHIR_DATA_URL=http://data/fhir/provider",
+		"ORIGINATION_PROFILE=provider-data", "PAYER_DIRECTORY=/s/payer-directory.json",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("deriveProviderDataEnv =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

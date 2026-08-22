@@ -12,6 +12,8 @@ import { HealthPill } from './HealthPill';
 export interface TopBarProps {
   lane: Lane;
   onLane(l: Lane): void;
+  // The lanes this Kit offers (ModeSwitch's list); absent ⇒ every lane.
+  lanes?: Lane[];
   sseState: SSEState;
   // Child process statuses, rolled up into the HealthPill.
   children: ChildStatus[];
@@ -24,7 +26,7 @@ function initials(email: string): string {
   return local.slice(0, 2).toUpperCase();
 }
 
-export function TopBar({ lane, onLane, sseState, children, identity, updateBanner }: TopBarProps): JSX.Element {
+export function TopBar({ lane, onLane, lanes, sseState, children, identity, updateBanner }: TopBarProps): JSX.Element {
   return (
     <header className="topbar">
       <div className="wordmark">
@@ -35,7 +37,7 @@ export function TopBar({ lane, onLane, sseState, children, identity, updateBanne
         aria-label={`events ${sseState}`}
       />
 
-      <ModeSwitch lane={lane} onLane={onLane} />
+      <ModeSwitch lane={lane} onLane={onLane} lanes={lanes} />
 
       <div className="spring" />
 

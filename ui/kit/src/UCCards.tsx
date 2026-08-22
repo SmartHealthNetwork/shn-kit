@@ -96,11 +96,11 @@ function UCCard({
   // SSE round-trip.
   const [posting, setPosting] = useState(false);
 
-  // Provenance is an honest "this leg is a stand-in on this lane" mechanics
-  // caveat: conformant lane AND the Technical register only (noise for the
-  // plain reader).
-  const provenance =
-    lane === 'conformant' && register === 'technical' ? meta.provenance?.conformant : undefined;
+  // Provenance is an honest "this is what this leg is on this lane" mechanics
+  // caveat: the Technical register only (noise for the plain reader), and only
+  // for a lane that declares one (conformant's stand-in notes; provider-data's
+  // what-was-read-from-the-chart notes; the ehr lane declares none).
+  const provenance = register === 'technical' ? meta.provenance?.[lane] : undefined;
   const selectedOption = options?.find((o) => o.value === branch);
   const showReadBackHint = selectedOption?.label.toLowerCase().includes('read-back') ?? false;
   const latest = latestByRow(lane, meta.uc, branch);

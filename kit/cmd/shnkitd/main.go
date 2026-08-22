@@ -215,11 +215,19 @@ func main() {
 	// relay exists, so it reads through the pointer rather than closing over
 	// a nil *relay.Relay.
 	var rlyPtr atomic.Pointer[relay.Relay]
+	// pdRlyPtr is the provider-data gateway child's own relay (its own observer
+	// hub, its own seq epoch) — nil on a Kit without the Java trio.
+	var pdRlyPtr atomic.Pointer[relay.Relay]
 	sup := supervisor.New(func(n supervisor.Notice) {
 		bus.Emit(event.Event{Type: event.TypeChild, Child: n.Child, Detail: n.State + ": " + n.Detail})
 		if n.Child == gatewayChild && n.State == supervisor.StateRestarting {
 			if r := rlyPtr.Load(); r != nil {
 				r.ResetCursor() // fresh child = fresh observer seq epoch
+			}
+		}
+		if n.Child == providerDataChild && n.State == supervisor.StateRestarting {
+			if r := pdRlyPtr.Load(); r != nil {
+				r.ResetCursor() // same rule, the provider-data child's own epoch
 			}
 		}
 	})
@@ -496,7 +504,7 @@ func main() {
 		// this is what unlocks GET /api/status's
 		// "validator"/"brProviderUrl" fields and POST /api/children/{name}/
 		// restart's pre-boot gate; both were 503/absent before this point.
-		d.SetStackInfo(kitd.StackInfo{Validator: validatorPosture, BRProviderURL: stack.BRProviderURL, ObserverURL: stack.ObserverURL})
+		d.SetStackInfo(kitd.StackInfo{Validator: validatorPosture, BRProviderURL: stack.BRProviderURL, ObserverURL: stack.ObserverURL, ProviderDataURL: stack.ProviderDataURL})
 
 		// The bridging demo toggle's baseline env — published as soon as
 		// BuildStack has assembled it, so the closure built at kitd.New time
@@ -574,6 +582,20 @@ func main() {
 		rlyPtr.Store(rly)
 		go rly.Run(ctx)
 
+		// The provider-data gateway child (trio only) has its own observer hub:
+		// a second relay onto the SAME bus, and the runner brackets every row
+		// over both through one relay.Multi — a run's frames come from whichever
+		// child ran it, and the drain barrier waits for both.
+		var stamper relay.Stamper = rly
+		var pdDriver *scenariodriver.Driver
+		if stack.ProviderDataURL != "" {
+			pdRly := relay.New(stack.ProviderDataObserverURL, stack.ProviderDataObserverHealthURL, bus, log.Printf)
+			pdRlyPtr.Store(pdRly)
+			go pdRly.Run(ctx)
+			stamper = relay.NewMulti(rly, pdRly)
+			pdDriver = scenariodriver.New(stack.ProviderDataDriver)
+		}
+
 		driver := scenariodriver.New(stack.Driver)
 
 		// UC07PCI: the gate passes the harness's own PCI over --uc07-pci; absent
@@ -587,8 +609,9 @@ func main() {
 
 		d.SetRunner(runner.New(runner.Config{
 			Driver:                 driver,
+			ProviderDataDriver:     pdDriver,
 			Bus:                    bus,
-			Relay:                  rly,
+			Relay:                  stamper,
 			AuditURL:               *auditURL,
 			UC07PCI:                resolveUC07PCI,
 			PatientSurfaceReadable: patientSurfaceReadable,
@@ -756,6 +779,10 @@ func main() {
 // toggle's RestartWithEnv target. Pinned against kitd.BuildStack's own
 // gateway child in main_test.go, since the mirror has no compile-time link.
 const gatewayChild = "gateway"
+
+// providerDataChild is the provider-data gateway child's name —
+// kitd.providerDataChildName's value, kept in step by the kit gate.
+const providerDataChild = "gateway-provider-data"
 
 // demoEgressNativeLine is the single contract line the bridging demo narrows
 // the gateway's egress-native view to (FIXED — there is deliberately no

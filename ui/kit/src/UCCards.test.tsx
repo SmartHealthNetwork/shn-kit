@@ -592,3 +592,44 @@ describe('UCCards', () => {
     expect(runButton).not.toBeDisabled();
   });
 });
+
+
+describe('UCCards on the provider-data lane', () => {
+  const PD_PROVENANCE_UC04 =
+    'A home-health therapy order read from the chart; the adaptive questionnaire is driven group by group — the diagnosis, functional limitations and treatment goals all trace to the chart — and approved in one submission.';
+
+  it('renders every card; uc01 and uc05 carry branch pickers, uc07 none (no hcpcs branch on this lane); provenance in Technical only, and it never names internal vocabulary', () => {
+    const { rerender } = render(
+      <UCCards
+        lane="provider-data"
+        register="technical"
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByTestId(/^card-uc0\d$/)).toHaveLength(8);
+    expect(within(screen.getByTestId('card-uc01')).getByText('Branch')).toBeDefined();
+    expect(within(screen.getByTestId('card-uc05')).getByText('Branch')).toBeDefined();
+    expect(within(screen.getByTestId('card-uc07')).queryByText('Branch')).toBeNull();
+    expect(within(screen.getByTestId('card-uc03')).queryByText('Branch')).toBeNull();
+    expect(screen.getByText(PD_PROVENANCE_UC04)).toBeDefined();
+    // Every provider-data provenance tag (all eight UCs carry one) is free of
+    // internal vocabulary.
+    for (const tag of document.querySelectorAll('.provenance-tag')) {
+      expect(tag.textContent ?? '').not.toMatch(/substrate|Mode A|br-payer|gap-fill|D-2RI|CXL-/);
+    }
+    expect(document.querySelectorAll('.provenance-tag')).toHaveLength(8);
+
+    rerender(
+      <UCCards
+        lane="provider-data"
+        register="overview"
+        events={events()}
+        latestByRow={noLatest}
+        onSelectRun={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(PD_PROVENANCE_UC04)).toBeNull();
+  });
+});

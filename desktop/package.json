@@ -1,7 +1,7 @@
 {
   "name": "shn-kit-desktop",
   "private": true,
-  "version": "0.13.0",
+  "version": "0.14.0",
   "main": "dist/main.js",
   "scripts": {
     "test": "vitest run",
@@ -11,7 +11,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.12.3",
-    "electron": "37.10.3",
+    "electron": "39.8.10",
     "electron-builder": "26.15.3",
     "typescript": "~6.0.2",
     "vitest": "^4.1.8"

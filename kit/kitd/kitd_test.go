@@ -3450,3 +3450,67 @@ func TestBridgingDemo_BadBodyAndClosureFailure(t *testing.T) {
 		t.Fatalf("status = %v after a FAILED toggle, want demoMode still false", b)
 	}
 }
+
+// TestStatus_ProviderDataURL: GET /api/status carries "providerDataUrl" under the
+// same key-presence contract as brProviderUrl — absent until a provider-data
+// gateway child exists (no Java trio ⇒ no lane), present with its base once
+// SetStackInfo carries it.
+func TestStatus_ProviderDataURL(t *testing.T) {
+	const token = "status-provider-data-token"
+	bus := event.NewBus(fixedClock)
+	cfg := Config{
+		APIAddr:  "127.0.0.1:0",
+		StateDir: t.TempDir(),
+		Token:    token,
+		Bus:      bus,
+		Sup:      supervisor.New(nil),
+	}
+	d, apiBase := startDaemon(t, cfg)
+
+	d.SetStackInfo(StackInfo{Validator: "packaged", BRProviderURL: "http://127.0.0.1:9091"})
+	_, body := doJSON(t, http.MethodGet, apiBase+"/api/status", token, nil)
+	if strings.Contains(string(body), "providerDataUrl") {
+		t.Fatalf("/api/status body = %s, want no providerDataUrl key when the child is absent", body)
+	}
+
+	d.SetStackInfo(StackInfo{Validator: "packaged", BRProviderURL: "http://127.0.0.1:9091", ProviderDataURL: "http://127.0.0.1:9095"})
+	_, body = doJSON(t, http.MethodGet, apiBase+"/api/status", token, nil)
+	var resp struct {
+		ProviderDataURL string `json:"providerDataUrl"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("unmarshal /api/status body: %v", err)
+	}
+	if resp.ProviderDataURL != "http://127.0.0.1:9095" {
+		t.Fatalf("providerDataUrl = %q, want http://127.0.0.1:9095 (body=%s)", resp.ProviderDataURL, body)
+	}
+}
+
+// TestChildRestart_ProviderDataGatewayRefused403: the provider-data gateway
+// child shares the gateway's refusal — its observer relay cursor and driver
+// wiring are the daemon's own, never the per-child seam's — and the injected
+// Restarter is never reached.
+func TestChildRestart_ProviderDataGatewayRefused403(t *testing.T) {
+	const token = "restart-provider-data-refused-token"
+	bus := event.NewBus(fixedClock)
+	restarter := &fakeRestarter{}
+	cfg := Config{
+		APIAddr:   "127.0.0.1:0",
+		StateDir:  t.TempDir(),
+		Token:     token,
+		Bus:       bus,
+		Sup:       supervisor.New(nil),
+		Runner:    runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		Restarter: restarter,
+	}
+	d, apiBase := startDaemon(t, cfg)
+	d.SetStackInfo(StackInfo{Validator: "packaged", ProviderDataURL: "http://127.0.0.1:9095"})
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/children/"+providerDataChildName+"/restart", token, nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("POST .../%s/restart = %d, want 403 (body=%s)", providerDataChildName, status, body)
+	}
+	if !strings.Contains(string(body), "only a full Kit restart re-derives") {
+		t.Fatalf("403 body = %s, want the gateway refusal rationale", body)
+	}
+}

@@ -162,6 +162,13 @@ type StackInfo struct {
 	// derives the sibling POST /demo/transform URL from it and answers 503
 	// while this reads "".
 	ObserverURL string
+
+	// ProviderDataURL is the provider-data gateway child's base
+	// (kitd.Stack.ProviderDataURL) — "" when no Java trio is configured, and
+	// so no provider-data lane exists. Surfaced as GET /api/status's
+	// "providerDataUrl" under the same key-presence contract as brProviderUrl:
+	// the UI shows the lane iff the key is present.
+	ProviderDataURL string
 }
 
 // sessionFile is the session.json contract main and the integration gate
@@ -574,6 +581,9 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	// been called — key-presence semantics matching patientAppUrl above.
 	if si := d.getStackInfo(); si.Validator != "" {
 		resp["validator"] = si.Validator
+		if si.ProviderDataURL != "" {
+			resp["providerDataUrl"] = si.ProviderDataURL
+		}
 		if si.BRProviderURL != "" {
 			resp["brProviderUrl"] = si.BRProviderURL
 		}
@@ -822,7 +832,7 @@ func (d *Daemon) handleRunsGet(w http.ResponseWriter, _ *http.Request) {
 // route otherwise opens is for the Java children (validator/data-server/
 // br-provider); a gateway restart stays the existing full-Kit "Restart the
 // Kit" action.
-const gatewayRestartRefused = "restarting gateway would invalidate its port, driver keypair, and runner wiring, which only a full Kit restart re-derives; the per-child restart seam is for the Java trio's children, not gateway"
+const gatewayRestartRefused = "restarting a gateway child would invalidate its port, driver keypair, observer relay, and runner wiring, which only a full Kit restart re-derives; the per-child restart seam is for the Java trio's children, not the gateway children"
 
 // handleChildRestart serves POST /api/children/{name}/restart: a deliberate
 // stop-then-respawn of one supervised child,
@@ -858,7 +868,10 @@ func (d *Daemon) handleChildRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if name == gatewayChildName {
+	if name == gatewayChildName || name == providerDataChildName {
+		// Both gateway children share the refusal: each serves an observer
+		// stream whose relay cursor only the daemon's own respawn hooks reset,
+		// and the provider-data child's driver wiring is derived at boot.
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": gatewayRestartRefused})
 		return
 	}

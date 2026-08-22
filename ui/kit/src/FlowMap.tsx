@@ -134,7 +134,9 @@ export function edgeStatesFor(steps: Step[], lane: Lane): EdgeStates {
 // lane sor step maps to NO edge — there the provider node is the calling
 // Da Vinci client, not the data source; the read is gateway-internal.
 export function edgeForStep(step: Step, lane: Lane): EdgeKey | undefined {
-  if (step.kind === 'sor') return lane === 'ehr' ? 'src' : undefined;
+  // Both plain-EHR lanes (ehr, provider-data) read the provider's data
+  // source; the conformant lane's provider node is the calling client.
+  if (step.kind === 'sor') return lane !== 'conformant' ? 'src' : undefined;
   if (step.kind === 'ingress') return 'src';
   if (step.kind === 'validate') return 'val';
   return 'leg';
@@ -157,7 +159,7 @@ function phasesForStep(step: Step): Array<'out' | 'back'> {
 }
 
 function edgeFor(step: Step, lane: Lane): { from: string; to: string } {
-  if (step.kind === 'sor') return lane === 'ehr' ? { from: 'gateway', to: 'provider' } : { from: 'gateway', to: 'gateway' };
+  if (step.kind === 'sor') return lane !== 'conformant' ? { from: 'gateway', to: 'provider' } : { from: 'gateway', to: 'gateway' };
   if (step.kind === 'ingress') return { from: 'provider', to: 'gateway' };
   if (step.kind === 'validate') return { from: 'gateway', to: 'validator' };
   return { from: 'gateway', to: 'remote' };
@@ -348,9 +350,9 @@ export function FlowMap({
   // (FROZEN_SOURCE_NODE), routed around that wire-run-only derivation.
   const providerLabel = demoMode
     ? FROZEN_SOURCE_NODE
-    : providerLabelOverride ?? (lane === 'ehr' ? EHR_PROVIDER_LABEL : CONFORMANT_PROVIDER_LABEL);
-  const providerLit = !demoMode && ((lane === 'conformant' && hasIngress) || (lane === 'ehr' && hasSor));
-  const providerStatic = demoMode || (lane === 'ehr' && !hasSor);
+    : providerLabelOverride ?? (lane !== 'conformant' ? EHR_PROVIDER_LABEL : CONFORMANT_PROVIDER_LABEL);
+  const providerLit = !demoMode && ((lane === 'conformant' && hasIngress) || (lane !== 'conformant' && hasSor));
+  const providerStatic = demoMode || (lane !== 'conformant' && !hasSor);
 
   const flowRef = useRef<HTMLDivElement | null>(null);
   const edgesHandleRef = useRef<FlowEdgesHandle>(null);

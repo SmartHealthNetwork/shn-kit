@@ -1581,3 +1581,24 @@ describe('App — ehr provider node lights from real sor.read frames (end-to-end
     expect(providerNode?.className).not.toContain('lit');
   });
 });
+
+
+describe('App provider-data lane gating', () => {
+  it('offers the Reference payer lane iff /api/status carries providerDataUrl', async () => {
+    await renderMain();
+    expect(screen.queryByRole('tab', { name: /reference payer/i })).toBeNull();
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+  });
+
+  it('shows the Reference payer lane when the Kit reports its provider-data gateway child', async () => {
+    vi.mocked(api.getBootstrap).mockResolvedValue(boot({ state: 'provisioned' }));
+    vi.mocked(api.getStatus).mockImplementation(() =>
+      Promise.resolve({ ...statusReady(), providerDataUrl: 'http://127.0.0.1:9095' }),
+    );
+    render(<App />);
+    await flush();
+    await flush();
+    expect(screen.getByRole('tab', { name: /reference payer/i })).toBeDefined();
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+  });
+});
