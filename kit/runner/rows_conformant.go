@@ -245,17 +245,63 @@ func conformantAmendBundle(member string, qrJSON, srJSON, drJSON, provJSON []byt
 	return routable, nil
 }
 
-// bundleHasQuestionnaire reports whether a $questionnaire-package response
-// Bundle carries a Questionnaire entry.
+// packageHasQuestionnaire reports whether a $questionnaire-package response carries a
+// Questionnaire — across BOTH shapes that reach the Kit on the wire:
+//
+//   - the hosted Da Vinci reference payer (br-payer) answers a Parameters profiled on
+//     dtr-qpackage-output-parameters, whose parameter[name=="packagebundle"].resource is
+//     the collection Bundle carrying the Questionnaire (plus an outcome parameter). The
+//     gateway relays that response VERBATIM on the ingress, so the wrapper — not the
+//     Bundle — is what this fence reads.
+//   - the bridging demo payer and SHN's own provider-data/$populate path answer a BARE
+//     collection Bundle.
+//
+// The unwrap is a deliberate SMALL LOCAL COPY of gateway/engine's
+// unwrapQuestionnairePackage and scenariodriver's packageBundleResource: the Kit cannot
+// take a gateway cut for this fix, and shnsdk.ExtractQuestionnaireFromPackage is
+// bare-Bundle-only by design. FOLLOW-UP: dedupe onto one shared unwrap the next time a
+// gateway/sdk cut is due.
+//
+// The fence stays strict — a Parameters with no packagebundle Bundle, a packagebundle
+// Bundle carrying no Questionnaire, and an empty or malformed body are all false.
+func packageHasQuestionnaire(body []byte) bool {
+	var top struct {
+		ResourceType string `json:"resourceType"`
+		Parameter    []struct {
+			Name     string          `json:"name"`
+			Resource json.RawMessage `json:"resource"`
+		} `json:"parameter"`
+	}
+	if json.Unmarshal(body, &top) != nil {
+		return false
+	}
+	if top.ResourceType == "Parameters" {
+		for _, param := range top.Parameter {
+			if param.Name == "packagebundle" && len(param.Resource) > 0 {
+				return bundleHasQuestionnaire(param.Resource)
+			}
+		}
+		return false
+	}
+	return bundleHasQuestionnaire(body)
+}
+
+// bundleHasQuestionnaire reports whether a $questionnaire-package collection Bundle
+// carries a Questionnaire entry. Only packageHasQuestionnaire calls it — a caller that
+// reached it directly would be back to the bare-Bundle-only fence.
 func bundleHasQuestionnaire(body []byte) bool {
 	var pkg struct {
-		Entry []struct {
+		ResourceType string `json:"resourceType"`
+		Entry        []struct {
 			Resource struct {
 				ResourceType string `json:"resourceType"`
 			} `json:"resource"`
 		} `json:"entry"`
 	}
 	if json.Unmarshal(body, &pkg) != nil {
+		return false
+	}
+	if pkg.ResourceType != "Bundle" {
 		return false
 	}
 	for _, e := range pkg.Entry {
@@ -496,7 +542,7 @@ func conformantUC03(rn *Runner, branch string) (string, error) {
 	if pkgRes.Status != http.StatusOK {
 		return "", conformantIngressErr("uc03: DTR package", pkgRes.Status, pkgRes.Body)
 	}
-	if !bundleHasQuestionnaire(pkgRes.Body) {
+	if !packageHasQuestionnaire(pkgRes.Body) {
 		return "", fmt.Errorf("runner: conformant/uc03: DTR package response has no Questionnaire entry")
 	}
 	qrJSON, err := conformantQR(rn, scenariodriver.DTRPackage{
@@ -566,7 +612,7 @@ func conformantUC03BridgeDemo(rn *Runner) (string, error) {
 	if pkgRes.Status != http.StatusOK {
 		return "", conformantIngressErr("uc03: DTR package", pkgRes.Status, pkgRes.Body)
 	}
-	if !bundleHasQuestionnaire(pkgRes.Body) {
+	if !packageHasQuestionnaire(pkgRes.Body) {
 		return "", fmt.Errorf("runner: conformant/uc03: DTR package response has no Questionnaire entry")
 	}
 
@@ -785,7 +831,7 @@ func conformantUC06(rn *Runner, branch string) (string, error) {
 	if pkgRes.Status != http.StatusOK {
 		return "", conformantIngressErr("uc06: DTR package", pkgRes.Status, pkgRes.Body)
 	}
-	if !bundleHasQuestionnaire(pkgRes.Body) {
+	if !packageHasQuestionnaire(pkgRes.Body) {
 		return "", fmt.Errorf("runner: conformant/uc06: DTR package response has no Questionnaire entry")
 	}
 	qrJSON, err := conformantQR(rn, scenariodriver.DTRPackage{

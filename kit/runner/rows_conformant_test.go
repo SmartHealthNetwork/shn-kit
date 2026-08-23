@@ -54,10 +54,37 @@ const (
 	dvCardAuthNeededNoQuestionnaire = `{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed"}}]}`
 )
 
-// dvPackage is a $questionnaire-package response Bundle carrying one Questionnaire —
-// enough for bundleHasQuestionnaire and for br-provider's populate to have something
+// dvPackage is a BARE $questionnaire-package response Bundle carrying one Questionnaire —
+// the shape the bridging demo payer (and SHN's own provider-data path) answers with, and
+// enough for packageHasQuestionnaire and for br-provider's populate to have something
 // to fill.
 const dvPackage = `{"resourceType":"Bundle","type":"collection","entry":[{"resource":{"resourceType":"Questionnaire","id":"pkg-q","status":"active","url":"` + homeOxygenCanonical + `"}}]}`
+
+// dvPackageWrapped is the HOSTED Da Vinci reference payer's real answer to
+// $questionnaire-package: a Parameters profiled on dtr-qpackage-output-parameters whose
+// packagebundle parameter carries the collection Bundle, plus an outcome parameter
+// (the shape captured live off the hosted payer: profile, packagebundle, outcome).
+// The gateway relays it VERBATIM on the ingress, so this — not the bare Bundle — is what
+// the Kit's Da Vinci rows actually read off the wire.
+const dvPackageWrapped = `{"resourceType":"Parameters","meta":{"profile":["http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/dtr-qpackage-output-parameters"]},` +
+	`"parameter":[{"name":"packagebundle","resource":` + dvPackage + `},` +
+	`{"name":"outcome","resource":{"resourceType":"OperationOutcome","issue":[{"severity":"information","code":"informational"}]}}]}`
+
+// dvPackageWrappedNoQuestionnaire is dvPackageWrapped with ONE fact mutated: the
+// packagebundle Bundle carries no Questionnaire at all (only a Library). The wrapper and
+// its profile are untouched, so a fence that merely recognised the wrapper would sail
+// straight past it.
+const dvPackageWrappedNoQuestionnaire = `{"resourceType":"Parameters","meta":{"profile":["http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/dtr-qpackage-output-parameters"]},` +
+	`"parameter":[{"name":"packagebundle","resource":{"resourceType":"Bundle","type":"collection","entry":[{"resource":{"resourceType":"Library","id":"pkg-lib","status":"active"}}]}}]}`
+
+// dvPackageBareNoQuestionnaire is the bare-Bundle shape with the same one fact mutated —
+// the fence must stay strict on BOTH shapes, not only on the one it was written for.
+const dvPackageBareNoQuestionnaire = `{"resourceType":"Bundle","type":"collection","entry":[{"resource":{"resourceType":"Library","id":"pkg-lib","status":"active"}}]}`
+
+// dvBridgeDemoMember is the bridging-demo persona: its Coverage names the DEMO payer, which
+// answers $questionnaire-package with a bare Bundle — the ingress fake keys on it exactly
+// the way the two real payers differ on the wire.
+const dvBridgeDemoMember = "MBR-BRIDGE-DEMO"
 
 // dvPopulatedQR is what the fake br-provider populate endpoint answers with.
 const dvPopulatedQR = `{"resourceType":"QuestionnaireResponse","id":"populated","status":"completed","questionnaire":"` + homeOxygenCanonical + `","subject":{"reference":"Patient/MBR-COVERED"},"item":[{"linkId":"1","answer":[{"valueString":"populated by the provider system"}]}]}`
@@ -103,6 +130,7 @@ type dvIngress struct {
 
 	card    func(code string) string             // "" ⇒ the family default
 	verdict func(code string, amend bool) string // "" ⇒ the family default
+	pkg     func(reqBody string) string          // "" ⇒ the payer default for this request
 
 	mu           sync.Mutex
 	crdBodies    []string
@@ -142,6 +170,16 @@ func dvDefaultVerdict(code string, amend bool) string {
 		return dvApproved("AUTH-2002")
 	}
 	return ""
+}
+
+// dvDefaultPackage is the package answer each persona's payer really gives: the hosted
+// reference payer (every families row) answers the Parameters wrapper; the bridging demo
+// payer, which the MBR-BRIDGE-DEMO persona's Coverage routes to, answers a bare Bundle.
+func dvDefaultPackage(reqBody string) string {
+	if strings.Contains(reqBody, dvBridgeDemoMember) {
+		return dvPackage
+	}
+	return dvPackageWrapped
 }
 
 // newDVIngress starts the fake ingress (and the /scenario/uc01 origination route the
@@ -184,9 +222,17 @@ func newDVIngress(t *testing.T) *dvIngress {
 	})
 
 	mux.HandleFunc("POST /Questionnaire/$questionnaire-package", func(w http.ResponseWriter, r *http.Request) {
-		ing.record(&ing.pkgBodies, readBody(t, r))
+		body := readBody(t, r)
+		ing.record(&ing.pkgBodies, body)
+		out := ""
+		if ing.pkg != nil {
+			out = ing.pkg(body)
+		}
+		if out == "" {
+			out = dvDefaultPackage(body)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(dvPackage))
+		_, _ = w.Write([]byte(out))
 	})
 
 	mux.HandleFunc("POST /Claim/$submit", func(w http.ResponseWriter, r *http.Request) {
@@ -578,44 +624,56 @@ func TestConformantRows_Reject(t *testing.T) {
 			return ""
 		}
 	}
+	packageIs := func(out string) func(string) string {
+		return func(string) string { return out }
+	}
 	for _, tc := range []struct {
 		name, uc, branch string
 		card             func(string) string
 		verdict          func(string, bool) string
+		pkg              func(string) string
 		wantErr          string
 	}{
-		{"uc03 non-reference verdict prefix", "uc03", "", nil, verdictFor("L8000", false, dvApproved("PA-deadbeef")), "AUTH-"},
+		{"uc03 non-reference verdict prefix", "uc03", "", nil, verdictFor("L8000", false, dvApproved("PA-deadbeef")), nil, "AUTH-"},
 		// The reference payer's answer for uc03's family is "covered + prior
 		// authorization required": BOTH halves are the row's subject, so both get
 		// a mutation.
-		{"uc03 coverage check says not covered", "uc03", "", cardFor("L8000", dvCardAuthNeededNotCovered), nil, `want "covered"`},
-		{"uc03 coverage check requires no prior authorization", "uc03", "", cardFor("L8000", dvCardCovered), nil, `want "auth-needed"`},
-		{"uc03 card advertises no questionnaire", "uc03", "", cardFor("L8000", dvCardAuthNeededNoQuestionnaire), nil, "no questionnaire canonical"},
-		{"uc04 first submit approved", "uc04", "", nil, verdictFor("E0424", false, dvApproved("AUTH-9")), "not pended"},
-		{"uc04 amend still held", "uc04", "", nil, verdictFor("E0424", true, dvPended()), "not approved"},
-		{"uc04 amend non-reference prefix", "uc04", "", nil, verdictFor("E0424", true, dvApproved("PA-1")), "AUTH-"},
-		{"uc05 first submit approved", "uc05", "", nil, verdictFor("E0424", false, dvApproved("AUTH-9")), "not pended"},
-		{"uc05 amend still held", "uc05", "", nil, verdictFor("E0424", true, dvPended()), "not approved"},
-		{"uc05 amend non-reference prefix", "uc05", "", nil, verdictFor("E0424", true, dvApproved("PA-1")), "AUTH-"},
-		{"uc06 first submit approved", "uc06", "", nil, verdictFor("E0424", false, dvApproved("AUTH-9")), "not pended"},
-		{"uc06 amend still held", "uc06", "", nil, verdictFor("E0424", true, dvPended()), "not approved"},
-		{"uc06 amend non-reference prefix", "uc06", "", nil, verdictFor("E0424", true, dvApproved("PA-1")), "AUTH-"},
+		{"uc03 coverage check says not covered", "uc03", "", cardFor("L8000", dvCardAuthNeededNotCovered), nil, nil, `want "covered"`},
+		{"uc03 coverage check requires no prior authorization", "uc03", "", cardFor("L8000", dvCardCovered), nil, nil, `want "auth-needed"`},
+		{"uc03 card advertises no questionnaire", "uc03", "", cardFor("L8000", dvCardAuthNeededNoQuestionnaire), nil, nil, "no questionnaire canonical"},
+		{"uc04 first submit approved", "uc04", "", nil, verdictFor("E0424", false, dvApproved("AUTH-9")), nil, "not pended"},
+		{"uc04 amend still held", "uc04", "", nil, verdictFor("E0424", true, dvPended()), nil, "not approved"},
+		{"uc04 amend non-reference prefix", "uc04", "", nil, verdictFor("E0424", true, dvApproved("PA-1")), nil, "AUTH-"},
+		{"uc05 first submit approved", "uc05", "", nil, verdictFor("E0424", false, dvApproved("AUTH-9")), nil, "not pended"},
+		{"uc05 amend still held", "uc05", "", nil, verdictFor("E0424", true, dvPended()), nil, "not approved"},
+		{"uc05 amend non-reference prefix", "uc05", "", nil, verdictFor("E0424", true, dvApproved("PA-1")), nil, "AUTH-"},
+		{"uc06 first submit approved", "uc06", "", nil, verdictFor("E0424", false, dvApproved("AUTH-9")), nil, "not pended"},
+		{"uc06 amend still held", "uc06", "", nil, verdictFor("E0424", true, dvPended()), nil, "not approved"},
+		{"uc06 amend non-reference prefix", "uc06", "", nil, verdictFor("E0424", true, dvApproved("PA-1")), nil, "AUTH-"},
 		// The E0424 family's coverage answer is CONDITIONAL on all three rows that
 		// drive it — a covered/no-auth answer means the payer decided the request
 		// at the coverage check, which is not what these rows exercise.
-		{"uc04 coverage check not conditional", "uc04", "", cardFor("E0424", dvCardCovered), nil, `want "conditional"`},
-		{"uc05 coverage check not conditional", "uc05", "", cardFor("E0424", dvCardCovered), nil, `want "conditional"`},
-		{"uc06 coverage check not conditional", "uc06", "", cardFor("E0424", dvCardCovered), nil, `want "conditional"`},
-		{"uc07 non-reference verdict prefix", "uc07", "", nil, verdictFor("L8000", false, dvApproved("PA-1")), "AUTH-"},
-		{"uc08 approved", "uc08", "", nil, verdictFor("J3490", false, dvApproved("AUTH-9")), "want denied"},
-		{"uc08 held", "uc08", "", nil, verdictFor("J3490", false, dvPended()), "want denied"},
-		{"uc08 denied without a rationale", "uc08", "", nil, verdictFor("J3490", false, dvDeniedNoRationale), "rationale"},
-		{"uc08 coverage check says covered", "uc08", "", cardFor("J3490", dvCardCovered), nil, "not-covered"},
-		{"uc02 coverage check demands prior authorization", "uc02", "", cardFor("E0250", dvCardAuthNeeded), nil, "no-auth"},
+		{"uc04 coverage check not conditional", "uc04", "", cardFor("E0424", dvCardCovered), nil, nil, `want "conditional"`},
+		{"uc05 coverage check not conditional", "uc05", "", cardFor("E0424", dvCardCovered), nil, nil, `want "conditional"`},
+		{"uc06 coverage check not conditional", "uc06", "", cardFor("E0424", dvCardCovered), nil, nil, `want "conditional"`},
+		{"uc07 non-reference verdict prefix", "uc07", "", nil, verdictFor("L8000", false, dvApproved("PA-1")), nil, "AUTH-"},
+		{"uc08 approved", "uc08", "", nil, verdictFor("J3490", false, dvApproved("AUTH-9")), nil, "want denied"},
+		{"uc08 held", "uc08", "", nil, verdictFor("J3490", false, dvPended()), nil, "want denied"},
+		{"uc08 denied without a rationale", "uc08", "", nil, verdictFor("J3490", false, dvDeniedNoRationale), nil, "rationale"},
+		{"uc08 coverage check says covered", "uc08", "", cardFor("J3490", dvCardCovered), nil, nil, "not-covered"},
+		// The DTR package fence, on BOTH wire shapes. The reference payer answers a
+		// Parameters wrapper; a wrapper whose packagebundle Bundle carries no
+		// Questionnaire is a package the row cannot fill, and a bare Bundle without one
+		// is the same failure on the demo-payer shape. Neither may pass.
+		{"uc03 package wrapper carries no Questionnaire", "uc03", "", nil, nil, packageIs(dvPackageWrappedNoQuestionnaire), "no Questionnaire"},
+		{"uc03 bare package carries no Questionnaire", "uc03", "", nil, nil, packageIs(dvPackageBareNoQuestionnaire), "no Questionnaire"},
+		{"uc06 package wrapper carries no Questionnaire", "uc06", "", nil, nil, packageIs(dvPackageWrappedNoQuestionnaire), "no Questionnaire"},
+		{"uc06 bare package carries no Questionnaire", "uc06", "", nil, nil, packageIs(dvPackageBareNoQuestionnaire), "no Questionnaire"},
+		{"uc02 coverage check demands prior authorization", "uc02", "", cardFor("E0250", dvCardAuthNeeded), nil, nil, "no-auth"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ing := newDVIngress(t)
-			ing.card, ing.verdict = tc.card, tc.verdict
+			ing.card, ing.verdict, ing.pkg = tc.card, tc.verdict, tc.pkg
 			rn := dvRunner(t, ing, nil)
 			res, err := rn.Run(t.Context(), Req{Lane: "conformant", UC: tc.uc, Branch: tc.branch})
 			if err != nil {
@@ -725,5 +783,34 @@ func TestConformantUC08_UnderBFF(t *testing.T) {
 	}
 	if got := len(ing.submits()); got != 1 {
 		t.Errorf("ingress PAS submits = %d, want 1 (the denial comes through the Kit's own PAS ingress)", got)
+	}
+}
+
+// ---- the package-shape helper ----------------------------------------------
+
+// TestPackageHasQuestionnaire is the fence at unit grain, over the four shapes that reach
+// it on the wire. The reference payer's Parameters wrapper is the shape the live v0.15.0
+// packaging smoke tripped on; the bare Bundle is the bridging demo payer's (and SHN's own
+// provider-data) answer. Both must be read, and neither may pass without a Questionnaire.
+func TestPackageHasQuestionnaire(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"reference payer's Parameters wrapper with a Questionnaire", dvPackageWrapped, true},
+		{"Parameters wrapper whose Bundle has no Questionnaire", dvPackageWrappedNoQuestionnaire, false},
+		{"bare collection Bundle with a Questionnaire", dvPackage, true},
+		{"bare collection Bundle with no Questionnaire", dvPackageBareNoQuestionnaire, false},
+		{"Parameters with no packagebundle parameter", `{"resourceType":"Parameters","parameter":[{"name":"outcome","resource":{"resourceType":"OperationOutcome"}}]}`, false},
+		{"Parameters whose packagebundle is not a Bundle", `{"resourceType":"Parameters","parameter":[{"name":"packagebundle","resource":{"resourceType":"Questionnaire","status":"active"}}]}`, false},
+		{"empty body", "", false},
+		{"malformed body", "{not json", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := packageHasQuestionnaire([]byte(tc.body)); got != tc.want {
+				t.Errorf("packageHasQuestionnaire(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
 	}
 }
