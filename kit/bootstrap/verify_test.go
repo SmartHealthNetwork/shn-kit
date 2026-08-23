@@ -192,7 +192,7 @@ func probeByName(probes []Probe, name string) (Probe, bool) {
 func TestVerify_AllGreen(t *testing.T) {
 	holders := []shnsdk.Holder{
 		{ID: "kit-h1", Role: "provider"},
-		{ID: "payer-1", Role: "payer", PayerIDs: []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity}},
+		{ID: ReferencePayerHolderID, Role: "payer"},
 	}
 	reg := fakeRegistrarSrv(t, holders)
 	disc := fakeDiscoverySrv(t, reg.URL)
@@ -212,7 +212,7 @@ func TestVerify_AllGreen(t *testing.T) {
 	if len(probes) != 3 {
 		t.Fatalf("len(probes) = %d, want 3: %+v", len(probes), probes)
 	}
-	for _, name := range []string{"discovery", "registration", "hosted-payer"} {
+	for _, name := range []string{"discovery", "registration", "reference-payer"} {
 		p, ok := probeByName(probes, name)
 		if !ok {
 			t.Fatalf("missing probe %q in %+v", name, probes)
@@ -242,7 +242,7 @@ func TestVerify_AllGreen(t *testing.T) {
 func TestVerify_HolderMissingFromFeed(t *testing.T) {
 	holders := []shnsdk.Holder{
 		{ID: "someone-else", Role: "provider"},
-		{ID: "payer-1", Role: "payer", PayerIDs: []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity}},
+		{ID: ReferencePayerHolderID, Role: "payer"},
 	}
 	reg := fakeRegistrarSrv(t, holders)
 	disc := fakeDiscoverySrv(t, reg.URL)
@@ -263,37 +263,43 @@ func TestVerify_HolderMissingFromFeed(t *testing.T) {
 	if !strings.Contains(regP.Detail, "kit-h1") {
 		t.Errorf("registration probe Detail = %q, want it to name the holder id kit-h1", regP.Detail)
 	}
-	payerP, _ := probeByName(probes, "hosted-payer")
+	payerP, _ := probeByName(probes, "reference-payer")
 	if !payerP.OK {
-		t.Errorf("hosted-payer probe OK = false, want true (unaffected by the missing holder): %+v", payerP)
+		t.Errorf("reference-payer probe OK = false, want true (unaffected by the missing holder): %+v", payerP)
 	}
 }
 
-// --- Row 3: no payer with PayerIDs ----------------------------------------
-
-func TestVerify_NoRoutablePayer(t *testing.T) {
+// --- Row 3: the reference payer is not on the feed ---------------------------
+func TestVerify_ReferencePayerMissing(t *testing.T) {
 	holders := []shnsdk.Holder{
 		{ID: "kit-h1", Role: "provider"},
-		{ID: "payer-1", Role: "payer"}, // no PayerIDs published
+		{ID: "payer", Role: "payer", PayerIDs: []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity}}, // the sandbox holder is NOT what the probe wants
 	}
 	reg := fakeRegistrarSrv(t, holders)
 	disc := fakeDiscoverySrv(t, reg.URL)
-
 	probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", BridgeProbes{}, nil)
-
-	regP, _ := probeByName(probes, "registration")
-	if !regP.OK {
-		t.Errorf("registration probe OK = false, want true: %+v", regP)
-	}
-	payerP, ok := probeByName(probes, "hosted-payer")
+	p, ok := probeByName(probes, "reference-payer")
 	if !ok {
-		t.Fatalf("missing hosted-payer probe: %+v", probes)
+		t.Fatalf("missing reference-payer probe: %+v", probes)
 	}
-	if payerP.OK {
-		t.Error("hosted-payer probe OK = true, want false")
+	if p.OK {
+		t.Error("reference-payer probe OK = true, want false (a payer publishing PayerIDs is not the reference payer)")
 	}
-	if payerP.Detail == "" {
-		t.Error("hosted-payer probe Detail is empty, want an explanation that no routable payer identity is published")
+	if !strings.Contains(p.Detail, ReferencePayerHolderID) {
+		t.Errorf("Detail = %q, want it to name %s", p.Detail, ReferencePayerHolderID)
+	}
+}
+
+func TestVerify_ReferencePayerWrongRole(t *testing.T) {
+	holders := []shnsdk.Holder{
+		{ID: "kit-h1", Role: "provider"},
+		{ID: ReferencePayerHolderID, Role: "provider"},
+	}
+	reg := fakeRegistrarSrv(t, holders)
+	disc := fakeDiscoverySrv(t, reg.URL)
+	probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", BridgeProbes{}, nil)
+	if p, _ := probeByName(probes, "reference-payer"); p.OK {
+		t.Error("reference-payer probe OK = true for a non-payer holder, want false")
 	}
 }
 
@@ -313,7 +319,7 @@ func TestVerify_DiscoveryUnreachable(t *testing.T) {
 	if discP.OK {
 		t.Error("discovery probe OK = true, want false")
 	}
-	for _, name := range []string{"registration", "hosted-payer"} {
+	for _, name := range []string{"registration", "reference-payer"} {
 		p, ok := probeByName(probes, name)
 		if !ok {
 			t.Fatalf("missing probe %q: %+v", name, probes)
@@ -357,7 +363,7 @@ func TestVerify_FetchHoldersFails(t *testing.T) {
 	if !discP.OK {
 		t.Errorf("discovery probe OK = false, want true: %+v", discP)
 	}
-	for _, name := range []string{"registration", "hosted-payer"} {
+	for _, name := range []string{"registration", "reference-payer"} {
 		p, ok := probeByName(probes, name)
 		if !ok {
 			t.Fatalf("missing probe %q: %+v", name, probes)
@@ -596,7 +602,7 @@ func TestVerify_BridgeProbes(t *testing.T) {
 
 // TestVerify_BridgeProbes_SkippedWithDiscoveryFailure proves the bridge
 // probes ride the SAME "skipped: discovery failed" / "skipped: fetch holder
-// feed failed" branches as registration/hosted-payer — present (not
+// feed failed" branches as registration/reference-payer — present (not
 // silently dropped) whenever configured, absent whenever not, regardless of
 // which branch Verify takes.
 func TestVerify_BridgeProbes_SkippedWithDiscoveryFailure(t *testing.T) {

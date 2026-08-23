@@ -136,6 +136,9 @@ func waitIdle(t *testing.T, rn *Runner) {
 
 // ---- Row 1: ehr/uc01 covered ----------------------------------------------
 
+// The Plain-EHR lane's eligibility row runs on the SECOND gateway child
+// (Config.ProviderDataDriver): the main child's driver here is deliberately
+// unconfigured, so a row that reached for it could not answer at all.
 func TestRun_EHRUC01Covered(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /scenario/uc01", func(w http.ResponseWriter, r *http.Request) {
@@ -157,9 +160,10 @@ func TestRun_EHRUC01Covered(t *testing.T) {
 	defer busSrv.Close()
 
 	rn := New(Config{
-		Driver:   scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:      bus,
-		AuditURL: audit.URL,
+		Driver:             scenariodriver.New(scenariodriver.Config{}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
+		AuditURL:           audit.URL,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -196,18 +200,31 @@ func TestRun_EHRUC01Covered(t *testing.T) {
 // patient-surface reads are not externally reachable — the desktop failure. It also proves
 // the read-back is not even attempted (the PCI resolver must not run), so a future reachable
 // read-back path (Option 3) can be added without this masking it.
+//
+// The read-back lives on the conformant lane's HCPCS uc07 row: the Plain-EHR
+// lane's uc07 is the chart-driven patient-attestation row and takes no branch.
 func TestRun_UC07HCPCS_DegradesWhenPatientSurfaceUnreadable(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /scenario/uc07hcpcs", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /Claim/$submit", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"paRequired":true,"authNumber":"PA-UC07","validUntil":"2026-12-31"}`))
+		w.Write([]byte(`{"resourceType":"ClaimResponse","outcome":"complete","preAuthRef":"AUTH-UC07"}`))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate RSA key: %v", err)
+	}
+
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver:                 scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Driver: scenariodriver.New(scenariodriver.Config{
+			IngressURL:  srv.URL,
+			IngressBase: srv.URL,
+			ClientID:    "kit-runner-test",
+			Key:         key,
+		}),
 		Bus:                    bus,
 		PatientSurfaceReadable: false, // HOSTED: the patient-surface reads are internal/patient-only
 		UC07PCI: func() (string, error) {
@@ -216,14 +233,14 @@ func TestRun_UC07HCPCS_DegradesWhenPatientSurfaceUnreadable(t *testing.T) {
 		},
 	})
 
-	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc07", Branch: "hcpcs"})
+	res, err := rn.Run(context.Background(), Req{Lane: "conformant", UC: "uc07", Branch: ""})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if res.State != StatePassed {
 		t.Fatalf("Result.State = %q, want %q (Detail=%q)", res.State, StatePassed, res.Detail)
 	}
-	if !strings.Contains(res.Detail, "PA-UC07") || !strings.Contains(res.Detail, "skipped") {
+	if !strings.Contains(res.Detail, "AUTH-UC07") || !strings.Contains(res.Detail, "skipped") {
 		t.Fatalf("Detail = %q, want it to note the auth AND the skipped read-back", res.Detail)
 	}
 }
@@ -245,8 +262,9 @@ func TestRun_SequentialLock(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	var wg sync.WaitGroup
@@ -300,8 +318,9 @@ func TestRun_RowFailure(t *testing.T) {
 	defer busSrv.Close()
 
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -344,8 +363,9 @@ func TestRun_AuditURLEmpty(t *testing.T) {
 	defer busSrv.Close()
 
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 		// AuditURL deliberately left "".
 	})
 
@@ -616,16 +636,19 @@ func TestRun_ConformantUC02_NoBFF_PostCRDUnchanged(t *testing.T) {
 	}
 }
 
-// TestRun_ConformantUC03_UnderBFF_StillDriverMinted proves the
-// no-over-capture condition: conformantBRPScenario carries no entry for
-// "uc03", so even with Config.BFFURL set (the Java trio present), uc03's CRD
-// leg still drives the direct-mint PostCRD ingress path — never
-// br-provider's BFF. The fake BFF server is cribbed from
-// TestRun_ConformantUC02_BFFOrigination's fixture, but here it asserts it was
-// NEVER hit; the fake ingress fixture serves all three conformant uc03 legs
-// (CRD, DTR $questionnaire-package, PAS $submit) so the row runs to
+// TestRun_ConformantUC03BridgeDemo_UnderBFF_StillDriverMinted proves the
+// no-over-capture condition on the ONE conformant uc03 branch that must never
+// ride br-provider's BFF: the bridging demo. conformantBRPScenario names a
+// scenario for "uc03", so with Config.BFFURL set (the Java trio present) the
+// ordinary uc03 row DOES originate through the BFF
+// (TestConformantUC03_UnderBFF, rows_conformant_test.go) — but the bridge-demo
+// branch is a different exhibit, routed to the demo payer holder by its own
+// persona's Coverage, and it stays driver-minted end to end. The fake BFF
+// server is cribbed from TestRun_ConformantUC02_BFFOrigination's fixture, but
+// here it asserts it was NEVER hit; the fake ingress fixture serves all three
+// legs (CRD, DTR $questionnaire-package, PAS $submit) so the row runs to
 // completion driver-minted, exactly as it does with BFFURL empty.
-func TestRun_ConformantUC03_UnderBFF_StillDriverMinted(t *testing.T) {
+func TestRun_ConformantUC03BridgeDemo_UnderBFF_StillDriverMinted(t *testing.T) {
 	var bffHit bool
 	bffMux := http.NewServeMux()
 	bffMux.HandleFunc("POST /api/cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
@@ -672,7 +695,7 @@ func TestRun_ConformantUC03_UnderBFF_StillDriverMinted(t *testing.T) {
 		BFFURL: bffSrv.URL,
 	})
 
-	res, err := rn.Run(context.Background(), Req{Lane: "conformant", UC: "uc03", Branch: ""})
+	res, err := rn.Run(context.Background(), Req{Lane: "conformant", UC: "uc03", Branch: "bridge-demo"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -680,19 +703,25 @@ func TestRun_ConformantUC03_UnderBFF_StillDriverMinted(t *testing.T) {
 		t.Fatalf("Result.State = %q, want passed (Detail=%q)", res.State, res.Detail)
 	}
 	if bffHit {
-		t.Error("br-provider BFF endpoint was hit for uc03 — conformantBRPScenario must have NO entry for uc03 (no over-capture)")
+		t.Error("br-provider BFF endpoint was hit for uc03/bridge-demo — the bridging demo must never originate through the provider system")
 	}
 	if !crdHit {
-		t.Error("ingress CRD endpoint was never hit — uc03 must still drive the direct-mint PostCRD path under the trio")
+		t.Error("ingress CRD endpoint was never hit — uc03/bridge-demo must still drive the direct-mint PostCRD path under the trio")
 	}
 	if strings.Contains(res.Detail, brProviderOriginatedPrefix) {
-		t.Errorf("Result.Detail = %q, must NOT contain the br-provider provenance line for uc03 (provenance stays uc02-only)", res.Detail)
+		t.Errorf("Result.Detail = %q, must NOT contain the provider-system provenance line for the bridging demo", res.Detail)
+	}
+	if !strings.Contains(res.Detail, "bridging demo payer") {
+		t.Errorf("Result.Detail = %q, want it to name the bridging demo payer as the verdict source", res.Detail)
 	}
 }
 
 // TestRun_ConformantUC03_BridgeDemoSelectsMember pins the member switch:
-// branch "" drives MBR-COVERED (byte-unchanged fence) and branch
-// "bridge-demo" drives MBR-BRIDGE-DEMO — observed the same way
+// branch "" drives MBR-COVERED and branch "bridge-demo" drives
+// MBR-BRIDGE-DEMO. Only the bridge-demo branch is a byte-unchanged fence —
+// branch "" was re-authored wholesale for the reference payer (the L8000
+// family), while bridge-demo keeps its original lumbar legs because the live
+// bridging gate observes those exact bytes. Observed the same way
 // TestRun_ConformantUC03_UnderBFF_StillDriverMinted observes driver-minted
 // origination: a lexical pin on the ingress CRD request body (member appears
 // as context.patientId/prefetch.patient.id/subject.reference — build.go's
@@ -783,49 +812,65 @@ func TestRun_ConformantUC03_BridgeDemoSelectsMember(t *testing.T) {
 	}
 }
 
-// TestRun_EHRUC03SendsBranch pins the branch channel: ehrUC03 sends
-// {"branch": branch} the same way ehrUC01 does, so a member selection can
-// reach handleUC03 at all (handleUC03 carries the matching req.Branch
-// switch). This is a request-shape pin, not a full member-selection proof
-// (that lives engine-side, TestHandleUC03_BridgeRefuseSelectsMember in
-// gateway/engine): the fake server here just has to see the branch on the wire.
+// TestRun_EHRUC03SendsBranch pins the uc03 branch dispatch on BOTH axes: the
+// child each branch talks to, and the request body it puts on the wire.
+// "bridge-refuse" is the bridging demo — it POSTs {"branch":"bridge-refuse"}
+// to the MAIN child so handleUC03's matching req.Branch switch can select the
+// demo persona (a request-shape pin, not a full member-selection proof — that
+// lives engine-side, TestHandleUC03_BridgeRefuseSelectsMember in
+// gateway/engine). "" is the chart-driven home-oxygen row and POSTs the bare
+// {} body to the Plain-EHR child instead.
 func TestRun_EHRUC03SendsBranch(t *testing.T) {
-	for _, branch := range []string{"", "bridge-refuse"} {
-		t.Run(branch, func(t *testing.T) {
-			var gotBody string
-			mux := http.NewServeMux()
-			mux.HandleFunc("POST /scenario/uc03", func(w http.ResponseWriter, r *http.Request) {
-				b, _ := io.ReadAll(r.Body)
-				gotBody = string(b)
-				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(`{"paRequired":true,"authNumber":"AUTH-BRANCH-TEST","qrItems":[{"linkId":"1","answer":"x","origin":"auto","sourceRef":"Observation/1"}]}`))
-			})
-			srv := httptest.NewServer(mux)
-			defer srv.Close()
+	for _, tc := range []struct{ branch, wantBody, wantResp string }{
+		{"", `{}`, `{"paRequired":true,"authNumber":"AUTH-BRANCH-TEST","qrAnswers":{"2.2":"87","2.3":"53"}}`},
+		{"bridge-refuse", `{"branch":"bridge-refuse"}`, `{"paRequired":true,"authNumber":"AUTH-BRANCH-TEST","qrItems":[{"linkId":"1","answer":"x","origin":"auto","sourceRef":"Observation/1"}]}`},
+	} {
+		t.Run(tc.branch, func(t *testing.T) {
+			var mainBody, pdBody string
+			newChild := func(into *string) *httptest.Server {
+				mux := http.NewServeMux()
+				mux.HandleFunc("POST /scenario/uc03", func(w http.ResponseWriter, r *http.Request) {
+					b, _ := io.ReadAll(r.Body)
+					*into = string(b)
+					w.Header().Set("Content-Type", "application/json")
+					w.Write([]byte(tc.wantResp))
+				})
+				srv := httptest.NewServer(mux)
+				t.Cleanup(srv.Close)
+				return srv
+			}
+			mainSrv, pdSrv := newChild(&mainBody), newChild(&pdBody)
 
 			bus := event.NewBus(fixedClock)
 			busSrv := httptest.NewServer(bus.Handler())
 			defer busSrv.Close()
 			rn := New(Config{
-				Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-				Bus:    bus,
+				Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: mainSrv.URL}),
+				ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: pdSrv.URL}),
+				Bus:                bus,
 			})
 
-			res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc03", Branch: branch})
+			res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc03", Branch: tc.branch})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			if res.State != StatePassed {
 				t.Fatalf("Result.State = %q, want passed (Detail=%q)", res.State, res.Detail)
 			}
-			want := `{"branch":"` + branch + `"}`
-			if gotBody != want {
-				t.Errorf("request body = %s, want %s", gotBody, want)
+			gotBody, otherBody := pdBody, mainBody
+			if tc.branch == "bridge-refuse" {
+				gotBody, otherBody = mainBody, pdBody
+			}
+			if gotBody != tc.wantBody {
+				t.Errorf("request body = %s, want %s", gotBody, tc.wantBody)
+			}
+			if otherBody != "" {
+				t.Errorf("the other child was driven too (body %s) — uc03/%q has exactly one child", otherBody, tc.branch)
 			}
 
 			startEvents := readSSE(t, busSrv.URL+"/events", 1)
-			if startEvents[0].Type != event.TypeRunStarted || startEvents[0].RunID != res.RunID || startEvents[0].Branch != branch {
-				t.Fatalf("events[0] = %+v, want run.started stamped Branch=%q", startEvents[0], branch)
+			if startEvents[0].Type != event.TypeRunStarted || startEvents[0].RunID != res.RunID || startEvents[0].Branch != tc.branch {
+				t.Fatalf("events[0] = %+v, want run.started stamped Branch=%q", startEvents[0], tc.branch)
 			}
 		})
 	}
@@ -838,7 +883,7 @@ func TestRun_UnknownRow(t *testing.T) {
 	busSrv := httptest.NewServer(bus.Handler())
 	defer busSrv.Close()
 
-	rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
+	rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), ProviderDataDriver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
 
 	if _, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc99", Branch: ""}); err == nil {
 		t.Fatal("Run(ehr, uc99, \"\"): want an error for an unknown UC")
@@ -894,9 +939,10 @@ func TestStart_DetachedFromCallerContext(t *testing.T) {
 	defer busSrv.Close()
 
 	rn := New(Config{
-		Driver:   scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:      bus,
-		AuditURL: audit.URL,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
+		AuditURL:           audit.URL,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -944,8 +990,9 @@ func TestRun_RowPanicDoesNotWedgeRunner(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: panicUC, Branch: ""})
@@ -984,8 +1031,9 @@ func TestStart_Busy(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	runID, err := rn.Start(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -1030,9 +1078,11 @@ func TestResult_JSONShape(t *testing.T) {
 	}
 }
 
-// TestValidateRow_LaneAwareBranch pins: uc05/uc07 take a branch
-// only on the "ehr" lane; the "conformant" lane (the Da Vinci CRD/DTR/PAS
-// ingress path — no branch-selecting query param exists there) takes none.
+// TestValidateRow_LaneAwareBranch pins: uc05 takes a branch only on the "ehr"
+// lane; the "conformant" lane (the Da Vinci CRD/DTR/PAS ingress path — no
+// branch-selecting query param exists there) takes none. uc07 takes NO branch
+// on either lane — the hcpcs persona is the conformant row's own subject, and
+// the Plain-EHR uc07 is the chart-driven patient-attestation row.
 func TestValidateRow_LaneAwareBranch(t *testing.T) {
 	if _, err := validateRow(Req{Lane: "conformant", UC: "uc05", Branch: "consent"}); err == nil {
 		t.Fatal("validateRow(conformant, uc05, consent): want an error naming the lane")
@@ -1044,11 +1094,16 @@ func TestValidateRow_LaneAwareBranch(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "conformant uc07 takes no branch") {
 		t.Fatalf("validateRow(conformant, uc07, hcpcs) error = %v, want it to name the lane", err)
 	}
+	if _, err := validateRow(Req{Lane: "ehr", UC: "uc07", Branch: "hcpcs"}); err == nil {
+		t.Fatal("validateRow(ehr, uc07, hcpcs): want an error naming the lane")
+	} else if !strings.Contains(err.Error(), "ehr uc07 takes no branch") {
+		t.Fatalf("validateRow(ehr, uc07, hcpcs) error = %v, want it to name the lane", err)
+	}
 	if _, err := validateRow(Req{Lane: "ehr", UC: "uc05", Branch: "consent"}); err != nil {
 		t.Fatalf("validateRow(ehr, uc05, consent): unexpected error: %v", err)
 	}
-	if _, err := validateRow(Req{Lane: "ehr", UC: "uc07", Branch: "hcpcs"}); err != nil {
-		t.Fatalf("validateRow(ehr, uc07, hcpcs): unexpected error: %v", err)
+	if _, err := validateRow(Req{Lane: "ehr", UC: "uc07", Branch: ""}); err != nil {
+		t.Fatalf("validateRow(ehr, uc07, \"\"): unexpected error: %v", err)
 	}
 	if _, err := validateRow(Req{Lane: "conformant", UC: "uc01", Branch: "covered"}); err != nil {
 		t.Fatalf("validateRow(conformant, uc01, covered): unexpected error: %v", err)
@@ -1145,9 +1200,10 @@ func TestRun_TailFrameStampedBeforeTerminal(t *testing.T) {
 	go rly.Run(relayCtx)
 
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: scenarioSrv.URL}),
-		Bus:    bus,
-		Relay:  rly,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: scenarioSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: scenarioSrv.URL}),
+		Bus:                bus,
+		Relay:              rly,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -1226,9 +1282,10 @@ func TestRun_DrainTimeoutDoesNotFailRun(t *testing.T) {
 	go rly.Run(relayCtx)
 
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: scenarioSrv.URL}),
-		Bus:    bus,
-		Relay:  rly,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: scenarioSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: scenarioSrv.URL}),
+		Bus:                bus,
+		Relay:              rly,
 	})
 
 	runCtx, runCancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -1313,9 +1370,10 @@ func TestRun_RowPanicWithRelayStillDrainsAndClears(t *testing.T) {
 	go rly.Run(relayCtx)
 
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
-		Relay:  rly,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
+		Relay:              rly,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: panicUC, Branch: ""})
@@ -1402,9 +1460,10 @@ func TestNextRunID_UniquePerRunAndAcrossRestarts(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
-		Now:    fixedClock,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
+		Now:                fixedClock,
 	})
 
 	res1, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -1428,9 +1487,10 @@ func TestNextRunID_UniquePerRunAndAcrossRestarts(t *testing.T) {
 	laterClock := func() time.Time { return fixedClock().Add(time.Hour) }
 	bus2 := event.NewBus(laterClock)
 	rn2 := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus2,
-		Now:    laterClock,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus2,
+		Now:                laterClock,
 	})
 	res3, err := rn2.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
 	if err != nil {
@@ -1457,9 +1517,10 @@ func TestRun_SinkCalledAfterTerminalWithFinalResult(t *testing.T) {
 	bus := event.NewBus(fixedClock)
 	sink := &fakeSink{bus: bus}
 	rn := New(Config{
-		Driver:  scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:     bus,
-		History: sink,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
+		History:            sink,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -1517,9 +1578,10 @@ func TestRun_SinkCalledOnFailureAndPanic(t *testing.T) {
 	bus := event.NewBus(fixedClock)
 	sink := &fakeSink{bus: bus}
 	rn := New(Config{
-		Driver:  scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:     bus,
-		History: sink,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
+		History:            sink,
 	})
 
 	res1, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -1589,9 +1651,10 @@ func TestRun_PanickingSinkDoesNotWedgeRunner(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver:  scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:     bus,
-		History: panicSink{},
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
+		History:            panicSink{},
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -1696,8 +1759,9 @@ func TestRun_Freeform(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "freeform", Member: "MBR-X"})
@@ -1726,8 +1790,9 @@ func TestRun_FreeformFailure(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "freeform", Member: "MBR-X"})
@@ -1761,8 +1826,9 @@ func TestRun_FreeformMemberUnknown_ProviderSide(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "freeform", Member: "MBR-NOT-COVERED"})
@@ -1797,8 +1863,9 @@ func TestRun_FreeformPayerSide_RelayedVerbatim(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "freeform", Member: "MBR-NOT-COVERED"})
@@ -1836,8 +1903,9 @@ func TestRun_FreeformPolicyDenial_NotRelabeled(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "freeform", Member: "MBR-X"})
@@ -2078,7 +2146,7 @@ func TestWatch_DrainBeforeTerminal(t *testing.T) {
 func TestWatch_MutualExclusion(t *testing.T) {
 	t.Run("watch then run", func(t *testing.T) {
 		bus := event.NewBus(fixedClock)
-		rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
+		rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), ProviderDataDriver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
 		watchCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		if _, err := rn.StartWatch(watchCtx); err != nil {
@@ -2107,8 +2175,9 @@ func TestWatch_MutualExclusion(t *testing.T) {
 
 		bus := event.NewBus(fixedClock)
 		rn := New(Config{
-			Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-			Bus:    bus,
+			Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+			ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+			Bus:                bus,
 		})
 
 		var wg sync.WaitGroup
@@ -2129,7 +2198,7 @@ func TestWatch_MutualExclusion(t *testing.T) {
 
 	t.Run("watch twice", func(t *testing.T) {
 		bus := event.NewBus(fixedClock)
-		rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
+		rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), ProviderDataDriver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
 		watchCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		if _, err := rn.StartWatch(watchCtx); err != nil {
@@ -2145,7 +2214,7 @@ func TestWatch_MutualExclusion(t *testing.T) {
 
 	t.Run("stop without a watch", func(t *testing.T) {
 		bus := event.NewBus(fixedClock)
-		rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
+		rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), ProviderDataDriver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
 		if _, err := rn.StopWatch(); !errors.Is(err, ErrNoWatch) {
 			t.Fatalf("StopWatch with no watch open: err = %v, want ErrNoWatch", err)
 		}
@@ -2161,7 +2230,7 @@ func TestWatch_MutualExclusion(t *testing.T) {
 	// ErrNoWatch, and neither ever hangs.
 	t.Run("two concurrent StopWatch callers race one watch: exactly one gets the Result, the other ErrNoWatch, neither hangs", func(t *testing.T) {
 		bus := event.NewBus(fixedClock)
-		rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
+		rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), ProviderDataDriver: scenariodriver.New(scenariodriver.Config{}), Bus: bus})
 		watchCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		if _, err := rn.StartWatch(watchCtx); err != nil {
@@ -2261,9 +2330,10 @@ func TestWatch_CtxCancelSelfFinalizes(t *testing.T) {
 	go rly.Run(relayCtx)
 
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: scenarioSrv.URL}),
-		Bus:    bus,
-		Relay:  rly,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: scenarioSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: scenarioSrv.URL}),
+		Bus:                bus,
+		Relay:              rly,
 	})
 
 	watchCtx, watchCancel := context.WithCancel(context.Background())
@@ -2371,9 +2441,10 @@ func TestWatch_AuditPreFetchFailureNoWatchStarted(t *testing.T) {
 	defer busSrv.Close()
 
 	rn := New(Config{
-		Driver:   scenariodriver.New(scenariodriver.Config{}),
-		Bus:      bus,
-		AuditURL: badAudit.URL,
+		Driver:             scenariodriver.New(scenariodriver.Config{}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{}),
+		Bus:                bus,
+		AuditURL:           badAudit.URL,
 	})
 
 	if _, err := rn.StartWatch(context.Background()); err == nil {
@@ -2395,7 +2466,7 @@ func TestWatch_AuditPreFetchFailureNoWatchStarted(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	rn.cfg.Driver = scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL})
+	rn.cfg.ProviderDataDriver = scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL})
 	rn.cfg.AuditURL = ""
 
 	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -2435,10 +2506,11 @@ func TestWatch_AuditPostFetchFailure(t *testing.T) {
 
 	sink := &fakeSink{bus: bus}
 	rn := New(Config{
-		Driver:   scenariodriver.New(scenariodriver.Config{}),
-		Bus:      bus,
-		AuditURL: audit.URL,
-		History:  sink,
+		Driver:             scenariodriver.New(scenariodriver.Config{}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{}),
+		Bus:                bus,
+		AuditURL:           audit.URL,
+		History:            sink,
 	})
 
 	watchCtx, watchCancel := context.WithCancel(context.Background())
@@ -2482,7 +2554,7 @@ func TestWatch_AuditPostFetchFailure(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	rn.cfg.Driver = scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL})
+	rn.cfg.ProviderDataDriver = scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL})
 	rn.cfg.AuditURL = ""
 
 	res2, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
@@ -2624,9 +2696,10 @@ func TestWatch_PanickingSinkDoesNotWedgeRunner(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver:  scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:     bus,
-		History: panicSink{},
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
+		History:            panicSink{},
 	})
 
 	watchCtx, cancel := context.WithCancel(context.Background())
@@ -2681,7 +2754,7 @@ func TestWatch_PanickingSinkDoesNotWedgeRunner(t *testing.T) {
 // best-effort admission gate; a TryLock-based probe would itself steal the
 // lock, which is exactly what this flag avoids.
 func TestRunner_InFlight(t *testing.T) {
-	if rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: event.NewBus(fixedClock)}); rn.InFlight() {
+	if rn := New(Config{Driver: scenariodriver.New(scenariodriver.Config{}), ProviderDataDriver: scenariodriver.New(scenariodriver.Config{}), Bus: event.NewBus(fixedClock)}); rn.InFlight() {
 		t.Fatal("InFlight() = true on a fresh Runner, want false")
 	}
 
@@ -2699,8 +2772,9 @@ func TestRunner_InFlight(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
 	})
 
 	if _, err := rn.Start(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"}); err != nil {

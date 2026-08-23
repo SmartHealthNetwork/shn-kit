@@ -6,9 +6,9 @@
    they're the BYO lane-composition banners (EhrSwapBanner/
    ConformantUnderEhrSwapBanner/DaVinciCoexistenceBanner in App.tsx) rendered
    into this column's banner slot, and would otherwise lose their styling
-   once App.css retires. `.run-notice`/`.provenance-tag`/`.branch-hint` are
-   NEW here — the mockup has no static state for them, but they're this
-   column's own alert/tag/caption idioms, authored on the same tokens. */
+   once App.css retires. `.run-notice`/`.provenance-tag` are NEW here — the
+   mockup has no static state for them, but they're this column's own
+   alert/tag/caption idioms, authored on the same tokens. */
 
 .col {
   min-width: 0;
@@ -151,7 +151,7 @@
   height: 12px;
 }
 
-/* ── row extras: provenance tag, branch read-back hint, run notice ──── */
+/* ── row extras: provenance tag, run notice ──────────────────────────── */
 /* None of these have mockup rules of their own — authored here on the same
    tokens as the row/chip idiom above, since they're this column's own
    supporting copy. */
@@ -165,12 +165,6 @@
   border: 1px solid var(--border);
   border-radius: var(--r);
   padding: 2px 7px;
-}
-
-.branch-hint {
-  margin: 0;
-  font-size: 11px;
-  color: var(--accent-ink);
 }
 
 .run-notice {

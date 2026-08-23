@@ -941,7 +941,7 @@ export function StepDetail({ step, view, posture = 'stand-in', register = 'overv
     );
   }
 
-  // Finding 1: same shown-never-faked gate as substrate — a validate step
+  // Same shown-never-faked gate the network view applies — a validate step
   // never has a response, so gating the "No response observed" note on
   // `!step.response` alone would render it next to a "Valid" badge for a
   // successful, complete check. Suppress the Response section + open-step

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildRunStory, buildDemoStory, isDemoRun, parseObserver } from './inspect';
+import { buildRunStory, buildDemoStory, isDemoRun, laneLabel, normaliseLane, parseObserver } from './inspect';
 import type { KitEvent } from './types';
 import ehrUc03 from './fixtures/run-ehr-uc03.json';
 import conformantUc03 from './fixtures/run-conformant-uc03.json';
@@ -810,5 +810,27 @@ describe('buildDemoStory', () => {
     ];
     expect(() => buildDemoStory(runId, events)).not.toThrow();
     expect(buildDemoStory(runId, events)?.record.chain).toEqual([]);
+  });
+});
+
+describe('lane normalisation — the one read-side rule', () => {
+  it('laneLabel maps the retired value to the current name and passes everything else through', () => {
+    expect(laneLabel('provider-data')).toBe('ehr');
+    expect(laneLabel('ehr')).toBe('ehr');
+    expect(laneLabel('conformant')).toBe('conformant');
+  });
+
+  // The rejection row for the obvious wrong fix: a local demonstration's lane
+  // is the literal 'demo' and is NOT a run lane — folding it into one would
+  // relabel every demonstration row in the history list as a Da Vinci run.
+  it('laneLabel leaves a local-demonstration record alone', () => {
+    expect(laneLabel('demo')).toBe('demo');
+  });
+
+  it('normaliseLane resolves to the two lanes the inspector renders', () => {
+    expect(normaliseLane('provider-data')).toBe('ehr');
+    expect(normaliseLane('ehr')).toBe('ehr');
+    expect(normaliseLane('conformant')).toBe('conformant');
+    expect(normaliseLane(undefined)).toBe('conformant');
   });
 });

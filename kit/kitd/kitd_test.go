@@ -388,8 +388,9 @@ func TestRunDispatch(t *testing.T) {
 	const token = "row4-fixed-token-for-determinism"
 	bus := event.NewBus(fixedClock)
 	rn := runner.New(runner.Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		Bus:                bus,
 	})
 	cfg := Config{
 		APIAddr:  "127.0.0.1:0",
@@ -522,8 +523,9 @@ func TestRunRoutes_DaemonFirstGating(t *testing.T) {
 	defer gwSrv.Close()
 
 	rn := runner.New(runner.Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		Bus:                bus,
 	})
 	d.SetRunner(rn)
 
@@ -2308,8 +2310,9 @@ func TestRunsPost_MemberValidationAndFreeform(t *testing.T) {
 	const token = "row9-member-token"
 	bus := event.NewBus(fixedClock)
 	rn := runner.New(runner.Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		Bus:                bus,
 	})
 	cfg := Config{
 		APIAddr:  "127.0.0.1:0",
@@ -2764,8 +2767,9 @@ func TestChildRestart_InFlight409(t *testing.T) {
 	const token = "restart-inflight-token"
 	bus := event.NewBus(fixedClock)
 	rn := runner.New(runner.Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		Bus:                bus,
 	})
 	restarter := &fakeRestarter{}
 	cfg := Config{
@@ -3358,8 +3362,9 @@ func TestBridgingDemo_InFlight409(t *testing.T) {
 	const token = "bridging-inflight-token"
 	bus := event.NewBus(fixedClock)
 	rn := runner.New(runner.Config{
-		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
-		Bus:    bus,
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		Bus:                bus,
 	})
 	demo := &fakeDemo{}
 	cfg := Config{

@@ -3,7 +3,33 @@
 // has produced (live off the ring, or replayed from a history record — one
 // interpretation pipeline either way) and turns them into a RunStory of
 // Steps a UI can render. Tested against real captured event fixtures.
-import type { BridgingLossEntry, BridgingLossReport, DemoChainHop, DemoRecord, KitEvent } from './types';
+import type { BridgingLossEntry, BridgingLossReport, DemoChainHop, DemoRecord, KitEvent, Lane } from './types';
+
+// ---------------------------------------------------------------------------
+// Lane normalisation (shared by every read-side surface)
+// ---------------------------------------------------------------------------
+
+// The retired wire value for the Plain EHR lane. Old run-history records —
+// written before the lane was renamed — still carry it, and a record is
+// replayed exactly as it was stamped, so the read side is where it has to be
+// handled. One home for the rule, so no pane can normalise while another
+// renders raw.
+const RETIRED_EHR_LANE = 'provider-data';
+
+// laneLabel is what a lane value should READ as: the retired value renders as
+// the Plain EHR lane, and every other value passes through VERBATIM —
+// including the local-demonstration records' literal 'demo' lane, which is not
+// a run lane at all and must never be relabelled into one.
+export function laneLabel(v: string): string {
+  return v === RETIRED_EHR_LANE ? 'ehr' : v;
+}
+
+// normaliseLane maps a wire lane value onto the two lanes the inspector
+// renders: the Plain EHR lane (under either name), or — for anything else,
+// undefined included — the Da Vinci lane.
+export function normaliseLane(v: string | undefined): Lane {
+  return v === 'ehr' || v === RETIRED_EHR_LANE ? 'ehr' : 'conformant';
+}
 
 // ---------------------------------------------------------------------------
 // Observer frame parsing

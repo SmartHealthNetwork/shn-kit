@@ -1,8 +1,9 @@
-// rows_providerdata_test.go — the provider-data lane's rows against a FAKE
-// provider-data gateway child (canned /scenario/* bodies in the shapes the
-// live reference-payer gate reads): one passing case per UC, then the
-// mutation table — each passing body with ONE fact removed or swapped must
-// fail naming it.
+// rows_ehr_test.go — the Plain-EHR lane's rows against a FAKE gateway child
+// (canned /scenario/* bodies in the shapes the live reference-payer gate
+// reads): one passing case per UC, then the mutation table — each passing
+// body with ONE fact removed or swapped must fail naming it. The lane's one
+// bridging row (uc03 bridge-refuse) runs on the MAIN child instead, which
+// TestEHRLane_DriverPerRow pins.
 package runner
 
 import (
@@ -17,7 +18,8 @@ import (
 	"github.com/SmartHealthNetwork/shn-kit/event"
 )
 
-// pdServer serves canned provider-data /scenario/* bodies keyed by path.
+// pdServer serves canned /scenario/* bodies keyed by path, standing in for
+// the Plain-EHR lane's gateway child.
 func pdServer(t *testing.T, bodies map[string]string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -33,9 +35,9 @@ func pdServer(t *testing.T, bodies map[string]string) *httptest.Server {
 	return srv
 }
 
-// pdRunner builds a Runner whose EXISTING-lane driver points nowhere (the
-// provider-data rows must never touch it) and whose provider-data driver points
-// at srv — or is absent when withPD is false (the no-trio Kit).
+// pdRunner builds a Runner whose MAIN-child driver points nowhere (every
+// Plain-EHR row but bridge-refuse must never touch it) and whose Plain-EHR
+// driver points at srv — or is absent when withPD is false (the no-trio Kit).
 func pdRunner(t *testing.T, srv *httptest.Server, withPD bool) *Runner {
 	t.Helper()
 	cfg := Config{
@@ -63,14 +65,14 @@ func runPD(t *testing.T, bodies map[string]string, uc, branch string) Result {
 	t.Helper()
 	srv := pdServer(t, bodies)
 	rn := pdRunner(t, srv, true)
-	res, err := rn.Run(t.Context(), Req{Lane: "provider-data", UC: uc, Branch: branch})
+	res, err := rn.Run(t.Context(), Req{Lane: "ehr", UC: uc, Branch: branch})
 	if err != nil {
-		t.Fatalf("Run(provider-data/%s/%s): %v", uc, branch, err)
+		t.Fatalf("Run(ehr/%s/%s): %v", uc, branch, err)
 	}
 	return res
 }
 
-func TestProviderDataRows_Pass(t *testing.T) {
+func TestEHRRows_Pass(t *testing.T) {
 	for _, tc := range []struct{ uc, branch, path, body, wantDetail string }{
 		{"uc01", "covered", "/scenario/uc01", `{"covered":true,"reason":"active"}`, "covered=true"},
 		{"uc01", "notcovered", "/scenario/uc01", `{"covered":false,"reason":"coverage-terminated"}`, "coverage-terminated"},
@@ -88,14 +90,14 @@ func TestProviderDataRows_Pass(t *testing.T) {
 		if res.State != StatePassed || !strings.Contains(res.Detail, tc.wantDetail) {
 			t.Errorf("%s/%s: state=%s detail=%q, want passed containing %q", tc.uc, tc.branch, res.State, res.Detail, tc.wantDetail)
 		}
-		if res.Lane != "provider-data" {
-			t.Errorf("%s/%s: Result.Lane = %q, want provider-data", tc.uc, tc.branch, res.Lane)
+		if res.Lane != "ehr" {
+			t.Errorf("%s/%s: Result.Lane = %q, want ehr", tc.uc, tc.branch, res.Lane)
 		}
 	}
 }
 
-// TestProviderDataRows_Reject is the mutation table.
-func TestProviderDataRows_Reject(t *testing.T) {
+// TestEHRRows_Reject is the mutation table.
+func TestEHRRows_Reject(t *testing.T) {
 	mut := func(base string, f func(m map[string]any)) string {
 		var m map[string]any
 		if err := json.Unmarshal([]byte(base), &m); err != nil {
@@ -107,28 +109,28 @@ func TestProviderDataRows_Reject(t *testing.T) {
 	}
 	qr := func(m map[string]any) map[string]any { return m["qrAnswers"].(map[string]any) }
 	for _, tc := range []struct{ name, uc, branch, path, body, wantErr string }{
-		{"uc04 sandbox verdict prefix", "uc04", "", "/scenario/uc04", mut(pdUC04OK, func(m map[string]any) { m["authNumber"] = "PA-deadbeef" }), "AUTH-"},
+		{"uc04 non-reference verdict prefix", "uc04", "", "/scenario/uc04", mut(pdUC04OK, func(m map[string]any) { m["authNumber"] = "PA-deadbeef" }), "AUTH-"},
 		{"uc04 not PA-required", "uc04", "", "/scenario/uc04", mut(pdUC04OK, func(m map[string]any) { m["paRequired"] = false }), "paRequired"},
 		{"uc04 group-3 3.2 missing", "uc04", "", "/scenario/uc04", mut(pdUC04OK, func(m map[string]any) { delete(qr(m), "3.2") }), "3.2"},
 		{"uc04 group-3 3.3 missing", "uc04", "", "/scenario/uc04", mut(pdUC04OK, func(m map[string]any) { delete(qr(m), "3.3") }), "3.3"},
 		{"uc04 1.1 not the PT category", "uc04", "", "/scenario/uc04", mut(pdUC04OK, func(m map[string]any) { qr(m)["1.1"] = "72148" }), "1.1"},
 		{"uc04 3.1 not the seeded dx", "uc04", "", "/scenario/uc04", mut(pdUC04OK, func(m map[string]any) { qr(m)["3.1"] = "Low back pain" }), "3.1"},
-		{"uc04 sandbox pend shape", "uc04", "", "/scenario/uc04", `{"paRequired":true,"authNumber":"PA-1","pendedItems":["operative-report"]}`, "1.1"},
+		{"uc04 scripted pend shape", "uc04", "", "/scenario/uc04", `{"paRequired":true,"authNumber":"PA-1","pendedItems":["operative-report"]}`, "1.1"},
 		{"uc06 not attested", "uc06", "", "/scenario/uc06", mut(pdUC06OK, func(m map[string]any) { m["attested"] = false }), "attested"},
 		{"uc06 no amendment leg", "uc06", "", "/scenario/uc06", mut(pdUC06OK, func(m map[string]any) { delete(m, "amendmentCorr") }), "amendmentCorr"},
 		{"uc06 3.1 not the seeded dx", "uc06", "", "/scenario/uc06", mut(pdUC06OK, func(m map[string]any) { qr(m)["3.1"] = "Cerebral infarction" }), "3.1"},
-		{"uc06 sandbox verdict", "uc06", "", "/scenario/uc06", mut(pdUC06OK, func(m map[string]any) { m["authNumber"] = "PA-1" }), "AUTH-"},
+		{"uc06 non-reference verdict", "uc06", "", "/scenario/uc06", mut(pdUC06OK, func(m map[string]any) { m["authNumber"] = "PA-1" }), "AUTH-"},
 		{"uc07 no amendment leg", "uc07", "", "/scenario/uc07", mut(pdUC07OK, func(m map[string]any) { delete(m, "amendmentCorr") }), "amendmentCorr"},
 		{"uc07 not attested", "uc07", "", "/scenario/uc07", mut(pdUC07OK, func(m map[string]any) { m["attested"] = false }), "attested"},
-		{"uc07 sandbox verdict", "uc07", "", "/scenario/uc07", mut(pdUC07OK, func(m map[string]any) { m["authNumber"] = "PA-1" }), "AUTH-"},
+		{"uc07 non-reference verdict", "uc07", "", "/scenario/uc07", mut(pdUC07OK, func(m map[string]any) { m["authNumber"] = "PA-1" }), "AUTH-"},
 		{"uc02 questionnaire demanded", "uc02", "", "/scenario/uc02", mut(pdUC02OK, func(m map[string]any) { m["needsDTR"] = true }), "needsDTR"},
 		{"uc02 PA demanded", "uc02", "", "/scenario/uc02", mut(pdUC02OK, func(m map[string]any) { m["paRequired"] = true }), "paRequired"},
 		{"uc02 not covered", "uc02", "", "/scenario/uc02", mut(pdUC02OK, func(m map[string]any) { m["covered"] = "not-covered" }), "covered"},
 		{"uc03 auto-fill 2.2 not from the seeded obs", "uc03", "", "/scenario/uc03", mut(pdUC03OK, func(m map[string]any) { qr(m)["2.2"] = "" }), "2.2"},
 		{"uc03 auto-fill 2.3 another persona's value", "uc03", "", "/scenario/uc03", mut(pdUC03OK, func(m map[string]any) { qr(m)["2.3"] = "54" }), "2.3"},
-		{"uc03 sandbox verdict", "uc03", "", "/scenario/uc03", mut(pdUC03OK, func(m map[string]any) { m["authNumber"] = "PA-1" }), "AUTH-"},
+		{"uc03 non-reference verdict", "uc03", "", "/scenario/uc03", mut(pdUC03OK, func(m map[string]any) { m["authNumber"] = "PA-1" }), "AUTH-"},
 		{"uc05 wrong facility", "uc05", "consent", "/scenario/uc05", mut(pdUC05OK, func(m map[string]any) { m["facilityId"] = "other" }), "metro-spine"},
-		{"uc05 sandbox verdict", "uc05", "consent", "/scenario/uc05", mut(pdUC05OK, func(m map[string]any) { m["authNumber"] = "PA-1" }), "AUTH-"},
+		{"uc05 non-reference verdict", "uc05", "consent", "/scenario/uc05", mut(pdUC05OK, func(m map[string]any) { m["authNumber"] = "PA-1" }), "AUTH-"},
 		{"uc05 noconsent issued an auth", "uc05", "noconsent", "/scenario/uc05", `{"consentDenied":true,"authNumber":"AUTH-9"}`, "authNumber"},
 		{"uc05 noconsent not denied", "uc05", "noconsent", "/scenario/uc05", `{"consentDenied":false}`, "consentDenied"},
 		{"uc08 approved", "uc08", "", "/scenario/uc08", `{"denied":false,"authNumber":"AUTH-9","rationale":""}`, "denied"},
@@ -145,49 +147,100 @@ func TestProviderDataRows_Reject(t *testing.T) {
 	}
 }
 
-// TestProviderDataLane_RowShape pins the lane's row shape and the no-trio
-// refusal: without a ProviderDataDriver the lane is refused with the trio
-// sentence (the run is never created); the ehr-only branches (uc07 hcpcs,
-// uc03 bridge-refuse) and freeform are refused on this lane; uc01 requires a
-// branch; uc05 takes ""|consent|noconsent only.
-func TestProviderDataLane_RowShape(t *testing.T) {
+// TestEHRLane_RowShape pins the lane's row shape and the no-trio refusal:
+// without a ProviderDataDriver the lane is refused with the trio sentence
+// (the run is never created) — EXCEPT the bridge-refuse row, which runs on
+// the main child and needs no trio; the conformant-only branches (uc03
+// bridge-demo) are refused here, uc07 takes no branch on either lane, uc01
+// requires a branch, uc05 takes ""|consent|noconsent only, and
+// "provider-data" is no longer a lane at all.
+func TestEHRLane_RowShape(t *testing.T) {
 	srv := pdServer(t, nil)
 	noPD := pdRunner(t, srv, false)
-	_, err := noPD.Run(t.Context(), Req{Lane: "provider-data", UC: "uc04"})
-	if err == nil || !strings.Contains(err.Error(), providerDataLaneUnavailable) {
+	_, err := noPD.Run(t.Context(), Req{Lane: "ehr", UC: "uc04"})
+	if err == nil || !strings.Contains(err.Error(), ehrLaneUnavailable) {
 		t.Fatalf("no ProviderDataDriver: err=%v, want the trio sentence", err)
 	}
-	if _, err := noPD.Start(t.Context(), Req{Lane: "provider-data", UC: "uc04"}); err == nil || !strings.Contains(err.Error(), providerDataLaneUnavailable) {
+	if _, err := noPD.Start(t.Context(), Req{Lane: "ehr", UC: "uc04"}); err == nil || !strings.Contains(err.Error(), ehrLaneUnavailable) {
 		t.Fatalf("no ProviderDataDriver (Start): err=%v, want the trio sentence", err)
 	}
 	if got := len(noPD.Results()); got != 0 {
 		t.Fatalf("a refused run was recorded: %d results", got)
 	}
+	// bridge-refuse is the exception: it originates on the MAIN child, so a
+	// no-trio Kit still admits it (the run is created and fails on the wire
+	// against the unroutable main base, never refused up front).
+	if _, err := noPD.Run(t.Context(), Req{Lane: "ehr", UC: "uc03", Branch: "bridge-refuse"}); err != nil {
+		t.Fatalf("no ProviderDataDriver, ehr/uc03/bridge-refuse: err=%v, want the run admitted (main child)", err)
+	}
 	// Row shape is validateRow's alone — no runner needed for the rest.
 	for _, bad := range []Req{
-		{Lane: "provider-data", UC: "uc07", Branch: "hcpcs"},
-		{Lane: "provider-data", UC: "uc03", Branch: "bridge-refuse"},
-		{Lane: "provider-data", UC: "uc03", Branch: "bridge-demo"},
-		{Lane: "provider-data", UC: "uc01", Branch: ""},
-		{Lane: "provider-data", UC: "uc05", Branch: "x"},
-		{Lane: "provider-data", UC: "uc02", Branch: "x"},
-		{Lane: "provider-data", UC: "freeform", Member: "MBR-PD-UC04"},
-		{Lane: "provider-data", UC: "external"},
-		{Lane: "provider-data", UC: "uc09"},
+		{Lane: "ehr", UC: "uc07", Branch: "hcpcs"},
+		{Lane: "ehr", UC: "uc03", Branch: "bridge-demo"},
+		{Lane: "ehr", UC: "uc01", Branch: ""},
+		{Lane: "ehr", UC: "uc05", Branch: "x"},
+		{Lane: "ehr", UC: "uc02", Branch: "x"},
+		{Lane: "ehr", UC: "external"},
+		{Lane: "ehr", UC: "uc09"},
+		{Lane: "provider-data", UC: "uc04", Branch: ""},
+		{Lane: "conformant", UC: "uc03", Branch: "bridge-refuse"},
 	} {
 		if _, err := validateRow(bad); err == nil {
 			t.Errorf("validateRow(%+v) accepted, want rejected", bad)
 		}
 	}
+	// "provider-data" is not a lane any more — the error must name the two
+	// that are.
+	if _, err := validateRow(Req{Lane: "provider-data", UC: "uc04"}); err == nil || !strings.Contains(err.Error(), "want ehr|conformant") {
+		t.Errorf("validateRow(provider-data/uc04) error = %v, want it to name ehr|conformant", err)
+	}
 	for _, ok := range []Req{
-		{Lane: "provider-data", UC: "uc01", Branch: "covered"},
-		{Lane: "provider-data", UC: "uc05", Branch: "noconsent"},
-		{Lane: "provider-data", UC: "uc05", Branch: ""},
-		{Lane: "provider-data", UC: "uc07", Branch: ""},
-		{Lane: "provider-data", UC: "uc03", Branch: ""},
+		{Lane: "ehr", UC: "uc01", Branch: "covered"},
+		{Lane: "ehr", UC: "uc05", Branch: "noconsent"},
+		{Lane: "ehr", UC: "uc05", Branch: ""},
+		{Lane: "ehr", UC: "uc07", Branch: ""},
+		{Lane: "ehr", UC: "uc03", Branch: ""},
+		{Lane: "ehr", UC: "uc03", Branch: "bridge-refuse"},
+		{Lane: "ehr", UC: "freeform", Member: "MBR-OX"},
 	} {
 		if _, err := validateRow(ok); err != nil {
 			t.Errorf("validateRow(%+v) = %v, want accepted", ok, err)
 		}
+	}
+}
+
+// The bridge-refuse branch is the one Plain-EHR row that runs on the MAIN child
+// (origination of the lumbar order to the bridging demo payer); every other ehr
+// row runs on the provider-data child — and never the other way round.
+func TestEHRLane_DriverPerRow(t *testing.T) {
+	mainHits, pdHits := 0, 0
+	mainSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mainHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"paRequired":true,"authNumber":"PA-1"}`))
+	}))
+	t.Cleanup(mainSrv.Close)
+	pdSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pdHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"paRequired":true,"authNumber":"AUTH-1"}`))
+	}))
+	t.Cleanup(pdSrv.Close)
+	rn := New(Config{
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: mainSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: pdSrv.URL}),
+		Bus:                event.NewBus(fixedClock),
+	})
+	if _, err := rn.Run(t.Context(), Req{Lane: "ehr", UC: "uc03", Branch: "bridge-refuse"}); err != nil {
+		t.Fatal(err)
+	}
+	if mainHits != 1 || pdHits != 0 {
+		t.Fatalf("bridge-refuse: main=%d pd=%d, want the main child only", mainHits, pdHits)
+	}
+	if _, err := rn.Run(t.Context(), Req{Lane: "ehr", UC: "freeform", Member: "MBR-OX"}); err != nil {
+		t.Fatal(err)
+	}
+	if mainHits != 1 || pdHits != 1 {
+		t.Fatalf("freeform: main=%d pd=%d, want the provider-data child", mainHits, pdHits)
 	}
 }

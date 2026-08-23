@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { UCCards } from './UCCards';
-import { LANE_LABELS } from './ucmeta';
+import { BANNED_VOCAB, LANE_LABELS } from './ucmeta';
 import type { EventsView } from './useEvents';
 import type { KitEvent, RunResult } from './types';
 
@@ -111,7 +111,7 @@ describe('UCCards', () => {
     expect(screen.getByRole('heading', { name: /prior-authorization scenarios/i })).toBeDefined();
   });
 
-  it('branch pickers appear exactly per the row table (uc01 both lanes; uc05/uc07 ehr only)', () => {
+  it('branch pickers appear exactly per the row table (uc01 both lanes; uc05 ehr only; uc07 neither)', () => {
     const { rerender } = render(
       <UCCards
         lane="ehr"
@@ -123,8 +123,7 @@ describe('UCCards', () => {
 
     expect(within(screen.getByTestId('card-uc01')).getByRole('combobox')).toBeDefined();
     expect(within(screen.getByTestId('card-uc05')).getByRole('combobox')).toBeDefined();
-    expect(within(screen.getByTestId('card-uc07')).getByRole('combobox')).toBeDefined();
-    for (const uc of ['uc02', 'uc03', 'uc04', 'uc06', 'uc08']) {
+    for (const uc of ['uc02', 'uc03', 'uc04', 'uc06', 'uc07', 'uc08']) {
       expect(within(screen.getByTestId(`card-${uc}`)).queryByRole('combobox')).toBeNull();
     }
 
@@ -397,18 +396,20 @@ describe('UCCards', () => {
     expect(within(screen.getByTestId('card-uc04')).queryByText(/running/i)).toBeNull();
   });
 
-  // The four conformant provenance tags carry an honest "this leg is a stand-in
+  // The six conformant provenance tags carry an honest "this leg is a stand-in
   // on this lane" disclosure. They are Technical-register only (mechanics/
   // caveats, noise for the plain reader), conformant-lane only, and carry NO
   // internal deferral IDs (CXL-D11 / D-2RI-1 / D-2RI-6 were scrubbed).
   const PROVENANCE = [
     "Eligibility isn't a Da Vinci prior-auth operation, so this lane runs the same coverage check as the plain-EHR lane.",
-    "On this lane the federated (CDex) query runs gateway-to-gateway, so the consent-denied branch isn't exercised here.",
-    "The DTR questionnaire package is fetched through the real Da Vinci flow; the manual clinician-facing DTR app isn't part of this run.",
+    'The reference payer holds the first request; the amended re-submit is re-evaluated and resolved.',
+    "On this lane the federated (CDex) evidence is carried on the amended re-submit; the consent-denied branch isn't exercised here.",
+    "The DTR questionnaire package is fetched through the real Da Vinci flow and filled by the provider system; the manual clinician-facing DTR app isn't part of this run.",
     "Also reads the approval back from the patient's Smart Health account, where that surface is reachable.",
+    "The coverage check answers not covered; the submitted request is formally denied with the payer's reason.",
   ];
 
-  it('provenance tags render in conformant + Technical only (uc01/05/06/07), never in Overview, never in ehr, and carry no internal IDs', () => {
+  it('provenance tags render in conformant + Technical only (uc01/04/05/06/07/08), never in Overview, never in ehr, and carry no internal IDs', () => {
     const { rerender } = render(
       <UCCards
         lane="conformant"
@@ -480,8 +481,8 @@ describe('UCCards', () => {
     expect(screen.getByText(/CRD flags the order as needing prior authorization/i)).toBeDefined();
     expect(screen.queryByText(/filled in from the patient's chart/i)).toBeNull();
     // ...and so does uc08 — one switch moves all cards together.
-    expect(screen.getByText(/the conservative-therapy answers fall below the policy threshold/i)).toBeDefined();
-    expect(screen.queryByText(/the documented conservative therapy falls short/i)).toBeNull();
+    expect(screen.getByText(/the coverage check answers not covered and the pas submit is denied/i)).toBeDefined();
+    expect(screen.queryByText(/the service is excluded from the plan/i)).toBeNull();
   });
 
   it('the lane blurb caption follows the register', () => {
@@ -523,23 +524,6 @@ describe('UCCards', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Technical' }));
     expect(onRegister).toHaveBeenCalledWith('technical');
-  });
-
-  it('uc07 in ehr with hcpcs selected shows the patient read-back hint', async () => {
-    render(
-      <UCCards
-        lane="ehr"
-        events={events()}
-        latestByRow={noLatest}
-        onSelectRun={vi.fn()}
-      />,
-    );
-
-    const uc07 = within(screen.getByTestId('card-uc07'));
-    expect(uc07.queryByTestId('hint-uc07')).toBeNull();
-
-    await userEvent.selectOptions(uc07.getByRole('combobox'), 'hcpcs');
-    expect(uc07.getByTestId('hint-uc07').textContent).toMatch(/read-back/i);
   });
 
   it('aria: each Run button and branch picker carries a per-uc accessible name', () => {
@@ -594,14 +578,14 @@ describe('UCCards', () => {
 });
 
 
-describe('UCCards on the provider-data lane', () => {
-  const PD_PROVENANCE_UC04 =
+describe('UCCards on the ehr (Plain EHR) lane', () => {
+  const EHR_PROVENANCE_UC04 =
     'A home-health therapy order read from the chart; the adaptive questionnaire is driven group by group — the diagnosis, functional limitations and treatment goals all trace to the chart — and approved in one submission.';
 
   it('renders every card; uc01 and uc05 carry branch pickers, uc07 none (no hcpcs branch on this lane); provenance in Technical only, and it never names internal vocabulary', () => {
     const { rerender } = render(
       <UCCards
-        lane="provider-data"
+        lane="ehr"
         register="technical"
         events={events()}
         latestByRow={noLatest}
@@ -613,23 +597,24 @@ describe('UCCards on the provider-data lane', () => {
     expect(within(screen.getByTestId('card-uc05')).getByText('Branch')).toBeDefined();
     expect(within(screen.getByTestId('card-uc07')).queryByText('Branch')).toBeNull();
     expect(within(screen.getByTestId('card-uc03')).queryByText('Branch')).toBeNull();
-    expect(screen.getByText(PD_PROVENANCE_UC04)).toBeDefined();
-    // Every provider-data provenance tag (all eight UCs carry one) is free of
+    expect(screen.getByText(EHR_PROVENANCE_UC04)).toBeDefined();
+    // Every ehr-lane provenance tag (all eight UCs carry one) is free of
     // internal vocabulary.
     for (const tag of document.querySelectorAll('.provenance-tag')) {
-      expect(tag.textContent ?? '').not.toMatch(/substrate|Mode A|br-payer|gap-fill|D-2RI|CXL-/);
+      expect(tag.textContent ?? '').not.toMatch(BANNED_VOCAB);
+      expect(tag.textContent ?? '').not.toMatch(/D-2RI|CXL-/);
     }
     expect(document.querySelectorAll('.provenance-tag')).toHaveLength(8);
 
     rerender(
       <UCCards
-        lane="provider-data"
+        lane="ehr"
         register="overview"
         events={events()}
         latestByRow={noLatest}
         onSelectRun={vi.fn()}
       />,
     );
-    expect(screen.queryByText(PD_PROVENANCE_UC04)).toBeNull();
+    expect(screen.queryByText(EHR_PROVENANCE_UC04)).toBeNull();
   });
 });

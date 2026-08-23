@@ -16,7 +16,7 @@ import (
 // Probe is one "hello substrate" fact Verify checks, serializable as-is for
 // the daemon's GET /api/verify response.
 type Probe struct {
-	Name   string `json:"name"` // "discovery" | "registration" | "hosted-payer" | "bridge-demo-payer" | "bridge-demo-refuse"
+	Name   string `json:"name"` // "discovery" | "registration" | "reference-payer" | "bridge-demo-payer" | "bridge-demo-refuse"
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail"`
 }
@@ -38,9 +38,10 @@ type BridgeProbes struct {
 // Verify runs the "hello substrate" checks a freshly provisioned
 // Kit needs before it can drive a scenario: can it reach the network's
 // discovery descriptor, is its own holder id visible in the registrar feed,
-// and does the feed publish at least one payer with a routable payer
-// identity (the FeedPayerRouter precondition an origination needs to route
-// at all). A fourth "hello substrate" fact — "the gateway federates" — is NOT probed
+// and is the reference payer (ReferencePayerHolderID) on the feed as a
+// payer — the one holder every Kit payer leg is routed to by the static
+// payer directory (kit/kitd writes it), so a scenario has a payer to reach
+// at all. A fourth "hello substrate" fact — "the gateway federates" — is NOT probed
 // here: it is the supervisor's child-ready probe (child reaching the "ready"
 // state), already surfaced via that mechanism, so Verify does not duplicate
 // it.
@@ -52,7 +53,7 @@ type BridgeProbes struct {
 // Verify makes exactly one discovery GET and, if that succeeds, exactly one
 // FetchHolders call, then derives the baseline three probes (plus whichever
 // bridge-demo probes bp configures, BridgeProbes doc) from those two
-// results. If discovery fails, the registration and hosted-payer probes are
+// results. If discovery fails, the registration and reference-payer probes are
 // reported not-attempted (OK false, Detail "skipped: discovery failed")
 // rather than silently omitted, so a caller can always expect the baseline
 // 3 probes back (plus a skip row for each configured bridge probe).
@@ -74,7 +75,7 @@ func Verify(ctx context.Context, hc *http.Client, discoveryURL, holderID string,
 		probes := []Probe{
 			discProbe,
 			{Name: "registration", OK: false, Detail: "skipped: discovery failed"},
-			{Name: "hosted-payer", OK: false, Detail: "skipped: discovery failed"},
+			{Name: "reference-payer", OK: false, Detail: "skipped: discovery failed"},
 		}
 		probes = append(probes, skippedBridgeProbes(bp, "skipped: discovery failed")...)
 		emitProbes(bus, probes)
@@ -87,14 +88,14 @@ func Verify(ctx context.Context, hc *http.Client, discoveryURL, holderID string,
 		probes := []Probe{
 			discProbe,
 			{Name: "registration", OK: false, Detail: detail},
-			{Name: "hosted-payer", OK: false, Detail: detail},
+			{Name: "reference-payer", OK: false, Detail: detail},
 		}
 		probes = append(probes, skippedBridgeProbes(bp, detail)...)
 		emitProbes(bus, probes)
 		return probes
 	}
 
-	probes := []Probe{discProbe, probeRegistration(holders, holderID), probeHostedPayer(holders)}
+	probes := []Probe{discProbe, probeRegistration(holders, holderID), probeReferencePayer(holders)}
 	if bp.DemoHolder != "" {
 		probes = append(probes, probeBridgeDemoPayer(holders, bp.DemoHolder))
 	}
@@ -206,16 +207,21 @@ func probeRegistration(holders []shnsdk.Holder, holderID string) Probe {
 	return Probe{Name: "registration", OK: false, Detail: fmt.Sprintf("holder %q not found in registrar feed", holderID)}
 }
 
-// probeHostedPayer reports whether the feed publishes at least one payer
-// holder with a routable payer identity (PayerIDs) — the FeedPayerRouter
-// precondition an origination needs to route at all (FR-G41).
-func probeHostedPayer(holders []shnsdk.Holder) Probe {
+// ReferencePayerHolderID is the hosted Da Vinci reference payer's holder id — the one holder
+// every Kit payer leg is routed to by the static payer directory (kit/kitd writes it). The
+// probe and the directory import this one constant so they can never name different holders.
+const ReferencePayerHolderID = "conformance-payer"
+
+// probeReferencePayer reports whether the reference payer is on the feed as a payer. It
+// publishes no payer ids (it is reached by the directory, never by feed routing), so
+// PayerIDs is deliberately not a criterion.
+func probeReferencePayer(holders []shnsdk.Holder) Probe {
 	for _, h := range holders {
-		if h.Role == "payer" && len(h.PayerIDs) > 0 {
-			return Probe{Name: "hosted-payer", OK: true, Detail: fmt.Sprintf("%s publishes a routable payer identity", h.ID)}
+		if h.ID == ReferencePayerHolderID && h.Role == "payer" {
+			return Probe{Name: "reference-payer", OK: true, Detail: ReferencePayerHolderID + " is on the feed (role payer) — the reference payer behind every scenario"}
 		}
 	}
-	return Probe{Name: "hosted-payer", OK: false, Detail: "no payer holder publishes a routable payer identity (PayerIDs) — originations have no route"}
+	return Probe{Name: "reference-payer", OK: false, Detail: ReferencePayerHolderID + " is not on the feed as a payer — no scenario has a payer to reach"}
 }
 
 // probeBridgeDemoPayer reports whether demoHolder exists on the feed as a

@@ -76,15 +76,50 @@ const conformantEvents = conformantUc03 as unknown as KitEvent[];
 const ehrStory = buildRunStory(ehrEvents[0].runId as string, ehrEvents);
 const conformantStory = buildRunStory(conformantEvents[0].runId as string, conformantEvents);
 
-// A distinctive string living only inside crd-order-select's request payload
-// (the ServiceRequest.code.coding.display) — used to prove the substrate
-// view never renders payload JSON.
-const FIXTURE_PAYLOAD_MARKER = 'MRI lumbar spine w/o contrast';
-
-function findStep(steps: Step[], legType: string): Step {
-  const step = steps.find((s) => s.legType === legType);
-  if (!step) throw new Error(`fixture missing expected step legType=${legType}`);
+// The request/response panes need a leg that actually completed a round trip.
+// Selected BY SHAPE, never by index or by a leg name: the two lanes drive
+// different first legs (the Da Vinci lane's crd-order-select, the Plain EHR
+// lane's crd-order-dispatch), and a regenerated fixture may reorder them.
+// Throwing here — rather than falling back — keeps a fixture that stopped
+// carrying payloads from turning these tests vacuously green.
+function firstRoundTripLeg(steps: Step[]): Step {
+  const step = steps.find(
+    (s) =>
+      s.kind === 'leg' && s.request?.payload !== undefined && s.response?.payload !== undefined,
+  );
+  if (!step) throw new Error('fixture carries no leg step with BOTH a request and a response payload');
   return step;
+}
+
+// The member id the CDS Hooks request carries at context.patientId — two
+// levels deep, inside JsonView's default collapse depth, so it renders
+// without a search. Read off the fixture: the persona differs by lane and
+// changes whenever the fixtures are regenerated.
+function requestPatientId(step: Step): string {
+  const ctx = (step.request?.payload as { context?: { patientId?: string } } | undefined)?.context;
+  if (!ctx?.patientId) throw new Error('fixture leg request carries no context.patientId');
+  return ctx.patientId;
+}
+
+// A distinctive string living only inside the round-trip leg's REQUEST payload
+// (the ordered item's code display — "Oxygen concentrator, single delivery
+// port" on the Plain EHR fixture) — used to prove the network view never
+// renders payload JSON. assertInRequestPayload re-proves it is really in there
+// before the absence assertion runs, so a fixture that dropped it could never
+// make "absent from the DOM" pass for the wrong reason.
+const FIXTURE_PAYLOAD_MARKER = 'Oxygen concentrator, single delivery port';
+
+// One search term that appears in BOTH payloads of the round-trip leg — in the
+// request as the ordered item's display, in the response as the CDS card's
+// questionnaire canonical (HomeOxygenDispatch). JsonView's search is
+// case-insensitive, so the lower-case form matches both.
+const FIXTURE_SHARED_SEARCH_TERM = 'oxygen';
+
+function assertInPayload(step: Step, which: 'request' | 'response', needle: string): void {
+  const json = JSON.stringify(step[which]?.payload ?? null).toLowerCase();
+  if (!json.includes(needle.toLowerCase())) {
+    throw new Error(`fixture ${which} payload no longer contains ${JSON.stringify(needle)}`);
+  }
 }
 
 function openLegStep(): Step {
@@ -288,15 +323,15 @@ describe('directionRows', () => {
 
 describe('StepDetail — clinical view', () => {
   it('renders the narration paragraph and Request/Response JsonView sections from the frames', () => {
-    const step = findStep(ehrStory.steps, 'crd-order-select');
+    const step = firstRoundTripLeg(ehrStory.steps);
     render(<StepDetail step={step} view="clinical" />);
 
     expect(screen.getByText(step.narration)).toBeDefined();
     expect(screen.getByText('Request')).toBeDefined();
     expect(screen.getByText('Response')).toBeDefined();
-    // "MBR-COVERED" sits two levels deep (context.patientId) — within
+    // The member id sits two levels deep (context.patientId) — within
     // JsonView's default collapse depth, so it's visible without a search.
-    expect(screen.getByText('MBR-COVERED')).toBeDefined();
+    expect(screen.getByText(requestPatientId(step))).toBeDefined();
   });
 
   // Validate-step label: a leg/
@@ -304,7 +339,7 @@ describe('StepDetail — clinical view', () => {
   // (a real request/response pair) — only the validate-step-only rendering
   // below renames to "Resource".
   it('a non-validate step keeps the "Search request and response" label and the "Request" header', () => {
-    const step = findStep(ehrStory.steps, 'crd-order-select');
+    const step = firstRoundTripLeg(ehrStory.steps);
     render(<StepDetail step={step} view="clinical" />);
 
     expect(screen.getByLabelText('Search request and response')).toBeDefined();
@@ -313,16 +348,18 @@ describe('StepDetail — clinical view', () => {
 
   it('has one search input wired to both the request and response panes', async () => {
     const user = userEvent.setup();
-    const step = findStep(ehrStory.steps, 'crd-order-select');
+    const step = firstRoundTripLeg(ehrStory.steps);
+    // The term has to be in BOTH payloads for "one search, two panes" to mean
+    // anything — proved against the fixture before it is typed.
+    assertInPayload(step, 'request', FIXTURE_SHARED_SEARCH_TERM);
+    assertInPayload(step, 'response', FIXTURE_SHARED_SEARCH_TERM);
     render(<StepDetail step={step} view="clinical" />);
 
     const inputs = screen.getAllByRole('textbox');
     expect(inputs).toHaveLength(1);
 
-    // "lumbar" appears in the request payload ("MRI lumbar spine w/o
-    // contrast") AND in the response payload (the CDS card's questionnaire
-    // url "pa-lumbar-mri") — one search term, both panes react.
-    await user.type(inputs[0], 'lumbar');
+    // One search term, both panes react.
+    await user.type(inputs[0], FIXTURE_SHARED_SEARCH_TERM);
 
     // both sections report at least one match with the same search term —
     // one shared search state driving two JsonViews.
@@ -465,9 +502,12 @@ describe('StepDetail — clinical view', () => {
   });
 });
 
-describe('StepDetail — substrate view', () => {
+describe('StepDetail — network view', () => {
   it('renders leg facts and the framing sentence, and NEVER renders payload JSON', () => {
-    const step = findStep(ehrStory.steps, 'crd-order-select');
+    const step = firstRoundTripLeg(ehrStory.steps);
+    // The marker is really in the request payload — so its absence below is
+    // the view withholding it, not the fixture having lost it.
+    assertInPayload(step, 'request', FIXTURE_PAYLOAD_MARKER);
     render(<StepDetail step={step} view="substrate" />);
 
     // the fixture-unique payload string must be entirely absent from the DOM
@@ -475,10 +515,10 @@ describe('StepDetail — substrate view', () => {
     expect(document.body.textContent).not.toContain(FIXTURE_PAYLOAD_MARKER);
 
     expect(screen.getByText(step.correlationId as string)).toBeDefined();
-    expect(screen.getByText('originate')).toBeDefined();
-    expect(screen.getByText('payer')).toBeDefined();
-    expect(screen.getByText('provider-tpo')).toBeDefined();
-    expect(screen.getByText('payer-coverage')).toBeDefined();
+    expect(screen.getByText(step.request?.direction as string)).toBeDefined();
+    expect(screen.getByText(step.counterpart as string)).toBeDefined();
+    expect(screen.getByText(step.requestAuthority as string)).toBeDefined();
+    expect(screen.getByText(step.responseAuthority as string)).toBeDefined();
     expect(screen.getAllByText(/≈ \d+ KB/).length).toBeGreaterThanOrEqual(1);
     expect(
       screen.getByText('Carried as a sealed envelope through the payload-blind Hub; authority evaluated per leg.'),

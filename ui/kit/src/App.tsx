@@ -25,6 +25,7 @@ import {
   getStatus,
   postBridgingExhibit,
 } from './api';
+import { normaliseLane } from './inspect';
 import { visibleLanes } from './ucmeta';
 import { canRestart, openExternal, resolveToken, restartKit } from './bridge';
 import { useEvents } from './useEvents';
@@ -199,9 +200,10 @@ export function deriveProviderLabel(
 
   // State-derived: honest only for the current live/latest run.
   if (runId !== latestRunId) return undefined;
-  // The provider-data lane always reads the Kit's own data server — never a
-  // swapped-in partner EHR — so the BYO label applies to the ehr lane alone.
-  const runLane = started?.lane === 'ehr' ? 'ehr' : started?.lane === 'provider-data' ? 'provider-data' : 'conformant';
+  // inspect.ts's shared read-side rule (old run-history records may still
+  // carry the retired 'provider-data' lane value). An undefined `started`
+  // (no run yet) stays 'conformant', today's default.
+  const runLane = normaliseLane(started?.lane);
   if (runLane === 'ehr' && byo?.ehr?.applied) return 'Your EHR (FHIR data source)';
   if (runLane === 'conformant' && started?.uc === 'external' && byo?.davinci?.applied) {
     return 'Your Da Vinci system';
@@ -225,7 +227,7 @@ export default function App() {
   const [runsLive, setRunsLive] = useState(false);
   const [results, setResults] = useState<RunResult[]>([]);
   const [lane, setLane] = useState<Lane>('conformant');
-  // The lanes this Kit offers: the provider-data lane exists iff the Kit
+  // The lanes this Kit offers: the Plain EHR lane exists iff the Kit
   // booted its provider-data gateway child (status.providerDataUrl). A
   // selected lane that the status no longer offers falls back to the default.
   const providerDataUrl = status?.providerDataUrl;

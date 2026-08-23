@@ -98,11 +98,9 @@ function UCCard({
 
   // Provenance is an honest "this is what this leg is on this lane" mechanics
   // caveat: the Technical register only (noise for the plain reader), and only
-  // for a lane that declares one (conformant's stand-in notes; provider-data's
-  // what-was-read-from-the-chart notes; the ehr lane declares none).
+  // for a lane that declares one (conformant's stand-in notes; ehr's
+  // what-was-read-from-the-chart notes).
   const provenance = register === 'technical' ? meta.provenance?.[lane] : undefined;
-  const selectedOption = options?.find((o) => o.value === branch);
-  const showReadBackHint = selectedOption?.label.toLowerCase().includes('read-back') ?? false;
   const latest = latestByRow(lane, meta.uc, branch);
 
   const handleRunClick = () => {
@@ -135,11 +133,6 @@ function UCCard({
               ))}
             </select>
           </span>
-        )}
-        {showReadBackHint && (
-          <p className="branch-hint" data-testid={`hint-${meta.uc}`}>
-            Patient read-back included.
-          </p>
         )}
 
         {isActiveRun ? (

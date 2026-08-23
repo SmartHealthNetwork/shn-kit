@@ -91,7 +91,7 @@ describe('StatusPanel — verify probes', () => {
       verify: [
         { name: 'discovery', ok: true, detail: 'reachable' },
         { name: 'registration', ok: false, detail: 'holder not found in registrar feed' },
-        { name: 'hosted-payer', ok: true, detail: 'ok' },
+        { name: 'reference-payer', ok: true, detail: 'ok' },
       ],
     });
     render(<StatusPanel boot={b} sseState="open" />);
@@ -106,7 +106,7 @@ describe('StatusPanel — verify probes', () => {
       verify: [
         { name: 'discovery', ok: false, detail: 'skipped: reset raced the boot window' },
         { name: 'registration', ok: false, detail: 'skipped: reset raced the boot window' },
-        { name: 'hosted-payer', ok: false, detail: 'skipped: reset raced the boot window' },
+        { name: 'reference-payer', ok: false, detail: 'skipped: reset raced the boot window' },
       ],
     });
     render(<StatusPanel boot={b} sseState="open" />);

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ModeSwitch } from './ModeSwitch';
-import { LANE_LABELS, LANES, visibleLanes } from './ucmeta';
+import { BANNED_VOCAB, LANE_LABELS, LANES, visibleLanes } from './ucmeta';
 
 describe('ModeSwitch', () => {
   it('renders both lanes with the concise labels; the active lane carries both aria-selected and aria-current; clicking the other lane calls onLane', async () => {
@@ -43,37 +43,37 @@ describe('ModeSwitch', () => {
   });
 });
 
-describe('ModeSwitch lanes (the provider-data lane is status-gated)', () => {
-  it('renders only the lanes it is given; the default is every lane, provider-data included', () => {
+describe('ModeSwitch lanes (the Plain EHR lane is status-gated)', () => {
+  it('renders only the lanes it is given; the default is every lane, at most two', () => {
     const { rerender } = render(
       <ModeSwitch lane="conformant" onLane={vi.fn()} lanes={visibleLanes(undefined)} />,
     );
-    expect(screen.getAllByRole('tab')).toHaveLength(2);
-    expect(screen.queryByRole('tab', { name: LANE_LABELS['provider-data'].short })).toBeNull();
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(screen.queryByRole('tab', { name: LANE_LABELS.ehr.short })).toBeNull();
 
     rerender(
       <ModeSwitch lane="conformant" onLane={vi.fn()} lanes={visibleLanes('http://127.0.0.1:9095')} />,
     );
-    expect(screen.getAllByRole('tab')).toHaveLength(3);
-    expect(screen.getByRole('tab', { name: LANE_LABELS['provider-data'].short })).toBeDefined();
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+    expect(screen.getByRole('tab', { name: LANE_LABELS.ehr.short })).toBeDefined();
 
     rerender(<ModeSwitch lane="conformant" onLane={vi.fn()} />);
     expect(screen.getAllByRole('tab')).toHaveLength(LANES.length);
   });
 
-  it('visibleLanes: the provider-data lane exists iff the Kit reports its gateway child; order is the render order', () => {
-    expect(visibleLanes(undefined)).toEqual(['conformant', 'ehr']);
-    expect(visibleLanes('')).toEqual(['conformant', 'ehr']);
-    expect(visibleLanes('http://127.0.0.1:9095')).toEqual(['conformant', 'ehr', 'provider-data']);
+  it('visibleLanes: the Plain EHR lane exists iff the Kit reports its second gateway child; order is the render order', () => {
+    expect(visibleLanes(undefined)).toEqual(['conformant']);
+    expect(visibleLanes('')).toEqual(['conformant']);
+    expect(visibleLanes('http://127.0.0.1:9095')).toEqual(['conformant', 'ehr']);
   });
 
-  it('the provider-data lane copy names the reference payer and the chart, never internal vocabulary', () => {
-    const pd = LANE_LABELS['provider-data'];
-    expect(pd.short).toBe('Reference payer');
-    expect(pd.blurb.overview).toMatch(/reference payer/i);
-    expect(pd.blurb.overview).toMatch(/chart/i);
-    for (const text of [pd.title, pd.short, pd.blurb.overview, pd.blurb.technical]) {
-      expect(text).not.toMatch(/substrate|Mode A|br-payer|gap-fill/);
+  it('every lane\'s copy names the hosted Da Vinci reference payer, never internal vocabulary', () => {
+    for (const lane of LANES) {
+      const l = LANE_LABELS[lane];
+      expect(l.blurb.overview).toMatch(/reference payer/i);
+      for (const text of [l.title, l.short, l.blurb.overview, l.blurb.technical]) {
+        expect(text).not.toMatch(BANNED_VOCAB);
+      }
     }
   });
 });

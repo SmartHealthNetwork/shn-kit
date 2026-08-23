@@ -1,22 +1,22 @@
 [
  {
-  "seq": 44,
-  "time": "2026-08-21T01:23:44.595107-04:00",
+  "seq": 17,
+  "time": "2026-08-23T00:59:51.792916-04:00",
   "type": "run.started",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03"
  },
  {
-  "seq": 45,
-  "time": "2026-08-21T01:23:44.595914-04:00",
+  "seq": 18,
+  "time": "2026-08-23T00:59:51.816091-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 19,
-   "time": "2026-08-21T01:23:44.5958-04:00",
+   "seq": 1,
+   "time": "2026-08-23T00:59:51.8157-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -24,136 +24,204 @@
   }
  },
  {
-  "seq": 46,
-  "time": "2026-08-21T01:23:44.596075-04:00",
+  "seq": 19,
+  "time": "2026-08-23T00:59:51.830257-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 20,
-   "time": "2026-08-21T01:23:44.595915-04:00",
+   "seq": 2,
+   "time": "2026-08-23T00:59:51.830179-04:00",
    "kind": "sor.read",
    "direction": "sor",
-   "op": "OpenCoverage",
+   "op": "OpenOrder",
    "payload": {
-    "beneficiary": {
-     "reference": "Patient/MBR-COVERED"
-    },
-    "contained": [
-     {
-      "id": "cms-payer",
-      "identifier": [
-       {
-        "system": "urn:oid:2.16.840.1.113883.6.300",
-        "value": "00001"
-       }
-      ],
-      "name": "Centers for Medicare and Medicaid Services",
-      "resourceType": "Organization"
-     }
-    ],
-    "id": "c1",
-    "identifier": [
-     {
-      "type": {
-       "coding": [
-        {
-         "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-         "code": "MB"
-        }
-       ]
-      },
-      "system": "urn:shn:coverage",
-      "value": "MBR-COVERED"
-     }
-    ],
-    "meta": {
-     "profile": [
-      "http://hl7.org/fhir/us/core/StructureDefinition/us-core-coverage"
-     ]
-    },
-    "payor": [
-     {
-      "reference": "#cms-payer"
-     }
-    ],
-    "relationship": {
+    "codeCodeableConcept": {
      "coding": [
       {
-       "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
-       "code": "self"
+       "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets",
+       "code": "E1390",
+       "display": "Oxygen concentrator, single delivery port"
       }
      ]
     },
-    "resourceType": "Coverage",
-    "status": "active"
-   },
-   "detail": "found"
-  }
- },
- {
-  "seq": 47,
-  "time": "2026-08-21T01:23:44.596089-04:00",
-  "type": "observer",
-  "runId": "run-1787289824595-4",
-  "lane": "ehr",
-  "uc": "uc03",
-  "observer": {
-   "seq": 21,
-   "time": "2026-08-21T01:23:44.595973-04:00",
-   "kind": "validate.result",
-   "direction": "validate",
-   "payload": {
-    "meta": {
-     "profile": [
-      "http://hl7.org/fhir/us/core/StructureDefinition/us-core-servicerequest"
-     ]
-    },
-    "status": "draft",
+    "id": "dr-mbrpduc03-e1390",
     "intent": "order",
-    "code": {
-     "coding": [
-      {
-       "system": "http://www.ama-assn.org/go/cpt",
-       "code": "72148",
-       "display": "MRI lumbar spine w/o contrast"
-      }
-     ]
+    "meta": {
+     "versionId": "1",
+     "lastUpdated": "2026-08-22T01:25:34.550-04:00"
     },
-    "subject": {
-     "reference": "Patient/MBR-COVERED"
+    "performer": {
+     "reference": "Organization/org-dme-mbrpduc03"
     },
     "reasonCode": [
      {
       "coding": [
        {
         "system": "http://hl7.org/fhir/sid/icd-10-cm",
-        "code": "M51.16"
+        "code": "J44.9",
+        "display": "Chronic obstructive pulmonary disease, unspecified"
+       }
+      ],
+      "text": "Chronic obstructive pulmonary disease, unspecified"
+     }
+    ],
+    "resourceType": "DeviceRequest",
+    "status": "active",
+    "subject": {
+     "reference": "Patient/MBR-PD-UC03"
+    }
+   },
+   "detail": "found"
+  }
+ },
+ {
+  "seq": 20,
+  "time": "2026-08-23T00:59:51.832809-04:00",
+  "type": "observer",
+  "runId": "run-1787461191792-1",
+  "lane": "ehr",
+  "uc": "uc03",
+  "observer": {
+   "seq": 3,
+   "time": "2026-08-23T00:59:51.832738-04:00",
+   "kind": "sor.read",
+   "direction": "sor",
+   "op": "ResolveByReference",
+   "payload": {
+    "resourceType": "Organization",
+    "id": "org-dme-mbrpduc03",
+    "meta": {
+     "versionId": "1",
+     "lastUpdated": "2026-08-22T01:25:34.550-04:00"
+    },
+    "identifier": [
+     {
+      "system": "http://hl7.org/fhir/sid/us-npi",
+      "value": "1733445566"
+     }
+    ],
+    "name": "Riverside Respiratory Supply (Non-Contracted)"
+   },
+   "detail": "found"
+  }
+ },
+ {
+  "seq": 21,
+  "time": "2026-08-23T00:59:51.84071-04:00",
+  "type": "observer",
+  "runId": "run-1787461191792-1",
+  "lane": "ehr",
+  "uc": "uc03",
+  "observer": {
+   "seq": 4,
+   "time": "2026-08-23T00:59:51.840635-04:00",
+   "kind": "sor.read",
+   "direction": "sor",
+   "op": "OpenCoverage",
+   "payload": {
+    "resourceType": "Coverage",
+    "id": "cov-mbrpduc03",
+    "meta": {
+     "versionId": "1",
+     "lastUpdated": "2026-08-22T01:25:34.550-04:00",
+     "profile": [
+      "http://hl7.org/fhir/us/core/StructureDefinition/us-core-coverage"
+     ]
+    },
+    "identifier": [
+     {
+      "type": {
+       "coding": [
+        {
+         "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+         "code": "MB"
+        }
+       ]
+      },
+      "system": "urn:shn:coverage",
+      "value": "MBR-PD-UC03"
+     }
+    ],
+    "status": "active",
+    "beneficiary": {
+     "reference": "Patient/MBR-PD-UC03"
+    },
+    "relationship": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
+       "code": "self"
+      }
+     ]
+    },
+    "payor": [
+     {
+      "reference": "Organization/org-cms-payer"
+     }
+    ]
+   },
+   "detail": "found"
+  }
+ },
+ {
+  "seq": 22,
+  "time": "2026-08-23T00:59:51.842095-04:00",
+  "type": "observer",
+  "runId": "run-1787461191792-1",
+  "lane": "ehr",
+  "uc": "uc03",
+  "observer": {
+   "seq": 5,
+   "time": "2026-08-23T00:59:51.842034-04:00",
+   "kind": "sor.read",
+   "direction": "sor",
+   "op": "ResolveByReference",
+   "payload": {
+    "resourceType": "Organization",
+    "id": "org-cms-payer",
+    "meta": {
+     "versionId": "1",
+     "lastUpdated": "2026-08-22T01:25:34.492-04:00"
+    },
+    "identifier": [
+     {
+      "use": "official",
+      "system": "urn:oid:2.16.840.1.113883.6.300",
+      "value": "00001"
+     }
+    ],
+    "type": [
+     {
+      "coding": [
+       {
+        "system": "http://hl7.org/fhir/organization-role",
+        "code": "payer"
        }
       ]
      }
     ],
-    "resourceType": "ServiceRequest"
+    "name": "Centers for Medicare \u0026 Medicaid Services"
    },
-   "detail": "valid"
+   "detail": "found"
   }
  },
  {
-  "seq": 48,
-  "time": "2026-08-21T01:23:44.596203-04:00",
+  "seq": 23,
+  "time": "2026-08-23T00:59:53.690288-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 22,
-   "time": "2026-08-21T01:23:44.596006-04:00",
+   "seq": 6,
+   "time": "2026-08-23T00:59:53.690195-04:00",
    "kind": "validate.result",
    "direction": "validate",
    "payload": {
     "beneficiary": {
-     "reference": "Patient/MBR-COVERED"
+     "reference": "Patient/MBR-PD-UC03"
     },
     "contained": [
      {
@@ -180,7 +248,7 @@
        ]
       },
       "system": "urn:shn:coverage",
-      "value": "MBR-COVERED"
+      "value": "MBR-PD-UC03"
      }
     ],
     "meta": {
@@ -208,132 +276,169 @@
   }
  },
  {
-  "seq": 49,
-  "time": "2026-08-21T01:23:44.596215-04:00",
+  "seq": 24,
+  "time": "2026-08-23T00:59:53.690375-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 23,
-   "time": "2026-08-21T01:23:44.596072-04:00",
+   "seq": 7,
+   "time": "2026-08-23T00:59:53.69029-04:00",
    "kind": "leg.originated",
-   "legType": "crd-order-select",
+   "legType": "crd-order-dispatch",
    "direction": "originate",
-   "correlationId": "24ec2549e62cbe4298c301fc6d8b5d1a",
-   "counterpart": "payer",
+   "correlationId": "64a3be2b5015446522281ef71ac80557",
+   "counterpart": "conformance-payer",
    "authorityFrame": "provider-tpo",
-   "op": "crd-order-select",
+   "op": "crd-order-dispatch",
    "payload": {
-    "hook": "order-select",
-    "hookInstance": "convergence-crd-hi-1",
-    "fhirServer": "https://provider.example/fhir",
+    "hook": "order-dispatch",
+    "hookInstance": "convergence-order-dispatch-hi-1",
     "context": {
-     "userId": "Practitioner/p1",
-     "patientId": "MBR-COVERED",
-     "draftOrders": {
+     "patientId": "MBR-PD-UC03",
+     "dispatchedOrders": [
+      "DeviceRequest/dr-mbrpduc03-e1390"
+     ],
+     "performer": "Organization/org-dme-mbrpduc03"
+    },
+    "prefetch": {
+     "patient": {
+      "id": "MBR-PD-UC03",
+      "resourceType": "Patient"
+     },
+     "coverage": {
       "resourceType": "Bundle",
       "type": "collection",
       "entry": [
        {
-        "fullUrl": "urn:uuid:sr1",
+        "fullUrl": "Coverage/c1",
         "resource": {
-         "code": {
+         "beneficiary": {
+          "reference": "Patient/MBR-PD-UC03"
+         },
+         "id": "c1",
+         "identifier": [
+          {
+           "type": {
+            "coding": [
+             {
+              "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+              "code": "MB"
+             }
+            ]
+           },
+           "system": "urn:shn:coverage",
+           "value": "MBR-PD-UC03"
+          }
+         ],
+         "meta": {
+          "profile": [
+           "http://hl7.org/fhir/us/core/StructureDefinition/us-core-coverage"
+          ]
+         },
+         "payor": [
+          {
+           "reference": "Organization/cms-payer"
+          }
+         ],
+         "relationship": {
           "coding": [
            {
-            "system": "http://www.ama-assn.org/go/cpt",
-            "code": "72148",
-            "display": "MRI lumbar spine w/o contrast"
+            "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
+            "code": "self"
            }
           ]
          },
-         "id": "sr1",
+         "resourceType": "Coverage",
+         "status": "active"
+        }
+       },
+       {
+        "fullUrl": "Organization/cms-payer",
+        "resource": {
+         "id": "cms-payer",
+         "identifier": [
+          {
+           "system": "urn:oid:2.16.840.1.113883.6.300",
+           "value": "00001"
+          }
+         ],
+         "name": "Centers for Medicare and Medicaid Services",
+         "resourceType": "Organization"
+        }
+       }
+      ]
+     },
+     "deviceHistory": {
+      "resourceType": "Bundle",
+      "type": "collection",
+      "entry": [
+       {
+        "fullUrl": "DeviceRequest/dr-mbrpduc03-e1390",
+        "resource": {
+         "codeCodeableConcept": {
+          "coding": [
+           {
+            "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets",
+            "code": "E1390",
+            "display": "Oxygen concentrator, single delivery port"
+           }
+          ]
+         },
+         "id": "dr-mbrpduc03-e1390",
          "intent": "order",
          "meta": {
-          "profile": [
-           "http://hl7.org/fhir/us/core/StructureDefinition/us-core-servicerequest"
-          ]
+          "versionId": "1",
+          "lastUpdated": "2026-08-22T01:25:34.550-04:00"
+         },
+         "performer": {
+          "reference": "Organization/org-dme-mbrpduc03"
          },
          "reasonCode": [
           {
            "coding": [
             {
              "system": "http://hl7.org/fhir/sid/icd-10-cm",
-             "code": "M51.16"
+             "code": "J44.9",
+             "display": "Chronic obstructive pulmonary disease, unspecified"
             }
-           ]
+           ],
+           "text": "Chronic obstructive pulmonary disease, unspecified"
           }
          ],
-         "resourceType": "ServiceRequest",
-         "status": "draft",
+         "resourceType": "DeviceRequest",
+         "status": "active",
          "subject": {
-          "reference": "Patient/MBR-COVERED"
+          "reference": "Patient/MBR-PD-UC03"
          }
         }
        }
       ]
      },
-     "selections": [
-      "ServiceRequest/sr1"
-     ]
-    },
-    "prefetch": {
-     "patient": {
-      "id": "MBR-COVERED",
-      "resourceType": "Patient"
-     },
-     "coverage": {
-      "beneficiary": {
-       "reference": "Patient/MBR-COVERED"
-      },
-      "contained": [
+     "serviceHistory": {
+      "resourceType": "Bundle",
+      "type": "collection",
+      "entry": [
        {
-        "id": "cms-payer",
-        "identifier": [
-         {
-          "system": "urn:oid:2.16.840.1.113883.6.300",
-          "value": "00001"
-         }
-        ],
-        "name": "Centers for Medicare and Medicaid Services",
-        "resourceType": "Organization"
-       }
-      ],
-      "id": "c1",
-      "identifier": [
-       {
-        "type": {
-         "coding": [
+        "fullUrl": "Organization/org-dme-mbrpduc03",
+        "resource": {
+         "resourceType": "Organization",
+         "id": "org-dme-mbrpduc03",
+         "meta": {
+          "versionId": "1",
+          "lastUpdated": "2026-08-22T01:25:34.550-04:00"
+         },
+         "identifier": [
           {
-           "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-           "code": "MB"
+           "system": "http://hl7.org/fhir/sid/us-npi",
+           "value": "1733445566"
           }
-         ]
-        },
-        "system": "urn:shn:coverage",
-        "value": "MBR-COVERED"
-       }
-      ],
-      "meta": {
-       "profile": [
-        "http://hl7.org/fhir/us/core/StructureDefinition/us-core-coverage"
-       ]
-      },
-      "payor": [
-       {
-        "reference": "#cms-payer"
-       }
-      ],
-      "relationship": {
-       "coding": [
-        {
-         "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
-         "code": "self"
+         ],
+         "name": "Riverside Respiratory Supply (Non-Contracted)"
         }
-       ]
-      },
-      "resourceType": "Coverage",
-      "status": "active"
+       }
+      ]
      }
     }
    },
@@ -344,22 +449,22 @@
   }
  },
  {
-  "seq": 50,
-  "time": "2026-08-21T01:23:44.60108-04:00",
+  "seq": 25,
+  "time": "2026-08-23T00:59:53.698391-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 24,
-   "time": "2026-08-21T01:23:44.600989-04:00",
+   "seq": 8,
+   "time": "2026-08-23T00:59:53.698325-04:00",
    "kind": "leg.response",
-   "legType": "crd-order-select",
+   "legType": "crd-order-dispatch",
    "direction": "originate",
-   "correlationId": "24ec2549e62cbe4298c301fc6d8b5d1a",
-   "counterpart": "payer",
+   "correlationId": "64a3be2b5015446522281ef71ac80557",
+   "counterpart": "conformance-payer",
    "authorityFrame": "payer-coverage",
-   "op": "crd-cards",
+   "op": "crd-dispatch-cards",
    "payload": {
     "cards": [
      {
@@ -369,7 +474,7 @@
        "covered": "covered",
        "paNeeded": "auth-needed",
        "questionnaires": [
-        "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri"
+        "http://example.org/fhir/Questionnaire/HomeOxygenDispatch"
        ]
       }
      }
@@ -378,24 +483,77 @@
   }
  },
  {
-  "seq": 51,
-  "time": "2026-08-21T01:23:44.60109-04:00",
+  "seq": 26,
+  "time": "2026-08-23T00:59:53.698407-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 25,
-   "time": "2026-08-21T01:23:44.601024-04:00",
+   "seq": 9,
+   "time": "2026-08-23T00:59:53.698359-04:00",
    "kind": "leg.originated",
    "legType": "dtr-questionnaire-fetch",
    "direction": "originate",
-   "correlationId": "aa3aeb1eb8648a8c3a70b8bddfc5ac62",
-   "counterpart": "payer",
+   "correlationId": "f9cedbbd7243d964c2bc2ce22937cbb1",
+   "counterpart": "conformance-payer",
    "authorityFrame": "provider-tpo",
    "op": "dtr-questionnaire-fetch",
    "payload": {
-    "canonical": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri"
+    "canonical": "http://example.org/fhir/Questionnaire/HomeOxygenDispatch",
+    "coverage": {
+     "beneficiary": {
+      "reference": "Patient/MBR-PD-UC03"
+     },
+     "contained": [
+      {
+       "id": "cms-payer",
+       "identifier": [
+        {
+         "system": "urn:oid:2.16.840.1.113883.6.300",
+         "value": "00001"
+        }
+       ],
+       "name": "Centers for Medicare and Medicaid Services",
+       "resourceType": "Organization"
+      }
+     ],
+     "id": "c1",
+     "identifier": [
+      {
+       "type": {
+        "coding": [
+         {
+          "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+          "code": "MB"
+         }
+        ]
+       },
+       "system": "urn:shn:coverage",
+       "value": "MBR-PD-UC03"
+      }
+     ],
+     "meta": {
+      "profile": [
+       "http://hl7.org/fhir/us/core/StructureDefinition/us-core-coverage"
+      ]
+     },
+     "payor": [
+      {
+       "reference": "#cms-payer"
+      }
+     ],
+     "relationship": {
+      "coding": [
+       {
+        "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
+        "code": "self"
+       }
+      ]
+     },
+     "resourceType": "Coverage",
+     "status": "active"
+    }
    },
    "route": {
     "token": "pa.dtr@2.0",
@@ -404,150 +562,450 @@
   }
  },
  {
-  "seq": 52,
-  "time": "2026-08-21T01:23:44.606047-04:00",
+  "seq": 27,
+  "time": "2026-08-23T00:59:53.701595-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 26,
-   "time": "2026-08-21T01:23:44.605918-04:00",
+   "seq": 10,
+   "time": "2026-08-23T00:59:53.701452-04:00",
    "kind": "leg.response",
    "legType": "dtr-questionnaire-fetch",
    "direction": "originate",
-   "correlationId": "aa3aeb1eb8648a8c3a70b8bddfc5ac62",
-   "counterpart": "payer",
+   "correlationId": "f9cedbbd7243d964c2bc2ce22937cbb1",
+   "counterpart": "conformance-payer",
    "authorityFrame": "payer-coverage",
    "op": "dtr-questionnaire",
    "payload": {
     "entry": [
      {
-      "fullUrl": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
+      "fullUrl": "http://example.org/fhir/Questionnaire/HomeOxygenDispatch",
       "resource": {
-       "id": "pa-lumbar-mri",
+       "resourceType": "Questionnaire",
+       "id": "HomeOxygenDispatch",
+       "meta": {
+        "versionId": "1",
+        "lastUpdated": "2026-08-23T00:31:57.810+00:00",
+        "profile": [
+         "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/dtr-std-questionnaire"
+        ]
+       },
        "extension": [
         {
+         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/questionnaireAudience",
+         "valueCode": "clinical"
+        },
+        {
+         "url": "http://hl7.org/fhir/StructureDefinition/rendering-styleSensitive",
+         "valueBoolean": false
+        },
+        {
+         "url": "http://hl7.org/fhir/5.0/StructureDefinition/extension-Questionnaire.versionAlgorithm[x]",
+         "valueCoding": {
+          "system": "http://hl7.org/fhir/version-algorithm",
+          "code": "semver"
+         }
+        },
+        {
          "url": "http://hl7.org/fhir/StructureDefinition/cqf-library",
-         "valueCanonical": "http://smarthealth.network/fhir/Library/LumbarMRICQL"
+         "valueCanonical": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
+        },
+        {
+         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/estimated-completion-time",
+         "extension": [
+          {
+           "url": "clinicalTime",
+           "valueCode": "over-5min"
+          },
+          {
+           "url": "totalTime",
+           "valueCode": "over-5min"
+          }
+         ]
         }
        ],
-       "url": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
-       "version": "1.0.0",
+       "url": "http://example.org/fhir/Questionnaire/HomeOxygenDispatch",
+       "name": "HomeOxygenDispatch",
+       "title": "Home Oxygen Dispatch Questionnaire",
        "status": "active",
+       "subjectType": [
+        "Patient"
+       ],
+       "date": "2026-02-10",
+       "publisher": "Da Vinci",
        "item": [
         {
-         "linkId": "clinical-history",
-         "text": "Clinical history",
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-subQuestionnaire",
+           "valueCanonical": "http://example.org/fhir/Questionnaire/PatientInfo"
+          }
+         ],
+         "linkId": "1",
+         "text": "Patient Information",
+         "type": "display"
+        },
+        {
+         "linkId": "2",
+         "text": "Coverage Requirements",
          "type": "group",
          "item": [
           {
            "extension": [
             {
-             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-calculatedExpression",
              "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"RelevantDiagnoses\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
+               }
+              ],
               "language": "text/cql",
-              "expression": "ConservativeTherapyWeeks"
+              "expression": "RelevantDiagnoses",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
              }
             }
            ],
-           "linkId": "conservative-therapy-weeks",
-           "text": "Weeks of conservative therapy completed",
-           "type": "integer"
+           "linkId": "2.1",
+           "text": "Relevant Diagnoses",
+           "type": "open-choice",
+           "required": false,
+           "repeats": true
           },
           {
            "extension": [
             {
              "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
              "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"ArterialOxygenSaturation\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
+               }
+              ],
               "language": "text/cql",
-              "expression": "NeuroDeficit"
+              "expression": "ArterialOxygenSaturation",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
              }
             }
            ],
-           "linkId": "neuro-deficit",
-           "text": "Progressive neurological deficit present?",
-           "type": "boolean"
+           "linkId": "2.2",
+           "text": "Arterial Oxygen Saturation (%)",
+           "type": "quantity",
+           "required": false
           },
           {
-           "linkId": "prior-treatment",
-           "text": "Prior treatment",
-           "type": "group",
-           "item": [
+           "extension": [
             {
-             "extension": [
-              {
-               "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-               "valueExpression": {
-                "language": "text/cql",
-                "expression": "PriorImaging"
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"ArterialPartialPressureOfOxygen\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
                }
-              }
-             ],
-             "linkId": "prior-imaging",
-             "text": "Prior imaging performed?",
-             "type": "boolean"
+              ],
+              "language": "text/cql",
+              "expression": "ArterialPartialPressureOfOxygen",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
+             }
+            }
+           ],
+           "linkId": "2.3",
+           "text": "Arterial Partial Pressure of Oxygen (mmHg)",
+           "type": "quantity",
+           "required": false
+          },
+          {
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"PatientMobile\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
+               }
+              ],
+              "language": "text/cql",
+              "expression": "PatientMobile",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
+             }
+            }
+           ],
+           "linkId": "2.4",
+           "text": "Patient is Mobile",
+           "type": "boolean",
+           "required": false
+          },
+          {
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"HematocritThatIsGreaterThanThreshold\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
+               }
+              ],
+              "language": "text/cql",
+              "expression": "HematocritThatIsGreaterThanThreshold",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
+             }
+            }
+           ],
+           "linkId": "2.5",
+           "text": "Hematocrit Value (%)",
+           "type": "quantity",
+           "required": false
+          }
+         ]
+        },
+        {
+         "linkId": "3",
+         "text": "Prescribed Use",
+         "type": "group",
+         "item": [
+          {
+           "linkId": "3.1",
+           "text": "Start Date",
+           "type": "date",
+           "required": false
+          },
+          {
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"LengthOfNeed\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
+               }
+              ],
+              "language": "text/cql",
+              "expression": "LengthOfNeed",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
+             }
+            }
+           ],
+           "linkId": "3.2",
+           "text": "Length of Need (months)",
+           "type": "integer",
+           "required": false
+          },
+          {
+           "linkId": "3.3",
+           "text": "Prescribed Flow Rate (liters/min)",
+           "type": "decimal",
+           "required": false
+          },
+          {
+           "linkId": "3.4",
+           "text": "Frequency of Use",
+           "type": "choice",
+           "required": false,
+           "answerOption": [
+            {
+             "valueCoding": {
+              "display": "At rest"
+             }
             },
             {
-             "extension": [
-              {
-               "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-               "valueExpression": {
-                "language": "text/cql",
-                "expression": "PriorSurgery"
-               }
-              }
-             ],
-             "linkId": "prior-surgery",
-             "text": "Prior lumbar surgery?",
-             "type": "boolean"
+             "valueCoding": {
+              "display": "During exertion"
+             }
+            },
+            {
+             "valueCoding": {
+              "display": "During sleep"
+             }
+            },
+            {
+             "valueCoding": {
+              "display": "Continuous (24 hours)"
+             }
             }
            ]
           }
          ]
         },
         {
-         "linkId": "functional-status",
-         "text": "Functional status",
+         "linkId": "4",
+         "text": "Oxygen Supply Order Details",
          "type": "group",
          "item": [
           {
            "extension": [
             {
-             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-calculatedExpression",
              "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"DeviceRequestDescription\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
+               }
+              ],
               "language": "text/cql",
-              "expression": "HighDisability"
+              "expression": "DeviceRequestDescription",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
              }
             }
            ],
-           "linkId": "high-disability",
-           "text": "High disability index flag?",
-           "type": "boolean"
+           "linkId": "4.1",
+           "text": "Device Description",
+           "type": "string",
+           "required": false,
+           "readOnly": true
+          },
+          {
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-calculatedExpression",
+             "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"DeviceRequestedIsPortable\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
+               }
+              ],
+              "language": "text/cql",
+              "expression": "DeviceRequestedIsPortable",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
+             }
+            }
+           ],
+           "linkId": "4.2",
+           "text": "Portable Device",
+           "type": "boolean",
+           "required": false,
+           "readOnly": true
           },
           {
            "extension": [
             {
              "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
              "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"DeviceType\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
+               }
+              ],
               "language": "text/cql",
-              "expression": "PatientReportedRequired"
+              "expression": "DeviceType",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
              }
             }
            ],
-           "linkId": "patient-reported-required",
-           "text": "Patient-reported functional status required?",
-           "type": "boolean"
+           "linkId": "4.3",
+           "text": "Device Type",
+           "type": "choice",
+           "required": false,
+           "answerOption": [
+            {
+             "valueCoding": {
+              "display": "Liquid Oxygen"
+             }
+            },
+            {
+             "valueCoding": {
+              "display": "Compressed Gas"
+             }
+            },
+            {
+             "valueCoding": {
+              "display": "Concentrator"
+             }
+            }
+           ]
           },
           {
-           "linkId": "functional-status-oswestry",
-           "text": "Oswestry disability index (clinician-attested)",
-           "type": "text"
+           "linkId": "4.4",
+           "text": "Delivery Means (e.g., nasal cannula, mask)",
+           "type": "string",
+           "required": false
+          }
+         ]
+        },
+        {
+         "linkId": "5",
+         "text": "Face-to-Face Evaluation",
+         "type": "group",
+         "item": [
+          {
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-calculatedExpression",
+             "valueExpression": {
+              "extension": [
+               {
+                "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/alternativeExpression",
+                "valueExpression": {
+                 "language": "application/elm+json",
+                 "expression": "{\"type\":\"ExpressionRef\",\"name\":\"EncounterList\",\"libraryName\":\"HomeOxygenDispatchPrepopulation\"}"
+                }
+               }
+              ],
+              "language": "text/cql",
+              "expression": "EncounterList",
+              "reference": "http://example.org/fhir/Library/HomeOxygenDispatchPrepopulation"
+             }
+            }
+           ],
+           "linkId": "5.1",
+           "text": "Face-to-face Evaluation within 6 months",
+           "type": "open-choice",
+           "required": false,
+           "repeats": true
+          }
+         ]
+        },
+        {
+         "linkId": "6",
+         "text": "Medical Necessity",
+         "type": "group",
+         "item": [
+          {
+           "linkId": "6.1",
+           "text": "Medical Necessity Statement",
+           "type": "text",
+           "required": true
           }
          ]
         }
-       ],
-       "resourceType": "Questionnaire"
+       ]
       }
      }
     ],
@@ -557,164 +1015,15 @@
   }
  },
  {
-  "seq": 53,
-  "time": "2026-08-21T01:23:44.606075-04:00",
+  "seq": 28,
+  "time": "2026-08-23T00:59:53.70821-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 27,
-   "time": "2026-08-21T01:23:44.605947-04:00",
-   "kind": "validate.result",
-   "direction": "validate",
-   "payload": {
-    "entry": [
-     {
-      "fullUrl": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
-      "resource": {
-       "id": "pa-lumbar-mri",
-       "extension": [
-        {
-         "url": "http://hl7.org/fhir/StructureDefinition/cqf-library",
-         "valueCanonical": "http://smarthealth.network/fhir/Library/LumbarMRICQL"
-        }
-       ],
-       "url": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
-       "version": "1.0.0",
-       "status": "active",
-       "item": [
-        {
-         "linkId": "clinical-history",
-         "text": "Clinical history",
-         "type": "group",
-         "item": [
-          {
-           "extension": [
-            {
-             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-             "valueExpression": {
-              "language": "text/cql",
-              "expression": "ConservativeTherapyWeeks"
-             }
-            }
-           ],
-           "linkId": "conservative-therapy-weeks",
-           "text": "Weeks of conservative therapy completed",
-           "type": "integer"
-          },
-          {
-           "extension": [
-            {
-             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-             "valueExpression": {
-              "language": "text/cql",
-              "expression": "NeuroDeficit"
-             }
-            }
-           ],
-           "linkId": "neuro-deficit",
-           "text": "Progressive neurological deficit present?",
-           "type": "boolean"
-          },
-          {
-           "linkId": "prior-treatment",
-           "text": "Prior treatment",
-           "type": "group",
-           "item": [
-            {
-             "extension": [
-              {
-               "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-               "valueExpression": {
-                "language": "text/cql",
-                "expression": "PriorImaging"
-               }
-              }
-             ],
-             "linkId": "prior-imaging",
-             "text": "Prior imaging performed?",
-             "type": "boolean"
-            },
-            {
-             "extension": [
-              {
-               "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-               "valueExpression": {
-                "language": "text/cql",
-                "expression": "PriorSurgery"
-               }
-              }
-             ],
-             "linkId": "prior-surgery",
-             "text": "Prior lumbar surgery?",
-             "type": "boolean"
-            }
-           ]
-          }
-         ]
-        },
-        {
-         "linkId": "functional-status",
-         "text": "Functional status",
-         "type": "group",
-         "item": [
-          {
-           "extension": [
-            {
-             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-             "valueExpression": {
-              "language": "text/cql",
-              "expression": "HighDisability"
-             }
-            }
-           ],
-           "linkId": "high-disability",
-           "text": "High disability index flag?",
-           "type": "boolean"
-          },
-          {
-           "extension": [
-            {
-             "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression",
-             "valueExpression": {
-              "language": "text/cql",
-              "expression": "PatientReportedRequired"
-             }
-            }
-           ],
-           "linkId": "patient-reported-required",
-           "text": "Patient-reported functional status required?",
-           "type": "boolean"
-          },
-          {
-           "linkId": "functional-status-oswestry",
-           "text": "Oswestry disability index (clinician-attested)",
-           "type": "text"
-          }
-         ]
-        }
-       ],
-       "resourceType": "Questionnaire"
-      }
-     }
-    ],
-    "resourceType": "Bundle",
-    "type": "collection"
-   },
-   "detail": "valid"
-  }
- },
- {
-  "seq": 54,
-  "time": "2026-08-21T01:23:44.606175-04:00",
-  "type": "observer",
-  "runId": "run-1787289824595-4",
-  "lane": "ehr",
-  "uc": "uc03",
-  "observer": {
-   "seq": 28,
-   "time": "2026-08-21T01:23:44.60611-04:00",
+   "seq": 11,
+   "time": "2026-08-23T00:59:53.708133-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "PatientFHIRRef",
@@ -722,150 +1031,196 @@
   }
  },
  {
-  "seq": 55,
-  "time": "2026-08-21T01:23:44.606281-04:00",
+  "seq": 29,
+  "time": "2026-08-23T00:59:54.712503-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 29,
-   "time": "2026-08-21T01:23:44.606171-04:00",
-   "kind": "sor.read",
-   "direction": "sor",
-   "op": "ClinicalContext",
-   "detail": "found"
-  }
- },
- {
-  "seq": 56,
-  "time": "2026-08-21T01:23:44.606484-04:00",
-  "type": "observer",
-  "runId": "run-1787289824595-4",
-  "lane": "ehr",
-  "uc": "uc03",
-  "observer": {
-   "seq": 30,
-   "time": "2026-08-21T01:23:44.60638-04:00",
+   "seq": 12,
+   "time": "2026-08-23T00:59:54.712382-04:00",
    "kind": "validate.result",
    "direction": "validate",
    "payload": {
+    "authored": "2026-08-23T00:59:53-04:00",
+    "contained": [
+     {
+      "resourceType": "OperationOutcome",
+      "id": "populate-outcome-HomeOxygenDispatch-MBR-PD-UC03",
+      "issue": [
+       {
+        "severity": "error",
+        "code": "exception",
+        "diagnostics": "Encountered error evaluating initial expression for item 2.5: Error encountered evaluating expression (HematocritThatIsGreaterThanThreshold) for item (2.5): Unable to locate ValueSet http://cts.nlm.nih.gov/fhir/ValueSet/2.16.840.1.113762.1.4.1219.132"
+       }
+      ]
+     }
+    ],
     "extension": [
      {
-      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+      "url": "http://hl7.org/fhir/StructureDefinition/cqf-messages",
       "valueReference": {
-       "reference": "Coverage/MBR-COVERED"
-      }
-     },
-     {
-      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
-      "valueReference": {
-       "reference": "ServiceRequest/sr-MBR-COVERED"
-      }
-     },
-     {
-      "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
-      "valueCodeableConcept": {
-       "coding": [
-        {
-         "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/temp",
-         "code": "withpa",
-         "display": "Information needed for a prior authorization"
-        }
-       ]
+       "reference": "#populate-outcome-HomeOxygenDispatch-MBR-PD-UC03"
       }
      }
     ],
-    "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
-    "status": "completed",
-    "subject": {
-     "reference": "Patient/MBR-COVERED"
-    },
-    "authored": "2026-08-21T05:23:44Z",
+    "id": "HomeOxygenDispatch-MBR-PD-UC03",
     "item": [
      {
-      "linkId": "clinical-history",
+      "linkId": "1",
+      "text": "Patient Information"
+     },
+     {
+      "linkId": "2",
+      "text": "Coverage Requirements",
       "item": [
        {
-        "linkId": "conservative-therapy-weeks",
+        "linkId": "2.1",
+        "text": "Relevant Diagnoses"
+       },
+       {
+        "extension": [
+         {
+          "url": "http://hl7.org/fhir/StructureDefinition/questionnaireresponse-author",
+          "valueReference": {
+           "reference": "http://cqframework.org/fhir/Device/clinical-quality-language"
+          }
+         }
+        ],
+        "linkId": "2.2",
+        "text": "Arterial Oxygen Saturation (%)",
         "answer": [
          {
-          "extension": [
-           {
-            "extension": [
-             {
-              "url": "source",
-              "valueCode": "auto"
-             }
-            ],
-            "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-           }
-          ],
-          "valueInteger": 6
+          "valueDecimal": 87
          }
         ]
        },
        {
-        "linkId": "neuro-deficit",
+        "extension": [
+         {
+          "url": "http://hl7.org/fhir/StructureDefinition/questionnaireresponse-author",
+          "valueReference": {
+           "reference": "http://cqframework.org/fhir/Device/clinical-quality-language"
+          }
+         }
+        ],
+        "linkId": "2.3",
+        "text": "Arterial Partial Pressure of Oxygen (mmHg)",
         "answer": [
          {
-          "extension": [
-           {
-            "extension": [
-             {
-              "url": "source",
-              "valueCode": "auto"
-             }
-            ],
-            "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-           }
-          ],
+          "valueDecimal": 53
+         }
+        ]
+       },
+       {
+        "extension": [
+         {
+          "url": "http://hl7.org/fhir/StructureDefinition/questionnaireresponse-author",
+          "valueReference": {
+           "reference": "http://cqframework.org/fhir/Device/clinical-quality-language"
+          }
+         }
+        ],
+        "linkId": "2.4",
+        "text": "Patient is Mobile",
+        "answer": [
+         {
           "valueBoolean": false
          }
         ]
        },
        {
-        "linkId": "prior-treatment",
-        "item": [
-         {
-          "linkId": "prior-imaging",
-          "answer": [
-           {
-            "extension": [
-             {
-              "extension": [
-               {
-                "url": "source",
-                "valueCode": "auto"
-               }
-              ],
-              "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-             }
-            ],
-            "valueBoolean": true
-           }
-          ]
-         }
-        ]
+        "linkId": "2.5",
+        "text": "Hematocrit Value (%)"
+       }
+      ]
+     },
+     {
+      "linkId": "3",
+      "text": "Prescribed Use",
+      "item": [
+       {
+        "linkId": "3.1",
+        "text": "Start Date"
+       },
+       {
+        "linkId": "3.2",
+        "text": "Length of Need (months)"
+       },
+       {
+        "linkId": "3.3",
+        "text": "Prescribed Flow Rate (liters/min)"
+       },
+       {
+        "linkId": "3.4",
+        "text": "Frequency of Use"
+       }
+      ]
+     },
+     {
+      "linkId": "4",
+      "text": "Oxygen Supply Order Details",
+      "item": [
+       {
+        "linkId": "4.1",
+        "text": "Device Description"
+       },
+       {
+        "linkId": "4.2",
+        "text": "Portable Device"
+       },
+       {
+        "linkId": "4.3",
+        "text": "Device Type"
+       },
+       {
+        "linkId": "4.4",
+        "text": "Delivery Means (e.g., nasal cannula, mask)"
+       }
+      ]
+     },
+     {
+      "linkId": "5",
+      "text": "Face-to-Face Evaluation",
+      "item": [
+       {
+        "linkId": "5.1",
+        "text": "Face-to-face Evaluation within 6 months"
+       }
+      ]
+     },
+     {
+      "linkId": "6",
+      "text": "Medical Necessity",
+      "item": [
+       {
+        "linkId": "6.1",
+        "text": "Medical Necessity Statement"
        }
       ]
      }
     ],
-    "resourceType": "QuestionnaireResponse"
+    "questionnaire": "http://example.org/fhir/Questionnaire/HomeOxygenDispatch",
+    "resourceType": "QuestionnaireResponse",
+    "status": "in-progress",
+    "subject": {
+     "reference": "Patient/MBR-PD-UC03"
+    }
    },
    "detail": "valid"
   }
  },
  {
-  "seq": 57,
-  "time": "2026-08-21T01:23:44.607165-04:00",
+  "seq": 30,
+  "time": "2026-08-23T00:59:54.806762-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 31,
-   "time": "2026-08-21T01:23:44.607026-04:00",
+   "seq": 13,
+   "time": "2026-08-23T00:59:54.806495-04:00",
    "kind": "validate.result",
    "direction": "validate",
    "payload": {
@@ -873,37 +1228,37 @@
      {
       "fullUrl": "https://shn.example/fhir/Claim/convergence-claim",
       "resource": {
-       "created": "2026-08-21T05:23:44Z",
+       "created": "2026-08-23T04:59:54Z",
        "id": "convergence-claim",
        "identifier": [
         {
          "system": "urn:shn:correlation",
-         "value": "75ec9a2ea4be66b3e3ae89c7c2a0ed68"
+         "value": "686e826c1dc57c82dd2be7c7fd418cd5"
         }
        ],
        "insurance": [
         {
-         "sequence": 1,
-         "focal": true,
          "coverage": {
           "identifier": {
            "system": "urn:shn:coverage",
-           "value": "MBR-COVERED"
+           "value": "MBR-PD-UC03"
           }
-         }
+         },
+         "focal": true,
+         "sequence": 1
         }
        ],
        "insurer": {
-        "reference": "Organization/payer"
+        "reference": "https://shn.example/fhir/Organization/cms-payer"
        },
        "item": [
         {
          "category": {
           "coding": [
            {
-            "system": "https://codesystem.x12.org/005010/1365",
             "code": "1",
-            "display": "Medical Care"
+            "display": "Medical Care",
+            "system": "https://codesystem.x12.org/005010/1365"
            }
           ]
          },
@@ -911,16 +1266,16 @@
           {
            "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-requestedService",
            "valueReference": {
-            "reference": "ServiceRequest/convergence-sr"
+            "reference": "https://shn.example/fhir/DeviceRequest/convergence-dr"
            }
           }
          ],
          "productOrService": {
           "coding": [
            {
-            "system": "http://www.ama-assn.org/go/cpt",
-            "code": "72148",
-            "display": "MRI lumbar spine w/o contrast"
+            "code": "E1390",
+            "display": "Oxygen concentrator, single delivery port",
+            "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
            }
           ]
          },
@@ -928,7 +1283,7 @@
         }
        ],
        "patient": {
-        "reference": "Patient/MBR-COVERED"
+        "reference": "https://shn.example/fhir/Patient/MBR-PD-UC03"
        },
        "priority": {
         "coding": [
@@ -945,8 +1300,8 @@
        "type": {
         "coding": [
          {
-          "system": "http://terminology.hl7.org/CodeSystem/claim-type",
-          "code": "professional"
+          "code": "professional",
+          "system": "http://terminology.hl7.org/CodeSystem/claim-type"
          }
         ]
        },
@@ -954,9 +1309,9 @@
       }
      },
      {
-      "fullUrl": "https://shn.example/fhir/Patient/MBR-COVERED",
+      "fullUrl": "https://shn.example/fhir/Patient/MBR-PD-UC03",
       "resource": {
-       "id": "MBR-COVERED",
+       "id": "MBR-PD-UC03",
        "resourceType": "Patient"
       }
      },
@@ -964,46 +1319,33 @@
       "fullUrl": "https://shn.example/fhir/Coverage/convergence-coverage",
       "resource": {
        "beneficiary": {
-        "reference": "Patient/MBR-COVERED"
+        "reference": "Patient/MBR-PD-UC03"
        },
-       "contained": [
-        {
-         "id": "cms-payer",
-         "identifier": [
-          {
-           "system": "urn:oid:2.16.840.1.113883.6.300",
-           "value": "00001"
-          }
-         ],
-         "name": "Centers for Medicare and Medicaid Services",
-         "resourceType": "Organization"
-        }
-       ],
        "id": "convergence-coverage",
        "identifier": [
         {
+         "system": "urn:shn:coverage",
          "type": {
           "coding": [
            {
-            "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-            "code": "MB"
+            "code": "MB",
+            "system": "http://terminology.hl7.org/CodeSystem/v2-0203"
            }
           ]
          },
-         "system": "urn:shn:coverage",
-         "value": "MBR-COVERED"
+         "value": "MBR-PD-UC03"
         }
        ],
        "payor": [
         {
-         "reference": "#cms-payer"
+         "reference": "https://shn.example/fhir/Organization/cms-payer"
         }
        ],
        "relationship": {
         "coding": [
          {
-          "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
-          "code": "self"
+          "code": "self",
+          "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship"
          }
         ]
        },
@@ -1012,171 +1354,255 @@
       }
      },
      {
-      "fullUrl": "https://shn.example/fhir/ServiceRequest/convergence-sr",
+      "fullUrl": "https://shn.example/fhir/DeviceRequest/convergence-dr",
       "resource": {
-       "code": {
+       "codeCodeableConcept": {
         "coding": [
          {
-          "system": "http://www.ama-assn.org/go/cpt",
-          "code": "72148",
-          "display": "MRI lumbar spine w/o contrast"
+          "code": "E1390",
+          "display": "Oxygen concentrator, single delivery port",
+          "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
          }
         ]
        },
-       "id": "convergence-sr",
+       "id": "convergence-dr",
        "intent": "order",
+       "meta": {
+        "lastUpdated": "2026-08-22T01:25:34.550-04:00",
+        "versionId": "1"
+       },
+       "performer": {
+        "reference": "Organization/org-dme-mbrpduc03"
+       },
        "reasonCode": [
         {
          "coding": [
           {
-           "system": "http://hl7.org/fhir/sid/icd-10-cm",
-           "code": "M51.16"
+           "code": "J44.9",
+           "display": "Chronic obstructive pulmonary disease, unspecified",
+           "system": "http://hl7.org/fhir/sid/icd-10-cm"
           }
-         ]
+         ],
+         "text": "Chronic obstructive pulmonary disease, unspecified"
         }
        ],
-       "resourceType": "ServiceRequest",
-       "status": "draft",
+       "resourceType": "DeviceRequest",
+       "status": "active",
        "subject": {
-        "reference": "Patient/MBR-COVERED"
+        "reference": "Patient/MBR-PD-UC03"
        }
+      }
+     },
+     {
+      "fullUrl": "https://shn.example/fhir/Organization/cms-payer",
+      "resource": {
+       "id": "cms-payer",
+       "identifier": [
+        {
+         "system": "urn:oid:2.16.840.1.113883.6.300",
+         "value": "00001"
+        }
+       ],
+       "name": "Centers for Medicare and Medicaid Services",
+       "resourceType": "Organization"
       }
      },
      {
       "fullUrl": "https://shn.example/fhir/QuestionnaireResponse/convergence-qr",
       "resource": {
-       "authored": "2026-08-21T05:23:44Z",
+       "authored": "2026-08-23T00:59:53-04:00",
+       "contained": [
+        {
+         "id": "populate-outcome-HomeOxygenDispatch-MBR-PD-UC03",
+         "issue": [
+          {
+           "code": "exception",
+           "diagnostics": "Encountered error evaluating initial expression for item 2.5: Error encountered evaluating expression (HematocritThatIsGreaterThanThreshold) for item (2.5): Unable to locate ValueSet http://cts.nlm.nih.gov/fhir/ValueSet/2.16.840.1.113762.1.4.1219.132",
+           "severity": "error"
+          }
+         ],
+         "resourceType": "OperationOutcome"
+        }
+       ],
        "extension": [
         {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+         "url": "http://hl7.org/fhir/StructureDefinition/cqf-messages",
          "valueReference": {
-          "reference": "Coverage/convergence-coverage"
-         }
-        },
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
-         "valueReference": {
-          "reference": "ServiceRequest/convergence-sr"
-         }
-        },
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
-         "valueCodeableConcept": {
-          "coding": [
-           {
-            "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/temp",
-            "code": "withpa",
-            "display": "Information needed for a prior authorization"
-           }
-          ]
+          "reference": "#populate-outcome-HomeOxygenDispatch-MBR-PD-UC03"
          }
         }
        ],
        "id": "convergence-qr",
        "item": [
         {
-         "linkId": "clinical-history",
+         "linkId": "1",
+         "text": "Patient Information"
+        },
+        {
          "item": [
           {
-           "linkId": "conservative-therapy-weeks",
-           "answer": [
-            {
-             "extension": [
-              {
-               "extension": [
-                {
-                 "url": "source",
-                 "valueCode": "auto"
-                }
-               ],
-               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-              }
-             ],
-             "valueInteger": 6
-            }
-           ]
+           "linkId": "2.1",
+           "text": "Relevant Diagnoses"
           },
           {
-           "linkId": "neuro-deficit",
            "answer": [
             {
-             "extension": [
-              {
-               "extension": [
-                {
-                 "url": "source",
-                 "valueCode": "auto"
-                }
-               ],
-               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-              }
-             ],
+             "valueDecimal": 87
+            }
+           ],
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/StructureDefinition/questionnaireresponse-author",
+             "valueReference": {
+              "reference": "http://cqframework.org/fhir/Device/clinical-quality-language"
+             }
+            }
+           ],
+           "linkId": "2.2",
+           "text": "Arterial Oxygen Saturation (%)"
+          },
+          {
+           "answer": [
+            {
+             "valueDecimal": 53
+            }
+           ],
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/StructureDefinition/questionnaireresponse-author",
+             "valueReference": {
+              "reference": "http://cqframework.org/fhir/Device/clinical-quality-language"
+             }
+            }
+           ],
+           "linkId": "2.3",
+           "text": "Arterial Partial Pressure of Oxygen (mmHg)"
+          },
+          {
+           "answer": [
+            {
              "valueBoolean": false
             }
-           ]
+           ],
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/StructureDefinition/questionnaireresponse-author",
+             "valueReference": {
+              "reference": "http://cqframework.org/fhir/Device/clinical-quality-language"
+             }
+            }
+           ],
+           "linkId": "2.4",
+           "text": "Patient is Mobile"
           },
           {
-           "linkId": "prior-treatment",
-           "item": [
-            {
-             "linkId": "prior-imaging",
-             "answer": [
-              {
-               "extension": [
-                {
-                 "extension": [
-                  {
-                   "url": "source",
-                   "valueCode": "auto"
-                  }
-                 ],
-                 "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-                }
-               ],
-               "valueBoolean": true
-              }
-             ]
-            }
-           ]
+           "linkId": "2.5",
+           "text": "Hematocrit Value (%)"
           }
-         ]
+         ],
+         "linkId": "2",
+         "text": "Coverage Requirements"
+        },
+        {
+         "item": [
+          {
+           "linkId": "3.1",
+           "text": "Start Date"
+          },
+          {
+           "linkId": "3.2",
+           "text": "Length of Need (months)"
+          },
+          {
+           "linkId": "3.3",
+           "text": "Prescribed Flow Rate (liters/min)"
+          },
+          {
+           "linkId": "3.4",
+           "text": "Frequency of Use"
+          }
+         ],
+         "linkId": "3",
+         "text": "Prescribed Use"
+        },
+        {
+         "item": [
+          {
+           "linkId": "4.1",
+           "text": "Device Description"
+          },
+          {
+           "linkId": "4.2",
+           "text": "Portable Device"
+          },
+          {
+           "linkId": "4.3",
+           "text": "Device Type"
+          },
+          {
+           "linkId": "4.4",
+           "text": "Delivery Means (e.g., nasal cannula, mask)"
+          }
+         ],
+         "linkId": "4",
+         "text": "Oxygen Supply Order Details"
+        },
+        {
+         "item": [
+          {
+           "linkId": "5.1",
+           "text": "Face-to-face Evaluation within 6 months"
+          }
+         ],
+         "linkId": "5",
+         "text": "Face-to-Face Evaluation"
+        },
+        {
+         "item": [
+          {
+           "linkId": "6.1",
+           "text": "Medical Necessity Statement"
+          }
+         ],
+         "linkId": "6",
+         "text": "Medical Necessity"
         }
        ],
-       "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
+       "questionnaire": "http://example.org/fhir/Questionnaire/HomeOxygenDispatch",
        "resourceType": "QuestionnaireResponse",
-       "status": "completed",
+       "status": "in-progress",
        "subject": {
-        "reference": "Patient/MBR-COVERED"
+        "reference": "https://shn.example/fhir/Patient/MBR-PD-UC03"
        }
       }
      }
     ],
     "identifier": {
      "system": "urn:shn:pas:bundle",
-     "value": "75ec9a2ea4be66b3e3ae89c7c2a0ed68"
+     "value": "686e826c1dc57c82dd2be7c7fd418cd5"
     },
     "resourceType": "Bundle",
-    "timestamp": "2026-08-21T05:23:44Z",
+    "timestamp": "2026-08-23T04:59:54Z",
     "type": "collection"
    },
    "detail": "valid"
   }
  },
  {
-  "seq": 58,
-  "time": "2026-08-21T01:23:44.607208-04:00",
+  "seq": 31,
+  "time": "2026-08-23T00:59:54.806804-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 32,
-   "time": "2026-08-21T01:23:44.607066-04:00",
+   "seq": 14,
+   "time": "2026-08-23T00:59:54.806644-04:00",
    "kind": "leg.originated",
    "legType": "pas-claim",
    "direction": "originate",
-   "correlationId": "75ec9a2ea4be66b3e3ae89c7c2a0ed68",
-   "counterpart": "payer",
+   "correlationId": "686e826c1dc57c82dd2be7c7fd418cd5",
+   "counterpart": "conformance-payer",
    "authorityFrame": "provider-tpo",
    "op": "pas-submit",
    "payload": {
@@ -1184,37 +1610,37 @@
      {
       "fullUrl": "https://shn.example/fhir/Claim/convergence-claim",
       "resource": {
-       "created": "2026-08-21T05:23:44Z",
+       "created": "2026-08-23T04:59:54Z",
        "id": "convergence-claim",
        "identifier": [
         {
          "system": "urn:shn:correlation",
-         "value": "75ec9a2ea4be66b3e3ae89c7c2a0ed68"
+         "value": "686e826c1dc57c82dd2be7c7fd418cd5"
         }
        ],
        "insurance": [
         {
-         "sequence": 1,
-         "focal": true,
          "coverage": {
           "identifier": {
            "system": "urn:shn:coverage",
-           "value": "MBR-COVERED"
+           "value": "MBR-PD-UC03"
           }
-         }
+         },
+         "focal": true,
+         "sequence": 1
         }
        ],
        "insurer": {
-        "reference": "Organization/payer"
+        "reference": "https://shn.example/fhir/Organization/cms-payer"
        },
        "item": [
         {
          "category": {
           "coding": [
            {
-            "system": "https://codesystem.x12.org/005010/1365",
             "code": "1",
-            "display": "Medical Care"
+            "display": "Medical Care",
+            "system": "https://codesystem.x12.org/005010/1365"
            }
           ]
          },
@@ -1222,16 +1648,16 @@
           {
            "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-requestedService",
            "valueReference": {
-            "reference": "ServiceRequest/convergence-sr"
+            "reference": "https://shn.example/fhir/DeviceRequest/convergence-dr"
            }
           }
          ],
          "productOrService": {
           "coding": [
            {
-            "system": "http://www.ama-assn.org/go/cpt",
-            "code": "72148",
-            "display": "MRI lumbar spine w/o contrast"
+            "code": "E1390",
+            "display": "Oxygen concentrator, single delivery port",
+            "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
            }
           ]
          },
@@ -1239,7 +1665,7 @@
         }
        ],
        "patient": {
-        "reference": "Patient/MBR-COVERED"
+        "reference": "https://shn.example/fhir/Patient/MBR-PD-UC03"
        },
        "priority": {
         "coding": [
@@ -1256,8 +1682,8 @@
        "type": {
         "coding": [
          {
-          "system": "http://terminology.hl7.org/CodeSystem/claim-type",
-          "code": "professional"
+          "code": "professional",
+          "system": "http://terminology.hl7.org/CodeSystem/claim-type"
          }
         ]
        },
@@ -1265,9 +1691,9 @@
       }
      },
      {
-      "fullUrl": "https://shn.example/fhir/Patient/MBR-COVERED",
+      "fullUrl": "https://shn.example/fhir/Patient/MBR-PD-UC03",
       "resource": {
-       "id": "MBR-COVERED",
+       "id": "MBR-PD-UC03",
        "resourceType": "Patient"
       }
      },
@@ -1275,46 +1701,33 @@
       "fullUrl": "https://shn.example/fhir/Coverage/convergence-coverage",
       "resource": {
        "beneficiary": {
-        "reference": "Patient/MBR-COVERED"
+        "reference": "Patient/MBR-PD-UC03"
        },
-       "contained": [
-        {
-         "id": "cms-payer",
-         "identifier": [
-          {
-           "system": "urn:oid:2.16.840.1.113883.6.300",
-           "value": "00001"
-          }
-         ],
-         "name": "Centers for Medicare and Medicaid Services",
-         "resourceType": "Organization"
-        }
-       ],
        "id": "convergence-coverage",
        "identifier": [
         {
+         "system": "urn:shn:coverage",
          "type": {
           "coding": [
            {
-            "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-            "code": "MB"
+            "code": "MB",
+            "system": "http://terminology.hl7.org/CodeSystem/v2-0203"
            }
           ]
          },
-         "system": "urn:shn:coverage",
-         "value": "MBR-COVERED"
+         "value": "MBR-PD-UC03"
         }
        ],
        "payor": [
         {
-         "reference": "#cms-payer"
+         "reference": "https://shn.example/fhir/Organization/cms-payer"
         }
        ],
        "relationship": {
         "coding": [
          {
-          "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship",
-          "code": "self"
+          "code": "self",
+          "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship"
          }
         ]
        },
@@ -1323,151 +1736,235 @@
       }
      },
      {
-      "fullUrl": "https://shn.example/fhir/ServiceRequest/convergence-sr",
+      "fullUrl": "https://shn.example/fhir/DeviceRequest/convergence-dr",
       "resource": {
-       "code": {
+       "codeCodeableConcept": {
         "coding": [
          {
-          "system": "http://www.ama-assn.org/go/cpt",
-          "code": "72148",
-          "display": "MRI lumbar spine w/o contrast"
+          "code": "E1390",
+          "display": "Oxygen concentrator, single delivery port",
+          "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
          }
         ]
        },
-       "id": "convergence-sr",
+       "id": "convergence-dr",
        "intent": "order",
+       "meta": {
+        "lastUpdated": "2026-08-22T01:25:34.550-04:00",
+        "versionId": "1"
+       },
+       "performer": {
+        "reference": "Organization/org-dme-mbrpduc03"
+       },
        "reasonCode": [
         {
          "coding": [
           {
-           "system": "http://hl7.org/fhir/sid/icd-10-cm",
-           "code": "M51.16"
+           "code": "J44.9",
+           "display": "Chronic obstructive pulmonary disease, unspecified",
+           "system": "http://hl7.org/fhir/sid/icd-10-cm"
           }
-         ]
+         ],
+         "text": "Chronic obstructive pulmonary disease, unspecified"
         }
        ],
-       "resourceType": "ServiceRequest",
-       "status": "draft",
+       "resourceType": "DeviceRequest",
+       "status": "active",
        "subject": {
-        "reference": "Patient/MBR-COVERED"
+        "reference": "Patient/MBR-PD-UC03"
        }
+      }
+     },
+     {
+      "fullUrl": "https://shn.example/fhir/Organization/cms-payer",
+      "resource": {
+       "id": "cms-payer",
+       "identifier": [
+        {
+         "system": "urn:oid:2.16.840.1.113883.6.300",
+         "value": "00001"
+        }
+       ],
+       "name": "Centers for Medicare and Medicaid Services",
+       "resourceType": "Organization"
       }
      },
      {
       "fullUrl": "https://shn.example/fhir/QuestionnaireResponse/convergence-qr",
       "resource": {
-       "authored": "2026-08-21T05:23:44Z",
+       "authored": "2026-08-23T00:59:53-04:00",
+       "contained": [
+        {
+         "id": "populate-outcome-HomeOxygenDispatch-MBR-PD-UC03",
+         "issue": [
+          {
+           "code": "exception",
+           "diagnostics": "Encountered error evaluating initial expression for item 2.5: Error encountered evaluating expression (HematocritThatIsGreaterThanThreshold) for item (2.5): Unable to locate ValueSet http://cts.nlm.nih.gov/fhir/ValueSet/2.16.840.1.113762.1.4.1219.132",
+           "severity": "error"
+          }
+         ],
+         "resourceType": "OperationOutcome"
+        }
+       ],
        "extension": [
         {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
+         "url": "http://hl7.org/fhir/StructureDefinition/cqf-messages",
          "valueReference": {
-          "reference": "Coverage/convergence-coverage"
-         }
-        },
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
-         "valueReference": {
-          "reference": "ServiceRequest/convergence-sr"
-         }
-        },
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
-         "valueCodeableConcept": {
-          "coding": [
-           {
-            "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/temp",
-            "code": "withpa",
-            "display": "Information needed for a prior authorization"
-           }
-          ]
+          "reference": "#populate-outcome-HomeOxygenDispatch-MBR-PD-UC03"
          }
         }
        ],
        "id": "convergence-qr",
        "item": [
         {
-         "linkId": "clinical-history",
+         "linkId": "1",
+         "text": "Patient Information"
+        },
+        {
          "item": [
           {
-           "linkId": "conservative-therapy-weeks",
-           "answer": [
-            {
-             "extension": [
-              {
-               "extension": [
-                {
-                 "url": "source",
-                 "valueCode": "auto"
-                }
-               ],
-               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-              }
-             ],
-             "valueInteger": 6
-            }
-           ]
+           "linkId": "2.1",
+           "text": "Relevant Diagnoses"
           },
           {
-           "linkId": "neuro-deficit",
            "answer": [
             {
-             "extension": [
-              {
-               "extension": [
-                {
-                 "url": "source",
-                 "valueCode": "auto"
-                }
-               ],
-               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-              }
-             ],
+             "valueDecimal": 87
+            }
+           ],
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/StructureDefinition/questionnaireresponse-author",
+             "valueReference": {
+              "reference": "http://cqframework.org/fhir/Device/clinical-quality-language"
+             }
+            }
+           ],
+           "linkId": "2.2",
+           "text": "Arterial Oxygen Saturation (%)"
+          },
+          {
+           "answer": [
+            {
+             "valueDecimal": 53
+            }
+           ],
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/StructureDefinition/questionnaireresponse-author",
+             "valueReference": {
+              "reference": "http://cqframework.org/fhir/Device/clinical-quality-language"
+             }
+            }
+           ],
+           "linkId": "2.3",
+           "text": "Arterial Partial Pressure of Oxygen (mmHg)"
+          },
+          {
+           "answer": [
+            {
              "valueBoolean": false
             }
-           ]
+           ],
+           "extension": [
+            {
+             "url": "http://hl7.org/fhir/StructureDefinition/questionnaireresponse-author",
+             "valueReference": {
+              "reference": "http://cqframework.org/fhir/Device/clinical-quality-language"
+             }
+            }
+           ],
+           "linkId": "2.4",
+           "text": "Patient is Mobile"
           },
           {
-           "linkId": "prior-treatment",
-           "item": [
-            {
-             "linkId": "prior-imaging",
-             "answer": [
-              {
-               "extension": [
-                {
-                 "extension": [
-                  {
-                   "url": "source",
-                   "valueCode": "auto"
-                  }
-                 ],
-                 "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-                }
-               ],
-               "valueBoolean": true
-              }
-             ]
-            }
-           ]
+           "linkId": "2.5",
+           "text": "Hematocrit Value (%)"
           }
-         ]
+         ],
+         "linkId": "2",
+         "text": "Coverage Requirements"
+        },
+        {
+         "item": [
+          {
+           "linkId": "3.1",
+           "text": "Start Date"
+          },
+          {
+           "linkId": "3.2",
+           "text": "Length of Need (months)"
+          },
+          {
+           "linkId": "3.3",
+           "text": "Prescribed Flow Rate (liters/min)"
+          },
+          {
+           "linkId": "3.4",
+           "text": "Frequency of Use"
+          }
+         ],
+         "linkId": "3",
+         "text": "Prescribed Use"
+        },
+        {
+         "item": [
+          {
+           "linkId": "4.1",
+           "text": "Device Description"
+          },
+          {
+           "linkId": "4.2",
+           "text": "Portable Device"
+          },
+          {
+           "linkId": "4.3",
+           "text": "Device Type"
+          },
+          {
+           "linkId": "4.4",
+           "text": "Delivery Means (e.g., nasal cannula, mask)"
+          }
+         ],
+         "linkId": "4",
+         "text": "Oxygen Supply Order Details"
+        },
+        {
+         "item": [
+          {
+           "linkId": "5.1",
+           "text": "Face-to-face Evaluation within 6 months"
+          }
+         ],
+         "linkId": "5",
+         "text": "Face-to-Face Evaluation"
+        },
+        {
+         "item": [
+          {
+           "linkId": "6.1",
+           "text": "Medical Necessity Statement"
+          }
+         ],
+         "linkId": "6",
+         "text": "Medical Necessity"
         }
        ],
-       "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
+       "questionnaire": "http://example.org/fhir/Questionnaire/HomeOxygenDispatch",
        "resourceType": "QuestionnaireResponse",
-       "status": "completed",
+       "status": "in-progress",
        "subject": {
-        "reference": "Patient/MBR-COVERED"
+        "reference": "https://shn.example/fhir/Patient/MBR-PD-UC03"
        }
       }
      }
     ],
     "identifier": {
      "system": "urn:shn:pas:bundle",
-     "value": "75ec9a2ea4be66b3e3ae89c7c2a0ed68"
+     "value": "686e826c1dc57c82dd2be7c7fd418cd5"
     },
     "resourceType": "Bundle",
-    "timestamp": "2026-08-21T05:23:44Z",
+    "timestamp": "2026-08-23T04:59:54Z",
     "type": "collection"
    },
    "route": {
@@ -1477,20 +1974,20 @@
   }
  },
  {
-  "seq": 59,
-  "time": "2026-08-21T01:23:44.611397-04:00",
+  "seq": 32,
+  "time": "2026-08-23T00:59:54.811128-04:00",
   "type": "observer",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "observer": {
-   "seq": 33,
-   "time": "2026-08-21T01:23:44.611302-04:00",
+   "seq": 15,
+   "time": "2026-08-23T00:59:54.811039-04:00",
    "kind": "leg.response",
    "legType": "pas-claim",
    "direction": "originate",
-   "correlationId": "75ec9a2ea4be66b3e3ae89c7c2a0ed68",
-   "counterpart": "payer",
+   "correlationId": "686e826c1dc57c82dd2be7c7fd418cd5",
+   "counterpart": "conformance-payer",
    "authorityFrame": "payer-coverage",
    "op": "pas-response",
    "payload": {
@@ -1511,9 +2008,9 @@
     },
     "use": "preauthorization",
     "patient": {
-     "reference": "Patient/MBR-COVERED"
+     "reference": "https://shn.example/fhir/Patient/MBR-PD-UC03"
     },
-    "created": "2026-08-21T05:23:44Z",
+    "created": "2023-11-14T22:13:20Z",
     "insurer": {
      "reference": "Organization/payer"
     },
@@ -1521,12 +2018,12 @@
     "identifier": [
      {
       "system": "urn:shn:correlation",
-      "value": "75ec9a2ea4be66b3e3ae89c7c2a0ed68"
+      "value": "partner-pend-1"
      }
     ],
-    "preAuthRef": "PA-5f030902dda4",
+    "preAuthRef": "AUTH-1755",
     "preAuthPeriod": {
-     "end": "2026-11-19"
+     "end": "2024-02-12"
     },
     "item": [
      {
@@ -1568,327 +2065,221 @@
   }
  },
  {
-  "seq": 60,
-  "time": "2026-08-21T01:23:44.611408-04:00",
-  "type": "observer",
-  "runId": "run-1787289824595-4",
-  "lane": "ehr",
-  "uc": "uc03",
-  "observer": {
-   "seq": 34,
-   "time": "2026-08-21T01:23:44.611316-04:00",
-   "kind": "validate.result",
-   "direction": "validate",
-   "payload": {
-    "resourceType": "ClaimResponse",
-    "meta": {
-     "profile": [
-      "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/profile-claimresponse"
-     ]
-    },
-    "status": "active",
-    "type": {
-     "coding": [
-      {
-       "system": "http://terminology.hl7.org/CodeSystem/claim-type",
-       "code": "professional"
-      }
-     ]
-    },
-    "use": "preauthorization",
-    "patient": {
-     "reference": "Patient/MBR-COVERED"
-    },
-    "created": "2026-08-21T05:23:44Z",
-    "insurer": {
-     "reference": "Organization/payer"
-    },
-    "outcome": "complete",
-    "identifier": [
-     {
-      "system": "urn:shn:correlation",
-      "value": "75ec9a2ea4be66b3e3ae89c7c2a0ed68"
-     }
-    ],
-    "preAuthRef": "PA-5f030902dda4",
-    "preAuthPeriod": {
-     "end": "2026-11-19"
-    },
-    "item": [
-     {
-      "itemSequence": 1,
-      "adjudication": [
-       {
-        "category": {
-         "coding": [
-          {
-           "system": "http://terminology.hl7.org/CodeSystem/adjudication",
-           "code": "submitted"
-          }
-         ]
-        },
-        "extension": [
-         {
-          "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewAction",
-          "extension": [
-           {
-            "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewActionCode",
-            "valueCodeableConcept": {
-             "coding": [
-              {
-               "system": "https://codesystem.x12.org/005010/306",
-               "code": "A1",
-               "display": "Certified in Total"
-              }
-             ]
-            }
-           }
-          ]
-         }
-        ]
-       }
-      ]
-     }
-    ]
-   },
-   "detail": "valid"
-  }
- },
- {
-  "seq": 61,
-  "time": "2026-08-21T01:23:44.61202-04:00",
+  "seq": 33,
+  "time": "2026-08-23T00:59:54.811921-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 12,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "shn-kit-live01",
-   "recipient": "authz",
-   "transactionType": "authz-decision:crd-order-select",
-   "authorityFrame": "provider-tpo",
-   "scope": "crd-context",
-   "outcome": "allowed",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
-  }
- },
- {
-  "seq": 62,
-  "time": "2026-08-21T01:23:44.612028-04:00",
-  "type": "audit",
-  "runId": "run-1787289824595-4",
-  "lane": "ehr",
-  "uc": "uc03",
-  "audit": {
-   "seq": 13,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "shn-kit-live01",
-   "recipient": "payer",
-   "transactionType": "crd-order-select",
+   "seq": 1,
+   "timestamp": "2026-08-23T00:59:53-04:00",
+   "sender": "kit-trio-provider",
+   "recipient": "conformance-payer",
+   "transactionType": "crd-order-dispatch",
    "authorityFrame": "provider-tpo",
    "scope": "crd-context",
    "outcome": "routed",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 63,
-  "time": "2026-08-21T01:23:44.612031-04:00",
+  "seq": 34,
+  "time": "2026-08-23T00:59:54.811929-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 14,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "payer",
+   "seq": 2,
+   "timestamp": "2026-08-23T00:59:53-04:00",
+   "sender": "conformance-payer",
    "recipient": "authz",
-   "transactionType": "authz-decision:crd-cards",
+   "transactionType": "authz-decision:crd-dispatch-cards",
    "authorityFrame": "payer-coverage",
    "scope": "crd-context",
    "outcome": "allowed",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 64,
-  "time": "2026-08-21T01:23:44.612033-04:00",
+  "seq": 35,
+  "time": "2026-08-23T00:59:54.811932-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 15,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "payer",
-   "recipient": "shn-kit-live01",
-   "transactionType": "crd-order-select",
+   "seq": 3,
+   "timestamp": "2026-08-23T00:59:53-04:00",
+   "sender": "conformance-payer",
+   "recipient": "kit-trio-provider",
+   "transactionType": "crd-order-dispatch",
    "authorityFrame": "payer-coverage",
    "scope": "crd-context",
    "outcome": "answered",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 65,
-  "time": "2026-08-21T01:23:44.612036-04:00",
+  "seq": 36,
+  "time": "2026-08-23T00:59:54.811935-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 16,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "shn-kit-live01",
+   "seq": 4,
+   "timestamp": "2026-08-23T00:59:53-04:00",
+   "sender": "kit-trio-provider",
    "recipient": "authz",
    "transactionType": "authz-decision:dtr-questionnaire-fetch",
    "authorityFrame": "provider-tpo",
    "scope": "questionnaire-only",
    "outcome": "allowed",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 66,
-  "time": "2026-08-21T01:23:44.61204-04:00",
+  "seq": 37,
+  "time": "2026-08-23T00:59:54.811937-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 17,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "shn-kit-live01",
-   "recipient": "payer",
+   "seq": 5,
+   "timestamp": "2026-08-23T00:59:53-04:00",
+   "sender": "kit-trio-provider",
+   "recipient": "conformance-payer",
    "transactionType": "dtr-questionnaire-fetch",
    "authorityFrame": "provider-tpo",
    "scope": "questionnaire-only",
    "outcome": "routed",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 67,
-  "time": "2026-08-21T01:23:44.612043-04:00",
+  "seq": 38,
+  "time": "2026-08-23T00:59:54.811939-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 18,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "payer",
+   "seq": 6,
+   "timestamp": "2026-08-23T00:59:53-04:00",
+   "sender": "conformance-payer",
    "recipient": "authz",
    "transactionType": "authz-decision:dtr-questionnaire",
    "authorityFrame": "payer-coverage",
    "scope": "questionnaire-only",
    "outcome": "allowed",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 68,
-  "time": "2026-08-21T01:23:44.612045-04:00",
+  "seq": 39,
+  "time": "2026-08-23T00:59:54.811941-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 19,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "payer",
-   "recipient": "shn-kit-live01",
+   "seq": 7,
+   "timestamp": "2026-08-23T00:59:53-04:00",
+   "sender": "conformance-payer",
+   "recipient": "kit-trio-provider",
    "transactionType": "dtr-questionnaire-fetch",
    "authorityFrame": "payer-coverage",
    "scope": "questionnaire-only",
    "outcome": "answered",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 69,
-  "time": "2026-08-21T01:23:44.612047-04:00",
+  "seq": 40,
+  "time": "2026-08-23T00:59:54.811943-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 20,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "shn-kit-live01",
+   "seq": 8,
+   "timestamp": "2026-08-23T00:59:54-04:00",
+   "sender": "kit-trio-provider",
    "recipient": "authz",
    "transactionType": "authz-decision:pas-submit",
    "authorityFrame": "provider-tpo",
    "scope": "pas-bundle",
    "outcome": "allowed",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 70,
-  "time": "2026-08-21T01:23:44.61205-04:00",
+  "seq": 41,
+  "time": "2026-08-23T00:59:54.811945-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 21,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "shn-kit-live01",
-   "recipient": "payer",
+   "seq": 9,
+   "timestamp": "2026-08-23T00:59:54-04:00",
+   "sender": "kit-trio-provider",
+   "recipient": "conformance-payer",
    "transactionType": "pas-claim",
    "authorityFrame": "provider-tpo",
    "scope": "pas-bundle",
    "outcome": "routed",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 71,
-  "time": "2026-08-21T01:23:44.612053-04:00",
+  "seq": 42,
+  "time": "2026-08-23T00:59:54.811946-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 22,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "payer",
+   "seq": 10,
+   "timestamp": "2026-08-23T00:59:54-04:00",
+   "sender": "conformance-payer",
    "recipient": "authz",
    "transactionType": "authz-decision:pas-response",
    "authorityFrame": "payer-coverage",
    "scope": "pas-bundle",
    "outcome": "allowed",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 72,
-  "time": "2026-08-21T01:23:44.612055-04:00",
+  "seq": 43,
+  "time": "2026-08-23T00:59:54.811948-04:00",
   "type": "audit",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
   "audit": {
-   "seq": 23,
-   "timestamp": "2026-08-21T01:23:44-04:00",
-   "sender": "payer",
-   "recipient": "shn-kit-live01",
+   "seq": 11,
+   "timestamp": "2026-08-23T00:59:54-04:00",
+   "sender": "conformance-payer",
+   "recipient": "kit-trio-provider",
    "transactionType": "pas-claim",
    "authorityFrame": "payer-coverage",
    "scope": "pas-bundle",
    "outcome": "answered",
-   "subjectPCI": "pci:223665feed95ab0cd1e7b0cda6cfa948"
+   "subjectPCI": "pci:3697edadb6ec2f6212e81668b9463037"
   }
  },
  {
-  "seq": 73,
-  "time": "2026-08-21T01:23:44.612057-04:00",
+  "seq": 44,
+  "time": "2026-08-23T00:59:54.811949-04:00",
   "type": "run.finished",
-  "runId": "run-1787289824595-4",
+  "runId": "run-1787461191792-1",
   "lane": "ehr",
   "uc": "uc03",
-  "detail": "approved, auth PA-5f030902dda4, 3 QR items"
+  "detail": "auto-filled from the chart (2.2=87, 2.3=53), approved AUTH-1755"
  }
 ]

@@ -1,7 +1,7 @@
 // ModeSwitch.tsx — the lane segmented control, part of the persistent TopBar
 // chrome (formerly UCCards' own .lane-tabs block). Pure presentational +
 // dispatch: the caller (App, via TopBar) owns `lane` state and decides which
-// lanes exist on this Kit (`lanes` — the provider-data lane only with the
+// lanes exist on this Kit (`lanes` — the Plain EHR lane only with the
 // packaged Java trio; defaults to every lane).
 import type { JSX } from 'react';
 import type { Lane } from './types';

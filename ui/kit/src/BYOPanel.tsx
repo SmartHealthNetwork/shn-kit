@@ -117,6 +117,12 @@ function EHRSection({ ehr, onSaved, onRestart }: EHRSectionProps): JSX.Element {
           {ehr?.applied && (
             <div className="byo-connected">
               <p>Connected — your EHR is the ehr lane&apos;s data source.</p>
+              <p className="byo-ceiling-note">
+                Orders, diagnoses, coverage and the open order are read from your EHR. Questionnaire
+                pre-population runs on the Kit&apos;s bundled data server, not on your EHR — seed your
+                EHR with the bundle below so both stay in step; a patient the Kit&apos;s server does not
+                also hold fails that step, never silently.
+              </p>
               <button
                 type="button"
                 className="btn ghost"
@@ -317,6 +323,12 @@ function DaVinciSection({ davinci, ingress, onSaved, onRestart }: DaVinciSection
           </button>
         </div>
       </form>
+
+      <p className="byo-orders-note">
+        The hosted Da Vinci reference payer answers these orders: E0250 hospital bed (no prior
+        authorization), L8000 (approved), E0424 home oxygen (held, then resolved on an amended
+        re-submit), J3490 (not covered).
+      </p>
 
       <SeedYourServerBlock lane="conformant" postBase="<your-fhir-base>" />
 

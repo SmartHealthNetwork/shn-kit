@@ -165,7 +165,7 @@ type StackInfo struct {
 
 	// ProviderDataURL is the provider-data gateway child's base
 	// (kitd.Stack.ProviderDataURL) — "" when no Java trio is configured, and
-	// so no provider-data lane exists. Surfaced as GET /api/status's
+	// so no Plain EHR lane exists. Surfaced as GET /api/status's
 	// "providerDataUrl" under the same key-presence contract as brProviderUrl:
 	// the UI shows the lane iff the key is present.
 	ProviderDataURL string

@@ -106,6 +106,9 @@ describe('BYOPanel — EHR applied states', () => {
     render(<BYOPanel byo={byo} onSaved={onSaved} onRestart={vi.fn()} />);
 
     expect(screen.getByText(/connected — your ehr is the ehr lane's data source/i)).toBeDefined();
+    expect(
+      screen.getByText(/questionnaire pre-population runs on the kit's bundled data server/i),
+    ).toBeDefined();
 
     await userEvent.click(screen.getByRole('button', { name: /restore demo data/i }));
 
@@ -151,6 +154,10 @@ describe('BYOPanel — Da Vinci section', () => {
     expect(
       dvSection.getByText('the inspector displays full payloads from your connected systems'),
     ).toBeDefined();
+    expect(dvSection.getByText(/E0250/)).toBeDefined();
+    expect(dvSection.getByText(/L8000/)).toBeDefined();
+    expect(dvSection.getByText(/E0424/)).toBeDefined();
+    expect(dvSection.getByText(/J3490/)).toBeDefined();
 
     await userEvent.type(dvSection.getByLabelText(/client id/i), 'partner-1');
     await userEvent.type(dvSection.getByLabelText(/algorithm/i), 'RS384');

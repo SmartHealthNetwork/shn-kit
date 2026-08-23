@@ -168,7 +168,7 @@ whenever `--token` is left empty.
 Once per launch (async, never blocks boot), the Kit GETs `--releases-url`'s
 feed to check for a newer release, and surfaces the result at `GET
 /api/status`. **This per-launch releases-feed GET is the Kit's only outbound
-call beyond signing in and ordinary Hub/substrate traffic.** `--releases-url`
+call beyond signing in and ordinary Hub traffic.** `--releases-url`
 is the knob that repoints it (e.g. at a test double) or, pointed at an
 unreachable/empty value, effectively disables it. Every failure path (feed
 unreachable, malformed response) is silent-with-log — offline is a
@@ -196,14 +196,29 @@ killed from outside) is likewise outside this path. See `../desktop/README.md`'s
 
 ## Bring-your-own systems
 
-Both of the Kit's demo lanes can be repointed at your own systems instead of
-the bundled sandbox: the provider-data lane at your own FHIR data server, and
-the conformant Da Vinci lane at registering your own system as an inbound
-ingress client. Both swaps are per-lane and reversible ("restore demo data"
-via `DELETE /api/byo/ehr` or `/api/byo/davinci`), and — since the in-process
-supervisor can't restart just one piece of the stack — take effect only on
-the Kit's next full restart (every successful `PUT`/`DELETE` under
-`/api/byo/*` answers `{"restartRequired":true}`).
+The Kit can be repointed at your own systems instead of its bundled demo
+data: your own FHIR data server, and/or your own Da Vinci system registered
+as an inbound ingress client for the Da Vinci provider lane. **Both lanes
+read your EHR** once the FHIR-data swap is applied — the swap names the
+Kit's one system of record, so pointing it at your server retargets both the
+Plain EHR lane and the Da Vinci provider lane's own seeded exchanges alike.
+The two swaps (EHR / Da Vinci ingress client) are independent and each
+reversible ("restore demo data" via `DELETE /api/byo/ehr` or
+`/api/byo/davinci`), and — since the in-process supervisor can't restart
+just one piece of the stack — take effect only on the Kit's next full
+restart (every successful `PUT`/`DELETE` under `/api/byo/*` answers
+`{"restartRequired":true}`).
+
+**The ceiling:** the questionnaire pre-population that fills in clinical
+evidence for you (the Plain EHR lane's auto-fill behind its home-oxygen and
+home-health scenarios) runs against the Kit's own bundled data, not your
+connected EHR. Orders, diagnoses, coverage and the open order ARE read from
+your EHR; a patient your EHR carries but the Kit's bundled data doesn't also
+hold fails that step with a clear message rather than silently answering
+from the wrong source. Downloading the provided seed bundle onto your EHR
+(`GET /api/byo/seed-bundle/ehr` for the Plain EHR lane's demo patients,
+`GET /api/byo/seed-bundle/conformant` for the Da Vinci lane's) keeps both
+stores in step.
 
 Config is persisted to `{state-dir}/byo.json` (mode `0600`); any client
 private key you supply is written write-only to a sibling key file and never
@@ -215,17 +230,22 @@ Kit accepts is guaranteed to be one the gateway can actually boot on; only
 an EHR swap is applied) to pick one to run.
 
 **Your patients need a `urn:shn:member` identifier** whose *value* is a
-member id the payer counterparty actually covers — the SHN-hosted demo payer
-recognizes only its own seeded member ids. This is a genuine onboarding
-requirement, not a Kit limitation; full own-payer/own-provider onboarding is
-the additive door that eventually removes it.
+member id the payer counterparty actually covers — the hosted Da Vinci
+reference payer recognizes only its own seeded member ids. This is a
+genuine onboarding requirement, not a Kit limitation; full own-payer/
+own-provider onboarding is the additive door that eventually removes it.
 
 Registering your own Da Vinci system as an inbound ingress client
 (`PUT /api/byo/davinci`) requires opening a **watch** (`POST`/`DELETE
 /api/watch`) before your system sends traffic, so the run inspector can
 narrate it — the Kit never opens a remote listener for this; your system
 must run on the same machine and call the gateway's already-loopback-bound
-ingress directly.
+ingress directly. Once registered, the hosted Da Vinci reference payer
+answers four HCPCS order types end to end: **E0250** (hospital bed —
+covered, no prior authorization needed), **L8000** (breast prosthesis —
+prior authorization approved), **E0424** (stationary oxygen — held pending,
+then resolved on an amended re-submission), and **J3490** (an unclassified
+drug — not covered, formally denied with the payer's stated reason).
 
 ## Bridging demo
 

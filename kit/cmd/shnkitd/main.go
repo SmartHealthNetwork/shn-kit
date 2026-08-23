@@ -436,6 +436,9 @@ func main() {
 
 			Line:                     *validatorLine,
 			AdditionalValidatorLines: parsedAdditionalLines,
+
+			BridgeDemoHolder:   *bridgeDemoHolder,
+			BridgeRefuseHolder: *bridgeDemoRefuseHolder,
 		}
 		// byo.json overrides: the EHR lane replaces
 		// the --fhir-data-url demo default and carries its own SMART quad;
@@ -671,7 +674,7 @@ func main() {
 			degradedProbes := []bootstrap.Probe{
 				{Name: "discovery", Detail: detail},
 				{Name: "registration", Detail: detail},
-				{Name: "hosted-payer", Detail: detail},
+				{Name: "reference-payer", Detail: detail},
 			}
 			// bridge-demo probes ride the same skip, present iff configured —
 			// mirrors bootstrap.Verify's own BridgeProbes skip semantics.

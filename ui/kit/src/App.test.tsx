@@ -1139,6 +1139,13 @@ describe('App — BYO lane surfaces', () => {
     expect(screen.getByText(/your server carries the demo personas/i)).toBeDefined();
     expect(screen.getByText(/download the conformant seed bundle from the.*bring your own.*panel/i)).toBeDefined();
 
+    // The Plain EHR lane exists only with the packaged trio's second gateway
+    // child (A1: the EHR swap applies to both gateway children).
+    vi.mocked(api.getStatus).mockImplementation(() =>
+      Promise.resolve({ ...statusReady(), providerDataUrl: 'http://127.0.0.1:9095' }),
+    );
+    await advance(STATUS_POLL_MS);
+
     // Switch to the ehr lane: cards disappear, FreeFormPanel + swap banner appear.
     await act(async () => {
       fireEvent.click(screen.getByRole('tab', { name: /plain ehr/i }));
@@ -1583,14 +1590,14 @@ describe('App — ehr provider node lights from real sor.read frames (end-to-end
 });
 
 
-describe('App provider-data lane gating', () => {
-  it('offers the Reference payer lane iff /api/status carries providerDataUrl', async () => {
+describe('App Plain EHR lane gating', () => {
+  it('offers only the Da Vinci-conformant lane when /api/status carries no providerDataUrl', async () => {
     await renderMain();
     expect(screen.queryByRole('tab', { name: /reference payer/i })).toBeNull();
-    expect(screen.getAllByRole('tab')).toHaveLength(2);
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
   });
 
-  it('shows the Reference payer lane when the Kit reports its provider-data gateway child', async () => {
+  it('shows the Plain EHR lane when the Kit reports its second gateway child', async () => {
     vi.mocked(api.getBootstrap).mockResolvedValue(boot({ state: 'provisioned' }));
     vi.mocked(api.getStatus).mockImplementation(() =>
       Promise.resolve({ ...statusReady(), providerDataUrl: 'http://127.0.0.1:9095' }),
@@ -1598,7 +1605,19 @@ describe('App provider-data lane gating', () => {
     render(<App />);
     await flush();
     await flush();
-    expect(screen.getByRole('tab', { name: /reference payer/i })).toBeDefined();
-    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    expect(screen.queryByRole('tab', { name: /reference payer/i })).toBeNull();
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+  });
+
+  it('selects the Da Vinci provider tab on first load, before any run', async () => {
+    vi.mocked(api.getBootstrap).mockResolvedValue(boot({ state: 'provisioned' }));
+    vi.mocked(api.getStatus).mockImplementation(() =>
+      Promise.resolve({ ...statusReady(), providerDataUrl: 'http://127.0.0.1:9095' }),
+    );
+    render(<App />);
+    await flush();
+    await flush();
+    expect(screen.getByRole('tab', { name: /da vinci provider/i }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /plain ehr/i }).getAttribute('aria-selected')).toBe('false');
   });
 });

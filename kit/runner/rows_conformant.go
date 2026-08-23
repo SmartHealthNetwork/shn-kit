@@ -14,16 +14,32 @@ import (
 	shnsdk "github.com/SmartHealthNetwork/shn-sdk"
 )
 
-// conformantRows is the "conformant" lane's row table: each row drives the
+// conformantRows is the "Da Vinci provider" lane's row table: each row drives the
 // child's Da Vinci ingress directly (CRD order-select, DTR
-// $questionnaire-package, PAS $submit — all UDAP B2B direct-bearer-authed)
-// via scenariodriver.Driver. Sandbox-payer verdict sources: the sandbox
-// adjudicator (gateway/engine/adjudicator.go, OrderSelect / PriorAuth) and
-// test/ingressconformance (read at design time; this package never imports
-// it — the shapes below were cross-checked against it and, for the PAS
-// submit rows, EMPIRICALLY VERIFIED against a live harness.StartWithIngress
-// run before this file was written, which caught and corrected several rows
-// against that ground truth).
+// $questionnaire-package, PAS $submit — all UDAP B2B direct-bearer-authed) via
+// scenariodriver.Driver, and every payer leg is routed by the static payer
+// directory to the HOSTED DA VINCI REFERENCE PAYER. The verdict source is that
+// reference payer, never this Kit: its behaviour is keyed on four HCPCS families,
+// and the rows below are those families —
+//
+//	E0250 hospital bed          covered, no prior authorization      (uc02)
+//	L8000 breast prosthesis     prior authorization, approved        (uc03, uc07)
+//	E0424 stationary oxygen     conditional; held, then resolved     (uc04, uc05, uc06)
+//	J3490 unclassified drug     not covered; formally denied         (uc08)
+//
+// Every approval is fenced on the reference payer's own AUTH-NNNN authorization
+// (requireAuthRef): a run that quietly fell back to some other payer cannot pass.
+//
+// test/tworilive is the executable reference each row was copied from — it drives
+// these same exchanges against the running reference payer, and it (not this file)
+// is where a shape is proven before it is written here. This package never imports
+// it: the Kit's publish boundary forbids importing the private repository, so the
+// shapes are rebuilt on the sdk's own builders.
+//
+// When the Java trio is present the CRD leg of the rows named in
+// conformantBRPScenario originates through br-provider's real BFF instead of the
+// driver's own direct-mint request, and the questionnaires are filled by
+// br-provider's real populate endpoint — same assertions either way.
 var conformantRows = map[string]rowFunc{
 	"uc01": conformantUC01,
 	"uc02": conformantUC02,
@@ -122,9 +138,16 @@ const (
 	usCoreServiceRequestProfile = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-servicerequest"
 )
 
+// homeOxygenCanonical is the reference payer's HomeOxygen questionnaire canonical.
+// The E0424 order-sign card advertises NO questionnaire, so uc06 fetches the
+// package BY CANONICAL — this value is the one the live gate READ OFF the running
+// reference payer (test/tworilive, R1), never guessed. Duplicated as a literal
+// because the Kit cannot import the private repository that owns it.
+const homeOxygenCanonical = "http://example.org/fhir/Questionnaire/HomeOxygenDispatch"
+
 // buildOrderServiceRequest is shnsdk.BuildServiceRequest with an explicit
-// procedure coding system — needed for the uc07 HCPCS-approve persona
-// (L8000), which shnsdk.BuildServiceRequest cannot express (it hardcodes
+// procedure coding system — needed because every reference-payer family is an
+// HCPCS code, which shnsdk.BuildServiceRequest cannot express (it hardcodes
 // CPT). Same shape (US Core us-core-servicerequest profile, draft/order,
 // ICD-10-CM reasonCode), so a real payer sees the same conformant order
 // either way.
@@ -149,70 +172,57 @@ func buildOrderServiceRequest(system, code, display, dxCode, patientRef string) 
 	return b, nil
 }
 
-// fillLumbarQR fills the sandbox lumbar-MRI DTR questionnaire for member
-// under cc, authored at now. The QR is what SandboxAdjudicate reads (via the
-// PAS ingress's parseConformantPASSubjects) to decide approve/pend/deny —
-// the ANSWERS drive the outcome (FR-35), never the member id.
-func fillLumbarQR(member string, cc shnsdk.ClinicalContext, now time.Time) ([]byte, error) {
-	ref := "Patient/" + member
-	qr, err := shnsdk.FillQuestionnaire(shnsdk.SandboxLumbarQuestionnaire(), cc, shnsdk.QRContext{
-		PatientRef: ref, CoverageRef: "Coverage/" + member, OrderRef: "ServiceRequest/sr1", Authored: now,
+// conformantSubmitBundle assembles the PAS $submit Claim Bundle the hosted Da Vinci
+// reference payer answers, in the TWO-STEP shape the live gate proved
+// (test/tworilive/ingress_resolve_test.go — R1):
+//
+//  1. the sdk builder with PayerOrgEntry:true (the reference payer resolves the payor
+//     off bundle ENTRIES only — a contained payer Organization yields no payor at all)
+//     and AbsoluteRefs:true (it does not resolve relative refs against absolute entry
+//     fullUrls), THEN
+//  2. scenariodriver.AddRoutablePayor, because the Kit's own ingress routes
+//     payload-FIRST off an INLINE Coverage.payor[0].identifier — and step 1's
+//     AbsoluteRefs rewrote the payor REFERENCE into a form the ingress's relative-ref
+//     resolver cannot match, so without the inline identifier the ingress rejects the
+//     bundle ("no payer identifier on member coverage") before it ever reaches the
+//     payer. The stamp is purely additive: the payor reference step 1 needs survives.
+//
+// qrJSON may be nil — this builder tolerates a submit with no questionnaire answers
+// (the amended re-submit builder does not; see conformantAmendBundle).
+func conformantSubmitBundle(member string, payer shnsdk.PayerIdentifier, srJSON, qrJSON []byte, corr string, now time.Time) ([]byte, error) {
+	b, err := shnsdk.BuildConformantClaimBundle(shnsdk.ConformantClaimInputs{
+		QR:            qrJSON,
+		SR:            srJSON,
+		PatientRef:    "Patient/" + member,
+		CoverageRef:   "Coverage/" + member,
+		Corr:          corr,
+		Created:       now,
+		PayerOrgEntry: true,
+		AbsoluteRefs:  true,
+		Payer:         payer,
+		MemberID:      member,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("runner: fill DTR questionnaire: %w", err)
+		return nil, fmt.Errorf("runner: build conformant PAS submit bundle: %w", err)
 	}
-	return qr, nil
-}
-
-// conformantSubmitBundle assembles a CONFORMANT PAS Claim Bundle (Patient +
-// Coverage + the order ServiceRequest + Claim + the answered
-// QuestionnaireResponse) — mirroring test/ingressconformance/pas_test.go's
-// pasConformantBundle/pasConformantPendBundle shape, the SANDBOX-PAYER
-// contract (empirically verified against a live harness run): unlike
-// scenariodriver.BuildPASBundle(golden,...), which loads a two-RI golden
-// carrying NO QuestionnaireResponse (fine for a real Da Vinci payer, but a
-// 400 "conformant PAS bundle missing QuestionnaireResponse" — wrapped 502 by
-// the Hub — against SHN's OWN sandbox ingress, which is what the Kit's local
-// gateway child runs), this bundle always carries an answered QR so the
-// sandbox adjudicator has something to read.
-func conformantSubmitBundle(member string, payer shnsdk.PayerIdentifier, srJSON, qrJSON []byte) ([]byte, error) {
-	ref := "Patient/" + member
-	entries := []map[string]any{
-		{"resource": map[string]any{"resourceType": "Patient", "id": member}},
-		{"resource": map[string]any{
-			"resourceType": "Coverage", "id": "cov1", "status": "active",
-			"beneficiary": map[string]any{"reference": ref},
-			// The payor identifier is how the PAS ingress routes the bundle to the
-			// payer holder (FR-G40; no default route) — so it must name the SAME payer
-			// the run's earlier CRD/DTR legs routed to, or one run gets split across
-			// two payer holders. Ordinary rows pass shnsdk.CMSPayerIdentity (what this
-			// builder used to hardcode); uc03 passes what it read back off its OWN CRD
-			// request (conformantPayorFromCRD), which is member-derived.
-			"payor": []any{map[string]any{"identifier": map[string]any{
-				"system": payer.System, "value": payer.Value,
-			}}},
-		}},
-		{"resource": json.RawMessage(srJSON)},
-		{"resource": map[string]any{"resourceType": "Claim", "patient": map[string]any{"reference": ref}}},
-		{"resource": json.RawMessage(qrJSON)},
-	}
-	b, err := json.Marshal(map[string]any{"resourceType": "Bundle", "type": "collection", "entry": entries})
+	routable, err := scenariodriver.AddRoutablePayor(b)
 	if err != nil {
-		return nil, fmt.Errorf("runner: marshal conformant PAS submit bundle: %w", err)
+		return nil, fmt.Errorf("runner: make the PAS submit bundle routable: %w", err)
 	}
-	return b, nil
+	return routable, nil
 }
 
-// conformantAmendBundle builds a conformant amended re-POST (Claim.related[prior]
-// + Provenance + optional DiagnosticReport, FR-32) via the sdk's own builder —
-// the same one test/ingressconformance/pas_test.go's TestPASIngress_CorrThreading
-// amend rows use — rather than scenariodriver.BuildAmendedRePOST, whose
-// minimal empty-item QR (built for the two-RI real-br-payer ceiling, not the
-// SHN sandbox) SandboxAdjudicate reads as weeks=0 → denied/"still
-// insufficient" (empirically verified against a live harness run).
+// conformantAmendBundle builds the amended re-POST that resolves a held request
+// (Claim.related[prior] + Provenance + optional DiagnosticReport, FR-32) in the same
+// two-step shape conformantSubmitBundle documents. qrJSON is REQUIRED here — the sdk's
+// update builder rejects a nil QR — so a row with no populated answer set passes the
+// minimal attested QuestionnaireResponse conformantQR mints; the reference payer's
+// verdict is code-keyed and never reads the answers, so what the amendment is really
+// proving is the attested evidence (the Provenance, and the report when there is one).
 func conformantAmendBundle(member string, qrJSON, srJSON, drJSON, provJSON []byte, corr, originalCorr string, now time.Time) ([]byte, error) {
 	b, err := shnsdk.BuildConformantClaimUpdateBundle(shnsdk.ConformantClaimUpdateInputs{
-		QR: qrJSON, SR: srJSON,
+		QR:               qrJSON,
+		SR:               srJSON,
 		PatientRef:       "Patient/" + member,
 		CoverageRef:      "Coverage/" + member,
 		MemberID:         member,
@@ -221,12 +231,18 @@ func conformantAmendBundle(member string, qrJSON, srJSON, drJSON, provJSON []byt
 		Corr:             corr,
 		OriginalCorr:     originalCorr,
 		Created:          now,
+		PayerOrgEntry:    true,
+		AbsoluteRefs:     true,
 		Payer:            shnsdk.CMSPayerIdentity,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runner: build conformant amended re-POST: %w", err)
 	}
-	return b, nil
+	routable, err := scenariodriver.AddRoutablePayor(b)
+	if err != nil {
+		return nil, fmt.Errorf("runner: make the amended re-POST routable: %w", err)
+	}
+	return routable, nil
 }
 
 // bundleHasQuestionnaire reports whether a $questionnaire-package response
@@ -261,17 +277,66 @@ func randCorr(prefix string) string {
 	return prefix + "-" + hex.EncodeToString(b)
 }
 
-// conformantUC01 is a gap-fill: eligibility is not a Da Vinci ingress
-// operation (no CRD/DTR/PAS route exists for it), so the conformant lane
-// drives the same provider-data /scenario/uc01 route the ehr lane does — the
-// same posture two-RI takes for UC-01 (D-2RI's gap-fill note). The Detail is
-// prefixed so this is never mistaken for a genuine ingress-driven row.
-func conformantUC01(rn *Runner, branch string) (string, error) {
-	detail, err := ehrUC01(rn, branch)
+// requireAuthRef is the anti-fallback fence: the hosted Da Vinci reference payer
+// issues an AUTH-NNNN authorization, so a run that silently reached some other
+// payer — whose references are shaped differently — can never pass as approved.
+func requireAuthRef(uc string, out scenariodriver.PASOutcome) error {
+	if !out.Approved || out.PreAuthRef == "" {
+		return fmt.Errorf("runner: conformant/%s: not approved: %s", uc, excerpt(out.Body))
+	}
+	if !strings.HasPrefix(out.PreAuthRef, "AUTH-") {
+		return fmt.Errorf("runner: conformant/%s: authorization %q is not the reference payer's AUTH-NNNN — this run did not reach the reference payer", uc, out.PreAuthRef)
+	}
+	return nil
+}
+
+// conformantQR produces the questionnaire answers a row carries: br-provider's REAL
+// populate output when the Java trio is present and there is a fetched package to
+// fill; otherwise a minimal completed QuestionnaireResponse (subject, questionnaire,
+// one attested item). The reference payer's verdict never reads the answers (its
+// families are code-keyed), so what matters is the shape: a completed QR the
+// Provenance can attest.
+func conformantQR(rn *Runner, pkg scenariodriver.DTRPackage, member string, now time.Time) ([]byte, error) {
+	if rn.cfg.BFFURL != "" && len(pkg.Body) > 0 {
+		qr, err := rn.cfg.Driver.PopulateViaBRProvider(pkg)
+		if err != nil {
+			return nil, fmt.Errorf("runner: fill the questionnaire via the provider system: %w", err)
+		}
+		return qr, nil
+	}
+	qr, err := json.Marshal(map[string]any{
+		"resourceType": "QuestionnaireResponse", "status": "completed",
+		"questionnaire": pkg.Canonical,
+		"subject":       map[string]any{"reference": "Patient/" + member},
+		"authored":      now.UTC().Format(time.RFC3339),
+		"item": []any{map[string]any{"linkId": "1", "text": "Clinician attestation",
+			"answer": []any{map[string]any{"valueString": "attested"}}}},
+	})
 	if err != nil {
+		return nil, fmt.Errorf("runner: build the attested QuestionnaireResponse: %w", err)
+	}
+	return qr, nil
+}
+
+// conformantUC01 is the one row with no Da Vinci ingress leg: eligibility is not a
+// Da Vinci ingress operation (no CRD/DTR/PAS route exists for it), so this row
+// drives the MAIN child's /scenario/uc01 origination route (ehrScenarioMain) — the
+// same posture the two-RI gate takes for UC-01. The Detail is prefixed so it is
+// never mistaken for an ingress-driven row.
+func conformantUC01(rn *Runner, branch string) (string, error) {
+	var out struct {
+		Covered bool   `json:"covered"`
+		Reason  string `json:"reason"`
+	}
+	if err := ehrScenarioMain(rn, "/scenario/uc01", map[string]string{"branch": branch}, &out); err != nil {
 		return "", err
 	}
-	return "SHN-originated gap-fill (eligibility is not a Da Vinci ingress op): " + detail, nil
+	want := branch == "covered"
+	if out.Covered != want {
+		return "", fmt.Errorf("runner: conformant/uc01(%s): covered=%v, want %v (reason=%q)", branch, out.Covered, want, out.Reason)
+	}
+	detail := fmt.Sprintf("covered=%v: %s", out.Covered, out.Reason)
+	return "SHN-originated (eligibility is not a Da Vinci ingress operation): " + detail, nil
 }
 
 // brProviderOriginatedPrefix is the provenance line the CRD prong
@@ -280,86 +345,94 @@ func conformantUC01(rn *Runner, branch string) (string, error) {
 // direct-mint PostCRD path.
 const brProviderOriginatedPrefix = "originated by the provider system (br-provider): "
 
-// conformantBRPScenario is the EXPLICIT, deliberately-maintained table of
-// which conformant-lane UCs are permitted to originate their CRD leg through
-// br-provider's real BFF (scenariodriver.OriginateThroughBRProvider) when the
-// Java trio is present, and which scenariodriver.PersonaOrders key each one
-// drives. (uc03 was named only as an illustrative example while this table
-// was being designed, never as a commitment to include it — see below for
-// why it in fact has no entry.)
+// conformantBRPScenario names, per UC, the br-provider scenario
+// (scenariodriver.PersonaOrders key) whose CRD leg originates through br-provider's
+// real BFF when the Java trio is present.
 //
-// The binding constraint is br-provider's own curated seed world, NOT
-// scenariodriver plumbing: OriginateThroughBRProvider carries exactly the
-// four PersonaOrders scenarios (noPA/approve/deny/pend, all HCPCS) because
-// that is what br-provider's reference implementation actually ships (the
-// standing lean-on-the-RIs rule — read the RI's real seed before
-// hand-authoring personas into it, never the reverse). uc02→"noPA" is TODAY
-// the ONLY 1:1 mapping onto a conformant row (conformant uc02 already drives
-// the same HCPCS no-PA order the "noPA" persona carries); conformant uc03 is
-// a CPT-72148 lumbar-MRI flow with no br-provider seed counterpart, so it
-// deliberately has NO entry here.
+// The binding constraint is br-provider's own curated seed world, NOT scenariodriver
+// plumbing: OriginateThroughBRProvider carries exactly the four PersonaOrders
+// scenarios (noPA/approve/deny/pend, all HCPCS) because that is what br-provider's
+// reference implementation actually ships (the standing lean-on-the-RIs rule — read
+// the RI's real seed before hand-authoring personas into it, never the reverse).
+// Those four orders ARE the hosted reference payer's four families, so every entry
+// below is a genuine 1:1 mapping, verified by reading both sides — never by a
+// scenario key happening to string-match a row name. Falling into or out of the BFF
+// path by accident is exactly what this table exists to prevent.
 //
-// A future UC earns an entry here only after DELIBERATELY reading
-// br-provider's actual seed data to confirm a genuine 1:1 mapping exists —
-// never by a scenario key happening to string-match (or almost-match) a
-// PersonaOrders key. Falling into or out of the BFF path by accident is
-// exactly what this table exists to prevent.
+// uc05 and uc07 stay direct-mint deliberately: their CRD leg is not what the scenario
+// is about (uc05 is the federated evidence amendment, uc07 the patient surface), and
+// uc01 has no CRD leg at all.
 var conformantBRPScenario = map[string]string{
-	"uc02": "noPA",
+	"uc02": "noPA",    // E0250 hospital bed — covered, no prior authorization
+	"uc03": "approve", // L8000 — prior authorization, approved
+	"uc04": "pend",    // E0424 home oxygen — conditional; the request is held, then resolved
+	"uc06": "pend",    // E0424 — the held request is resolved by the attested re-submit
+	"uc08": "deny",    // J3490 — not covered; the submitted request is formally denied
 }
 
-func conformantUC02(rn *Runner, branch string) (string, error) {
-	order := scenariodriver.PersonaOrders["noPA"] // E0250, Hospital Bed with Side Rails
-	const member = "MBR-COVERED"
-
-	// When the Java trio is present (Config.BFFURL set)
-	// AND conformantBRPScenario names a BRP scenario for this UC, this CRD
-	// leg originates through br-provider's real BFF instead of the driver's
-	// own direct-mint PostCRD — the ONE row/scenario key pair
-	// (noPA/MBR-COVERED) that maps 1:1 onto OriginateThroughBRProvider's
-	// persona-order table, so the assertions below are unchanged either way.
-	if scen, ok := conformantBRPScenario["uc02"]; rn.cfg.BFFURL != "" && ok {
+// conformantCRD is every row's coverage-check (CRD) prong: through br-provider's real
+// BFF when the Java trio is present AND conformantBRPScenario names this scenario for
+// this UC, else the driver's own direct-mint request. It returns the parsed cards and
+// whether the BFF carried the leg. The direct-mint request BODY is deliberately NOT
+// returned: the one row that reads a payer identity back off it (the bridging demo)
+// builds its own body, so returning it here would only be a value every caller drops.
+func conformantCRD(rn *Runner, uc, scenario, member string) (scenariodriver.Cards, bool, error) {
+	order := scenariodriver.PersonaOrders[scenario]
+	if scen, ok := conformantBRPScenario[uc]; rn.cfg.BFFURL != "" && ok && scen == scenario {
 		res, err := rn.cfg.Driver.OriginateThroughBRProvider(scen, member)
 		if err != nil {
-			return "", fmt.Errorf("runner: conformant/uc02: originate via br-provider BFF: %w", err)
+			return scenariodriver.Cards{}, true, fmt.Errorf("runner: conformant/%s: originate via the provider system: %w", uc, err)
 		}
-		if res.Status != 200 {
-			return "", conformantIngressErr("uc02: CRD", res.Status, res.Body)
+		if res.Status != http.StatusOK {
+			return scenariodriver.Cards{}, true, conformantIngressErr(uc+": CRD", res.Status, res.Body)
 		}
-		if res.Covered() != "covered" {
-			return "", fmt.Errorf("runner: conformant/uc02: covered=%q, want %q", res.Covered(), "covered")
-		}
-		if res.PANeeded() != shnsdk.PANeededNoAuth {
-			return "", fmt.Errorf("runner: conformant/uc02: paNeeded=%q, want %q (no-PA card)", res.PANeeded(), shnsdk.PANeededNoAuth)
-		}
-		return fmt.Sprintf("%s%s (HCPCS %s %s): covered=%s paNeeded=%s", brProviderOriginatedPrefix, res.Cards.Cards[0].Summary, order.Code, order.Display, res.Covered(), res.PANeeded()), nil
+		return res.Cards, true, nil
 	}
-
 	body, err := scenariodriver.BuildCRDRequest(member, scenariodriver.SystemHCPCS, order.Code, order.Display)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc02: build CRD request: %w", err)
+		return scenariodriver.Cards{}, false, fmt.Errorf("runner: conformant/%s: build CRD request: %w", uc, err)
 	}
 	res, err := rn.cfg.Driver.PostCRD(body)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc02: POST CRD: %w", err)
+		return scenariodriver.Cards{}, false, fmt.Errorf("runner: conformant/%s: POST CRD: %w", uc, err)
 	}
-	if res.Status != 200 {
-		return "", conformantIngressErr("uc02: CRD", res.Status, res.Body)
+	if res.Status != http.StatusOK {
+		return scenariodriver.Cards{}, false, conformantIngressErr(uc+": CRD", res.Status, res.Body)
 	}
 	cards, err := scenariodriver.ParseCards(res.Body)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc02: parse cards: %w", err)
+		return scenariodriver.Cards{}, false, fmt.Errorf("runner: conformant/%s: parse cards: %w", uc, err)
 	}
-	if cards.Covered() != "covered" {
-		return "", fmt.Errorf("runner: conformant/uc02: covered=%q, want %q", cards.Covered(), "covered")
+	return cards, false, nil
+}
+
+// originated prefixes detail with the provider-system provenance line when the CRD
+// leg actually came through br-provider's BFF.
+func originated(viaBFF bool, detail string) string {
+	if viaBFF {
+		return brProviderOriginatedPrefix + detail
 	}
-	// Empirically verified against a live harness run: an earlier draft of
-	// this row expected PANeeded()=="" for the no-PA card; the sandbox actually emits the
-	// explicit sentinel shnsdk.PANeededNoAuth ("no-auth"), never empty.
+	return detail
+}
+
+// conformantUC02 — E0250 hospital bed: the reference payer covers it and asks for no
+// prior authorization, so the row ends at the coverage check.
+func conformantUC02(rn *Runner, branch string) (string, error) {
+	const member = "MBR-COVERED"
+	order := scenariodriver.PersonaOrders["noPA"] // E0250, Hospital Bed with Side Rails
+
+	cards, viaBFF, err := conformantCRD(rn, "uc02", "noPA", member)
+	if err != nil {
+		return "", err
+	}
+	if cards.Covered() != shnsdk.CoveredCovered {
+		return "", fmt.Errorf("runner: conformant/uc02: covered=%q, want %q", cards.Covered(), shnsdk.CoveredCovered)
+	}
 	if cards.PANeeded() != shnsdk.PANeededNoAuth {
-		return "", fmt.Errorf("runner: conformant/uc02: paNeeded=%q, want %q (no-PA card)", cards.PANeeded(), shnsdk.PANeededNoAuth)
+		return "", fmt.Errorf("runner: conformant/uc02: paNeeded=%q, want %q (the reference payer requires no prior authorization for this family)", cards.PANeeded(), shnsdk.PANeededNoAuth)
 	}
-	return fmt.Sprintf("%s (HCPCS %s %s): covered=%s paNeeded=%s", cards.Cards[0].Summary, order.Code, order.Display, cards.Covered(), cards.PANeeded()), nil
+	return originated(viaBFF, fmt.Sprintf("%s (HCPCS %s %s): covered=%s paNeeded=%s",
+		cards.Cards[0].Summary, order.Code, order.Display, cards.Covered(), cards.PANeeded())), nil
 }
 
 // conformantPayorFromCRD reads the payer identity out of a driver-built CDS
@@ -384,16 +457,85 @@ func conformantPayorFromCRD(crdBody []byte) (shnsdk.PayerIdentifier, error) {
 	return pid, nil
 }
 
+// conformantUC03 — L8000: the reference payer covers it but requires prior
+// authorization, advertises the questionnaire on the card, and approves the submitted
+// request. Branch "bridge-demo" is a different scenario entirely (the bridging demo,
+// below) and shares nothing but the row name.
 func conformantUC03(rn *Runner, branch string) (string, error) {
-	// Branch "bridge-demo" selects the bridge-demo persona
-	// (its Coverage.payor routes to the bridge-demo-payer holder — see
-	// gateway/engine/holderdata.go's MBR-BRIDGE-DEMO comment); validateRow
-	// rejects every other branch for this lane, so member fence AI/OWD
-	// guardrails (Member stays freeform-only) are untouched.
-	member := "MBR-COVERED"
 	if branch == "bridge-demo" {
-		member = "MBR-BRIDGE-DEMO"
+		return conformantUC03BridgeDemo(rn)
 	}
+	const member = "MBR-COVERED"
+	ref := "Patient/" + member
+	now := rn.now()
+	order := scenariodriver.PersonaOrders["approve"] // L8000
+
+	cards, viaBFF, err := conformantCRD(rn, "uc03", "approve", member)
+	if err != nil {
+		return "", err
+	}
+	// The reference payer's answer for this family is BOTH halves — covered, and
+	// prior authorization required. A not-covered answer that still asked for prior
+	// authorization would be a different scenario (uc08's), never this row's.
+	if cards.Covered() != shnsdk.CoveredCovered {
+		return "", fmt.Errorf("runner: conformant/uc03: covered=%q, want %q (the reference payer covers this family — prior authorization is what it asks for)", cards.Covered(), shnsdk.CoveredCovered)
+	}
+	if cards.PANeeded() != shnsdk.PANeededAuthNeeded {
+		return "", fmt.Errorf("runner: conformant/uc03: paNeeded=%q, want %q (this family needs prior authorization)", cards.PANeeded(), shnsdk.PANeededAuthNeeded)
+	}
+	qs := cards.Questionnaires()
+	if len(qs) == 0 {
+		return "", fmt.Errorf("runner: conformant/uc03: the card carries no questionnaire canonical")
+	}
+	canonical := qs[0]
+
+	pkgRes, err := rn.cfg.Driver.PostQuestionnairePackage(canonical, member)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/uc03: DTR $questionnaire-package: %w", err)
+	}
+	if pkgRes.Status != http.StatusOK {
+		return "", conformantIngressErr("uc03: DTR package", pkgRes.Status, pkgRes.Body)
+	}
+	if !bundleHasQuestionnaire(pkgRes.Body) {
+		return "", fmt.Errorf("runner: conformant/uc03: DTR package response has no Questionnaire entry")
+	}
+	qrJSON, err := conformantQR(rn, scenariodriver.DTRPackage{
+		Status: pkgRes.Status, Body: pkgRes.Body, Canonical: canonical, Member: member,
+	}, member, now)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
+	}
+
+	srJSON, err := buildOrderServiceRequest(scenariodriver.SystemHCPCS, order.Code, order.Display, "M51.16", ref)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/uc03: build order ServiceRequest: %w", err)
+	}
+	bundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON, randCorr("kit-uc03"), now)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
+	}
+	out, err := rn.cfg.Driver.SubmitPAS(bundle)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/uc03: submit PAS: %w", err)
+	}
+	if out.Status != http.StatusOK {
+		return "", conformantIngressErr("uc03: submit", out.Status, out.Body)
+	}
+	if err := requireAuthRef("uc03", out); err != nil {
+		return "", err
+	}
+	return originated(viaBFF, fmt.Sprintf("CRD card + DTR package + PAS submit approved by the reference payer, auth %s", out.PreAuthRef)), nil
+}
+
+// conformantUC03BridgeDemo is the BRIDGING DEMO branch — a different exhibit from the
+// row above: the MBR-BRIDGE-DEMO persona's own Coverage names the demo payer holder
+// (gateway/engine/holderdata.go's MBR-BRIDGE-DEMO), so this run is routed there and
+// answered by the demo payer, not by the hosted Da Vinci reference payer. Its legs are
+// kept byte-for-byte as they were (the lumbar order, the demo payer's own questionnaire
+// and verdict shape) — this is the bridging exhibit the live bridging gate observes,
+// and changing its bytes would change what that gate sees.
+func conformantUC03BridgeDemo(rn *Runner) (string, error) {
+	const member = "MBR-BRIDGE-DEMO"
 	ref := "Patient/" + member
 
 	crdBody, err := scenariodriver.BuildCRDRequest(member, shnsdk.SystemCPT, "72148", "MRI lumbar spine")
@@ -404,7 +546,7 @@ func conformantUC03(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: POST CRD: %w", err)
 	}
-	if crdRes.Status != 200 {
+	if crdRes.Status != http.StatusOK {
 		return "", conformantIngressErr("uc03: CRD", crdRes.Status, crdRes.Body)
 	}
 	cards, err := scenariodriver.ParseCards(crdRes.Body)
@@ -421,7 +563,7 @@ func conformantUC03(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: DTR $questionnaire-package: %w", err)
 	}
-	if pkgRes.Status != 200 {
+	if pkgRes.Status != http.StatusOK {
 		return "", conformantIngressErr("uc03: DTR package", pkgRes.Status, pkgRes.Body)
 	}
 	if !bundleHasQuestionnaire(pkgRes.Body) {
@@ -439,13 +581,13 @@ func conformantUC03(rn *Runner, branch string) (string, error) {
 	}
 	// The submit bundle names the SAME payer the CRD/DTR legs of this run just
 	// routed to — read back off the driver's own CRD request rather than
-	// hardcoded, so a member whose Coverage names a demo payer (bridge-demo)
-	// can't end up with its PAS leg routed to the CMS payer holder instead.
+	// hardcoded, so this member, whose Coverage names the demo payer, cannot end
+	// up with its PAS leg routed to the reference payer's holder instead.
 	payer, err := conformantPayorFromCRD(crdBody)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
 	}
-	bundle, err := conformantSubmitBundle(member, payer, srJSON, qrJSON)
+	bundle, err := bridgeDemoSubmitBundle(member, payer, srJSON, qrJSON)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
 	}
@@ -453,186 +595,232 @@ func conformantUC03(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: submit PAS: %w", err)
 	}
-	if out.Status != 200 {
+	if out.Status != http.StatusOK {
 		return "", conformantIngressErr("uc03: submit", out.Status, out.Body)
 	}
 	if !out.Approved || out.PreAuthRef == "" {
 		return "", fmt.Errorf("runner: conformant/uc03: submit not approved: %s", excerpt(out.Body))
 	}
-	return fmt.Sprintf("CRD card + DTR package + PAS submit approved via direct-mint ingress, auth %s", out.PreAuthRef), nil
+	return fmt.Sprintf("CRD card + DTR package + PAS submit approved by the bridging demo payer, auth %s", out.PreAuthRef), nil
 }
 
-func conformantUC04(rn *Runner, branch string) (string, error) {
-	const member = "MBR-COVERED"
+// fillLumbarQR fills the lumbar-MRI DTR questionnaire for member under cc, authored at
+// now. Used ONLY by the bridging demo branch above, whose demo payer reads the ANSWERS
+// to decide (FR-35) — every reference-payer row is code-keyed instead.
+func fillLumbarQR(member string, cc shnsdk.ClinicalContext, now time.Time) ([]byte, error) {
+	ref := "Patient/" + member
+	qr, err := shnsdk.FillQuestionnaire(shnsdk.SandboxLumbarQuestionnaire(), cc, shnsdk.QRContext{
+		PatientRef: ref, CoverageRef: "Coverage/" + member, OrderRef: "ServiceRequest/sr1", Authored: now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("runner: fill DTR questionnaire: %w", err)
+	}
+	return qr, nil
+}
+
+// bridgeDemoSubmitBundle is the bridging demo's PAS $submit bundle — the hand-assembled
+// shape that exhibit has always put on the wire (Patient + Coverage + order + Claim +
+// the answered QuestionnaireResponse), kept byte-for-byte. It deliberately does NOT go
+// through conformantSubmitBundle: that builder stamps the reference payer's routable
+// identifier, which would misroute this run away from the demo payer holder the
+// exhibit is about.
+func bridgeDemoSubmitBundle(member string, payer shnsdk.PayerIdentifier, srJSON, qrJSON []byte) ([]byte, error) {
+	ref := "Patient/" + member
+	entries := []map[string]any{
+		{"resource": map[string]any{"resourceType": "Patient", "id": member}},
+		{"resource": map[string]any{
+			"resourceType": "Coverage", "id": "cov1", "status": "active",
+			"beneficiary": map[string]any{"reference": ref},
+			// The payor identifier is how the PAS ingress routes the bundle to the
+			// payer holder (FR-G40; no default route) — so it must name the SAME payer
+			// this run's earlier CRD/DTR legs routed to, or one run gets split across
+			// two payer holders. This row passes what it read back off its OWN CRD
+			// request (conformantPayorFromCRD), which is member-derived.
+			"payor": []any{map[string]any{"identifier": map[string]any{
+				"system": payer.System, "value": payer.Value,
+			}}},
+		}},
+		{"resource": json.RawMessage(srJSON)},
+		{"resource": map[string]any{"resourceType": "Claim", "patient": map[string]any{"reference": ref}}},
+		{"resource": json.RawMessage(qrJSON)},
+	}
+	b, err := json.Marshal(map[string]any{"resourceType": "Bundle", "type": "collection", "entry": entries})
+	if err != nil {
+		return nil, fmt.Errorf("runner: marshal bridging demo PAS submit bundle: %w", err)
+	}
+	return b, nil
+}
+
+// conformantHeldThenResolved is the shared body of the two rows that submit an E0424
+// request the reference payer HOLDS, then resolve it with an amended re-submit: uc04
+// carries the operative report the clinician wrote, uc05 the facility evidence a
+// federated query retrieved. The evidence is the only difference, so it is the only
+// parameter (dr/prov), alongside the scenario key the CRD prong routes on.
+func conformantHeldThenResolved(rn *Runner, uc, member string, evidence func(ref string, now time.Time) (drJSON, provJSON []byte, err error)) (viaBFF bool, authRef string, err error) {
 	ref := "Patient/" + member
 	now := rn.now()
-	submitCorr := randCorr("kit-uc04-submit")
-	amendCorr := randCorr("kit-uc04-amend")
+	submitCorr := randCorr("kit-" + uc + "-submit")
+	amendCorr := randCorr("kit-" + uc + "-amend")
+	order := scenariodriver.PersonaOrders["pend"] // E0424, Stationary Oxygen System
 
-	srJSON, err := shnsdk.BuildServiceRequest("72148", "MRI lumbar spine w/o contrast", "M51.16", ref)
+	cards, viaBFF, err := conformantCRD(rn, uc, "pend", member)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc04: build order ServiceRequest: %w", err)
+		return viaBFF, "", err
 	}
-	// SandboxUC04Context: priorSurgery=true, no operative DR in the submit → pends.
-	qrJSON, err := fillLumbarQR(member, shnsdk.SandboxUC04Context(), now)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc04: %w", err)
+	// The reference payer answers this family CONDITIONAL at the coverage check and
+	// advertises no questionnaire — the request is what it decides on, and it holds it.
+	if cards.Covered() != shnsdk.CoveredConditional {
+		return viaBFF, "", fmt.Errorf("runner: conformant/%s: covered=%q, want %q", uc, cards.Covered(), shnsdk.CoveredConditional)
 	}
-	submitBundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
+
+	srJSON, err := buildOrderServiceRequest(scenariodriver.SystemHCPCS, order.Code, order.Display, "J44.9", ref)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc04: %w", err)
+		return viaBFF, "", fmt.Errorf("runner: conformant/%s: build order ServiceRequest: %w", uc, err)
 	}
-	submitBundle, err = scenariodriver.InjectShnCorrelation(submitBundle, submitCorr)
+	submitBundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, nil, submitCorr, now)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc04: inject correlation: %w", err)
+		return viaBFF, "", fmt.Errorf("runner: conformant/%s: %w", uc, err)
 	}
 	submitOut, err := rn.cfg.Driver.SubmitPAS(submitBundle)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc04: submit PAS: %w", err)
+		return viaBFF, "", fmt.Errorf("runner: conformant/%s: submit PAS: %w", uc, err)
 	}
-	if submitOut.Status != 200 {
-		return "", conformantIngressErr("uc04: submit", submitOut.Status, submitOut.Body)
+	if submitOut.Status != http.StatusOK {
+		return viaBFF, "", conformantIngressErr(uc+": submit", submitOut.Status, submitOut.Body)
 	}
 	if !submitOut.Pended {
-		return "", fmt.Errorf("runner: conformant/uc04: submit outcome not pended: %s", excerpt(submitOut.Body))
+		return viaBFF, "", fmt.Errorf("runner: conformant/%s: submit outcome not pended: %s", uc, excerpt(submitOut.Body))
 	}
 
-	drJSON, err := shnsdk.BuildDiagnosticReport("dr-kit-uc04", ref, "72148", "Operative report — lumbar microdiscectomy")
+	drJSON, provJSON, err := evidence(ref, now)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc04: build operative DiagnosticReport: %w", err)
+		return viaBFF, "", fmt.Errorf("runner: conformant/%s: %w", uc, err)
 	}
-	provJSON, err := shnsdk.BuildProvenance("DiagnosticReport/dr-kit-uc04", "Organization/provider", now)
+	// The amended re-submit's questionnaire is the minimal attested answer set: this
+	// family advertises no questionnaire, and the sdk's update builder requires one.
+	qrJSON, err := conformantQR(rn, scenariodriver.DTRPackage{Canonical: homeOxygenCanonical, Member: member}, member, now)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc04: build Provenance: %w", err)
+		return viaBFF, "", fmt.Errorf("runner: conformant/%s: %w", uc, err)
 	}
 	amendBundle, err := conformantAmendBundle(member, qrJSON, srJSON, drJSON, provJSON, amendCorr, submitCorr, now)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc04: %w", err)
+		return viaBFF, "", fmt.Errorf("runner: conformant/%s: %w", uc, err)
 	}
 	amendOut, err := rn.cfg.Driver.SubmitPAS(amendBundle)
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc04: submit amended re-POST: %w", err)
+		return viaBFF, "", fmt.Errorf("runner: conformant/%s: submit amended re-POST: %w", uc, err)
 	}
-	if amendOut.Status != 200 {
-		return "", conformantIngressErr("uc04: amend", amendOut.Status, amendOut.Body)
+	if amendOut.Status != http.StatusOK {
+		return viaBFF, "", conformantIngressErr(uc+": amend", amendOut.Status, amendOut.Body)
 	}
-	if !amendOut.Approved || amendOut.PreAuthRef == "" {
-		return "", fmt.Errorf("runner: conformant/uc04: amend not approved: %s", excerpt(amendOut.Body))
+	if err := requireAuthRef(uc, amendOut); err != nil {
+		return viaBFF, "", err
 	}
-	return fmt.Sprintf("pended (operative-diagnostic-report) then approved via amended re-POST, auth %s", amendOut.PreAuthRef), nil
+	return viaBFF, amendOut.PreAuthRef, nil
 }
 
+// conformantUC04 — E0424: the reference payer holds the request, and the amended
+// re-submit carrying the operative report resolves it.
+func conformantUC04(rn *Runner, branch string) (string, error) {
+	viaBFF, authRef, err := conformantHeldThenResolved(rn, "uc04", "MBR-COVERED", func(ref string, now time.Time) ([]byte, []byte, error) {
+		drJSON, err := shnsdk.BuildDiagnosticReport("dr-kit-uc04", ref, "E0424", "Operative report — home oxygen assessment")
+		if err != nil {
+			return nil, nil, fmt.Errorf("build operative DiagnosticReport: %w", err)
+		}
+		provJSON, err := shnsdk.BuildProvenance("DiagnosticReport/dr-kit-uc04", "Organization/provider", now)
+		if err != nil {
+			return nil, nil, fmt.Errorf("build Provenance: %w", err)
+		}
+		return drJSON, provJSON, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return originated(viaBFF, fmt.Sprintf("held by the reference payer, then resolved on the amended re-submit carrying the operative report, auth %s", authRef)), nil
+}
+
+// conformantUC05 — the same held E0424 request, resolved by evidence a FEDERATED query
+// retrieved from the facility (CXL-D11: the CDex middle bracketed by SHN gateways,
+// not real external CDex actors).
 func conformantUC05(rn *Runner, branch string) (string, error) {
 	const member = "MBR-COVERED"
-	ref := "Patient/" + member
-	now := rn.now()
-	submitCorr := randCorr("kit-uc05-submit")
-	amendCorr := randCorr("kit-uc05-amend")
-
-	srJSON, err := shnsdk.BuildServiceRequest("72148", "MRI lumbar spine w/o contrast", "M51.16", ref)
+	viaBFF, authRef, err := conformantHeldThenResolved(rn, "uc05", member, func(ref string, now time.Time) ([]byte, []byte, error) {
+		drJSON, provJSON, err := scenariodriver.FacilityCDexEvidence(member, now)
+		if err != nil {
+			return nil, nil, fmt.Errorf("facility CDex evidence: %w", err)
+		}
+		return drJSON, provJSON, nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc05: build order ServiceRequest: %w", err)
+		return "", err
 	}
-	qrJSON, err := fillLumbarQR(member, shnsdk.SandboxUC04Context(), now)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc05: %w", err)
-	}
-	submitBundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc05: %w", err)
-	}
-	submitBundle, err = scenariodriver.InjectShnCorrelation(submitBundle, submitCorr)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc05: inject correlation: %w", err)
-	}
-	submitOut, err := rn.cfg.Driver.SubmitPAS(submitBundle)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc05: submit PAS: %w", err)
-	}
-	if submitOut.Status != 200 {
-		return "", conformantIngressErr("uc05: submit", submitOut.Status, submitOut.Body)
-	}
-	if !submitOut.Pended {
-		return "", fmt.Errorf("runner: conformant/uc05: submit outcome not pended: %s", excerpt(submitOut.Body))
-	}
-
-	// The federated CDex-middle evidence UC-05 retrieves (CXL-D11: CDex
-	// middle bracketed by SHN gateways, not real external CDex actors).
-	drJSON, provJSON, err := scenariodriver.FacilityCDexEvidence(member, now)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc05: facility CDex evidence: %w", err)
-	}
-	amendBundle, err := conformantAmendBundle(member, qrJSON, srJSON, drJSON, provJSON, amendCorr, submitCorr, now)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc05: %w", err)
-	}
-	amendOut, err := rn.cfg.Driver.SubmitPAS(amendBundle)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc05: submit federated amended re-POST: %w", err)
-	}
-	if amendOut.Status != 200 {
-		return "", conformantIngressErr("uc05: amend", amendOut.Status, amendOut.Body)
-	}
-	if !amendOut.Approved || amendOut.PreAuthRef == "" {
-		return "", fmt.Errorf("runner: conformant/uc05: amend not approved: %s", excerpt(amendOut.Body))
-	}
-	return fmt.Sprintf("pended then approved via amended re-POST carrying CDex-federated facility evidence, auth %s", amendOut.PreAuthRef), nil
+	return originated(viaBFF, fmt.Sprintf("held by the reference payer, then resolved on the amended re-submit carrying the federated facility evidence, auth %s", authRef)), nil
 }
 
+// conformantUC06 — the questionnaire row: the E0424 coverage check answers CONDITIONAL
+// and advertises no questionnaire, so the reference payer's HomeOxygen package is
+// fetched BY CANONICAL, filled (by br-provider's real populate under the Java trio,
+// by a minimal attestation without it), submitted — held — and then resolved by the
+// clinician-attested re-submit whose Provenance attests those very answers.
 func conformantUC06(rn *Runner, branch string) (string, error) {
 	const member = "MBR-UC06"
 	ref := "Patient/" + member
 	now := rn.now()
 	submitCorr := randCorr("kit-uc06-submit")
 	amendCorr := randCorr("kit-uc06-amend")
+	order := scenariodriver.PersonaOrders["pend"] // E0424
 
-	pkgRes, err := rn.cfg.Driver.PostQuestionnairePackage(shnsdk.QuestionnaireCanonicalLumbarMRI, member)
+	cards, viaBFF, err := conformantCRD(rn, "uc06", "pend", member)
+	if err != nil {
+		return "", err
+	}
+	if cards.Covered() != shnsdk.CoveredConditional {
+		return "", fmt.Errorf("runner: conformant/uc06: covered=%q, want %q", cards.Covered(), shnsdk.CoveredConditional)
+	}
+
+	pkgRes, err := rn.cfg.Driver.PostQuestionnairePackage(homeOxygenCanonical, member)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: DTR $questionnaire-package: %w", err)
 	}
-	if pkgRes.Status != 200 {
+	if pkgRes.Status != http.StatusOK {
 		return "", conformantIngressErr("uc06: DTR package", pkgRes.Status, pkgRes.Body)
 	}
 	if !bundleHasQuestionnaire(pkgRes.Body) {
 		return "", fmt.Errorf("runner: conformant/uc06: DTR package response has no Questionnaire entry")
 	}
+	qrJSON, err := conformantQR(rn, scenariodriver.DTRPackage{
+		Status: pkgRes.Status, Body: pkgRes.Body, Canonical: homeOxygenCanonical, Member: member,
+	}, member, now)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/uc06: %w", err)
+	}
 
-	srJSON, err := shnsdk.BuildServiceRequest("72148", "MRI lumbar spine w/o contrast", "M51.16", ref)
+	srJSON, err := buildOrderServiceRequest(scenariodriver.SystemHCPCS, order.Code, order.Display, "J44.9", ref)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: build order ServiceRequest: %w", err)
 	}
-	qrJSON, err := fillLumbarQR(member, shnsdk.SandboxUC04Context(), now)
+	submitBundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON, submitCorr, now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: %w", err)
-	}
-	submitBundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc06: %w", err)
-	}
-	submitBundle, err = scenariodriver.InjectShnCorrelation(submitBundle, submitCorr)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc06: inject correlation: %w", err)
 	}
 	submitOut, err := rn.cfg.Driver.SubmitPAS(submitBundle)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: submit PAS: %w", err)
 	}
-	if submitOut.Status != 200 {
+	if submitOut.Status != http.StatusOK {
 		return "", conformantIngressErr("uc06: submit", submitOut.Status, submitOut.Body)
 	}
 	if !submitOut.Pended {
 		return "", fmt.Errorf("runner: conformant/uc06: submit outcome not pended: %s", excerpt(submitOut.Body))
 	}
 
-	drJSON, err := shnsdk.BuildDiagnosticReport("dr-kit-uc06", ref, "72148", "Operative report — lumbar microdiscectomy")
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc06: build operative DiagnosticReport: %w", err)
-	}
-	provJSON, err := shnsdk.BuildProvenance("DiagnosticReport/dr-kit-uc06", "Organization/provider", now)
+	// The Provenance attests the QuestionnaireResponse itself (no report on this row);
+	// the sdk rewrites the target onto the QR id the update bundle carries.
+	provJSON, err := shnsdk.BuildProvenance("QuestionnaireResponse/attested", "Organization/provider", now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: build Provenance: %w", err)
 	}
-	amendBundle, err := conformantAmendBundle(member, qrJSON, srJSON, drJSON, provJSON, amendCorr, submitCorr, now)
+	amendBundle, err := conformantAmendBundle(member, qrJSON, srJSON, nil, provJSON, amendCorr, submitCorr, now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: %w", err)
 	}
@@ -640,30 +828,33 @@ func conformantUC06(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: submit amended re-POST: %w", err)
 	}
-	if amendOut.Status != 200 {
+	if amendOut.Status != http.StatusOK {
 		return "", conformantIngressErr("uc06: amend", amendOut.Status, amendOut.Body)
 	}
-	if !amendOut.Approved || amendOut.PreAuthRef == "" {
-		return "", fmt.Errorf("runner: conformant/uc06: amend not approved: %s", excerpt(amendOut.Body))
+	if err := requireAuthRef("uc06", amendOut); err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("DTR package fetched via ingress; pended then approved via amended re-POST, auth %s; manual DTR SPA deferred (D-2RI-1)", amendOut.PreAuthRef), nil
+	return originated(viaBFF, fmt.Sprintf("questionnaire fetched and filled by the provider system; held, then resolved on the clinician-attested re-submit, auth %s", amendOut.PreAuthRef)), nil
 }
 
+// conformantUC07 — the patient surface: an L8000 request the reference payer approves,
+// then read back the way the patient sees it. The coverage check is not what this row
+// is about, so it submits directly.
 func conformantUC07(rn *Runner, branch string) (string, error) {
 	const member = "MBR-UC07HCPCS"
 	ref := "Patient/" + member
 	now := rn.now()
-	order := scenariodriver.PersonaOrders["approve"] // L8000, HCPCS approve persona
+	order := scenariodriver.PersonaOrders["approve"] // L8000
 
 	srJSON, err := buildOrderServiceRequest(scenariodriver.SystemHCPCS, order.Code, order.Display, "M51.16", ref)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc07: build order ServiceRequest: %w", err)
 	}
-	qrJSON, err := fillLumbarQR(member, shnsdk.SandboxUC03Context(), now)
+	qrJSON, err := conformantQR(rn, scenariodriver.DTRPackage{Canonical: shnsdk.QuestionnaireCanonicalLumbarMRI, Member: member}, member, now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc07: %w", err)
 	}
-	bundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
+	bundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON, randCorr("kit-uc07"), now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc07: %w", err)
 	}
@@ -671,13 +862,13 @@ func conformantUC07(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc07: submit PAS: %w", err)
 	}
-	if out.Status != 200 {
+	if out.Status != http.StatusOK {
 		return "", conformantIngressErr("uc07: submit", out.Status, out.Body)
 	}
-	if !out.Approved || out.PreAuthRef == "" {
-		return "", fmt.Errorf("runner: conformant/uc07: submit not approved: %s", excerpt(out.Body))
+	if err := requireAuthRef("uc07", out); err != nil {
+		return "", err
 	}
-	detail := fmt.Sprintf("HCPCS %s (%s) approved via direct-mint PAS submit, auth %s", order.Code, order.Display, out.PreAuthRef)
+	detail := fmt.Sprintf("HCPCS %s (%s) approved by the reference payer, auth %s", order.Code, order.Display, out.PreAuthRef)
 
 	// Skip the patient-surface read-back gracefully when it is not externally reachable
 	// (hosted topology — the reads are internal/patient-only); the PA already succeeded.
@@ -692,32 +883,36 @@ func conformantUC07(rn *Runner, branch string) (string, error) {
 	if n == 0 {
 		return "", fmt.Errorf("runner: conformant/uc07: 0 approved rows in patient-surface read-back (of %d)", total)
 	}
-	return detail + fmt.Sprintf("; hybrid patient-surface read-back (D-2RI-6 analog): %d/%d approved row(s)", n, total), nil
+	// No internal decision id in the rendered sentence — this Detail is
+	// participant-facing copy. (It is the two-RI gate's own hybrid
+	// patient-surface read-back, run here against the Kit's stack.)
+	return detail + fmt.Sprintf("; hybrid patient-surface read-back: %d/%d approved row(s)", n, total), nil
 }
 
-// conformantUC08 drives the deny branch: a QR-driven bundle whose answers
-// (SandboxUC08Context — 4 weeks of conservative therapy, <6) SandboxAdjudicate
-// denies purely off QR content. NOT a golden rebind (empirically verified):
-// scenariodriver.PASApproveGolden() carries no QR at all,
-// so rebinding it onto any member would still approve (it never reaches the
-// weeks-based deny rule) — the deny outcome can only come from an
-// SandboxUC08Context-filled QR, mirroring how
-// test/ingressconformance/pas_test.go's pasConformantPendBundle builds its
-// pend bundle.
+// conformantUC08 — J3490: the reference payer does not cover this family, so the
+// coverage check says not-covered and the submitted request comes back formally
+// DENIED, with the payer's own rationale. A denial is a decision: the row asserts the
+// denial AND that a reason came with it — an approval or a hold here is a failed row,
+// never a passed deny.
 func conformantUC08(rn *Runner, branch string) (string, error) {
 	const member = "MBR-UC08"
 	ref := "Patient/" + member
 	now := rn.now()
+	order := scenariodriver.PersonaOrders["deny"] // J3490, Unclassified drugs
 
-	srJSON, err := shnsdk.BuildServiceRequest("72148", "MRI lumbar spine w/o contrast", "M51.16", ref)
+	cards, viaBFF, err := conformantCRD(rn, "uc08", "deny", member)
+	if err != nil {
+		return "", err
+	}
+	if cards.Covered() != shnsdk.CoveredNotCovered {
+		return "", fmt.Errorf("runner: conformant/uc08: covered=%q, want %q", cards.Covered(), shnsdk.CoveredNotCovered)
+	}
+
+	srJSON, err := buildOrderServiceRequest(scenariodriver.SystemHCPCS, order.Code, order.Display, "D57.1", ref)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc08: build order ServiceRequest: %w", err)
 	}
-	qrJSON, err := fillLumbarQR(member, shnsdk.SandboxUC08Context(), now)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc08: %w", err)
-	}
-	bundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON)
+	bundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, nil, randCorr("kit-uc08"), now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc08: %w", err)
 	}
@@ -725,16 +920,26 @@ func conformantUC08(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc08: submit PAS: %w", err)
 	}
-	if out.Status != 200 {
+	if out.Status != http.StatusOK {
 		return "", conformantIngressErr("uc08: submit", out.Status, out.Body)
 	}
 	if out.Approved {
 		return "", fmt.Errorf("runner: conformant/uc08: submit approved, want denied: %s", excerpt(out.Body))
 	}
-	// A pended outcome is NOT a denial either — a regression that pends the
-	// deny persona must read as a failed row, never as a passed deny.
+	// A held outcome is NOT a denial either — a regression that holds this family
+	// must read as a failed row, never as a passed deny.
 	if out.Pended {
 		return "", fmt.Errorf("runner: conformant/uc08: submit pended, want denied: %s", excerpt(out.Body))
 	}
-	return "denied via direct-mint PAS submit (conservative therapy <6 weeks)", nil
+	pr, err := shnsdk.ParseClaimResponse(out.Body)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/uc08: parse the payer's response: %w (%s)", err, excerpt(out.Body))
+	}
+	if pr.Outcome != "denied" {
+		return "", fmt.Errorf("runner: conformant/uc08: outcome=%q, want denied: %s", pr.Outcome, excerpt(out.Body))
+	}
+	if pr.Denial == nil || pr.Denial.Rationale == "" {
+		return "", fmt.Errorf("runner: conformant/uc08: denied without the payer's rationale: %s", excerpt(out.Body))
+	}
+	return originated(viaBFF, fmt.Sprintf("not covered at the coverage check; the submitted request was formally denied: %s", pr.Denial.Rationale)), nil
 }

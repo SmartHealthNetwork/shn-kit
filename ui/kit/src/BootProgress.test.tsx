@@ -114,7 +114,7 @@ describe('BootProgress stage rows', () => {
           verify: [
             { name: 'discovery', ok: true, detail: 'reachable' },
             { name: 'registration', ok: true, detail: 'found in registrar feed' },
-            { name: 'hosted-payer', ok: true, detail: 'ok' },
+            { name: 'reference-payer', ok: true, detail: 'ok' },
           ],
         })}
         runsLive={false}
@@ -129,7 +129,7 @@ describe('BootProgress stage rows', () => {
           verify: [
             { name: 'discovery', ok: true, detail: 'reachable' },
             { name: 'registration', ok: false, detail: 'holder not found in registrar feed' },
-            { name: 'hosted-payer', ok: true, detail: 'ok' },
+            { name: 'reference-payer', ok: true, detail: 'ok' },
           ],
         })}
         runsLive={false}
@@ -179,7 +179,7 @@ describe('BootProgress stage rows', () => {
           verify: [
             { name: 'discovery', ok: true, detail: 'reachable' },
             { name: 'registration', ok: true, detail: 'found in registrar feed' },
-            { name: 'hosted-payer', ok: true, detail: 'ok' },
+            { name: 'reference-payer', ok: true, detail: 'ok' },
           ],
         })}
         status={statusWith('ready')}

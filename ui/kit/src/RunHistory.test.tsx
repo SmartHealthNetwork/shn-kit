@@ -114,6 +114,14 @@ describe('RunHistory — rows', () => {
     expect(passedChip.className).toMatch(/\bpass\b/);
   });
 
+  it('a record carrying the retired "provider-data" lane renders as the Plain EHR lane', () => {
+    const legacy = summary({ runId: 'run-legacy-pd', lane: 'provider-data', uc: 'uc03', branch: '' });
+    render(<RunHistory history={[legacy]} onOpen={vi.fn()} onCompare={vi.fn()} onExport={vi.fn()} />);
+
+    expect(screen.getByText('ehr/uc03')).toBeDefined();
+    expect(screen.queryByText('provider-data/uc03')).toBeNull();
+  });
+
   it('the selected row is marked; other rows are not', () => {
     render(
       <RunHistory

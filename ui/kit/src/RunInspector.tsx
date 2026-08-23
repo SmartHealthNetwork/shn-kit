@@ -1,5 +1,5 @@
 // RunInspector.tsx — the pane that replaces a plain event list with the
-// flow map + step detail + substrate toggle + run-scoped audit anchors.
+// flow map + step detail + network-view toggle + run-scoped audit anchors.
 // Interprets a run's stamped events via buildRunStory (inspect.ts, pure)
 // and composes the presentational layers (StepDetail, FlowMap) around a
 // header + one view toggle.
@@ -17,9 +17,9 @@
 // inside StepDetail's DOM would fake a precision the substrate doesn't emit.
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import type { HistorySummary, KitEvent, Lane, Register, RunResult } from './types';
+import type { HistorySummary, KitEvent, Register, RunResult } from './types';
 import type { RunSource } from './useRunEvents';
-import { buildDemoStory, buildRunStory, isDemoRun } from './inspect';
+import { buildDemoStory, buildRunStory, isDemoRun, normaliseLane } from './inspect';
 import { FlowMap } from './FlowMap';
 import { DemoStepDetail, StepDetail, type InspectorView, type ValidatorPosture } from './StepDetail';
 import { StatusChip } from './StatusChip';
@@ -62,11 +62,6 @@ export interface RunInspectorProps {
   // bare `void` return (e.g. a synchronous test double) is also accepted
   // and treated as an immediate success.
   onReplayDemo?(kind: 'carry' | 'refusal'): void | Promise<void>;
-}
-
-function laneFromEvent(v: string | undefined): Lane {
-  if (v === 'ehr' || v === 'provider-data') return v;
-  return 'conformant';
 }
 
 export function RunInspector({
@@ -249,7 +244,7 @@ export function RunInspector({
               <label className="toggle">
                 <input type="checkbox" checked={false} disabled onChange={() => undefined} />
                 <span className="sw" />
-                Substrate view
+                Network view
               </label>
             </div>
           </div>
@@ -284,7 +279,7 @@ export function RunInspector({
   }
 
   const runStartedEvent = events.find((e) => e.runId === runId && e.type === 'run.started');
-  const lane = laneFromEvent(runStartedEvent?.lane);
+  const lane = normaliseLane(runStartedEvent?.lane);
   const uc = runStartedEvent?.uc ?? '';
 
   // Branch is sourced ONLY from `summary` — KitEvent carries no branch
@@ -320,7 +315,7 @@ export function RunInspector({
                 onChange={(e) => setView(e.target.checked ? 'substrate' : 'clinical')}
               />
               <span className="sw" />
-              Substrate view
+              Network view
             </label>
           </div>
         </div>

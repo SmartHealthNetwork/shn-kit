@@ -36,7 +36,7 @@ func TestMulti_FansOutStampAndDrainsEvery(t *testing.T) {
 	b := New("http://127.0.0.1:1/events", healthServer(t, 1).URL, bus, t.Logf) // hub emitted 1, relayed 0 → lagging
 	m := NewMulti(a, nil, b)
 
-	want := Stamp{RunID: "run-1", Lane: "provider-data", UC: "uc04"}
+	want := Stamp{RunID: "run-1", Lane: "ehr", UC: "uc04"}
 	m.SetStamp(want)
 	for i, r := range []*Relay{a, b} {
 		if got := stampOf(r); got != want {

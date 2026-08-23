@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,11 +38,14 @@ func portOf(t *testing.T, u string) int {
 
 // ---- Row 1: env recipe -------------------------------------------------------
 
-func TestBuildStack_EnvRecipe(t *testing.T) {
-	stateDir := t.TempDir()
-	cfg := StackConfig{
+// baseCfg is the plain no-trio StackConfig the env-recipe tests share: no
+// Java assets, no bridge holders, no BYO swap. Each caller still gets its own
+// StateDir (t.TempDir()), so callers may freely mutate the returned value.
+func baseCfg(t *testing.T) StackConfig {
+	t.Helper()
+	return StackConfig{
 		GatewayBinary: "/bin/true",
-		StateDir:      stateDir,
+		StateDir:      t.TempDir(),
 		SecretsDir:    "/secrets/provider",
 		DiscoveryURL:  "http://127.0.0.1:9001/discovery",
 		AuditURL:      "http://127.0.0.1:9002",
@@ -51,6 +55,11 @@ func TestBuildStack_EnvRecipe(t *testing.T) {
 		// FHIRDataURL left "" deliberately (the pre-trio posture): the recipe
 		// must omit the entry, not emit it empty.
 	}
+}
+
+func TestBuildStack_EnvRecipe(t *testing.T) {
+	cfg := baseCfg(t)
+	stateDir := cfg.StateDir
 
 	stack, err := BuildStack(cfg)
 	if err != nil {
@@ -73,6 +82,7 @@ func TestBuildStack_EnvRecipe(t *testing.T) {
 		"AUDIT_URL=http://127.0.0.1:9002",
 		"PHG_URL=http://127.0.0.1:9003",
 		"CONSENT_URL=http://127.0.0.1:9004",
+		"PAYER_DIRECTORY=" + filepath.Join(stateDir, "payer-directory.json"),
 		"SHN_FAKE_VALIDATOR=1",
 		fmt.Sprintf("OBSERVER_ADDR=127.0.0.1:%d", obsPort),
 		"PROVIDER_DAVINCI_INGRESS=1",
@@ -662,6 +672,28 @@ func TestBuildStack_TrioPresent_FHIRDataURLDefault(t *testing.T) {
 	}
 }
 
+// TestBuildStack_TrioPresent_FHIRDataURLDefault_SharedByBothChildren proves
+// the no-swap default is not just correct on the main child (the row above)
+// but IDENTICAL on the provider-data child (spec amendment A1: the
+// bring-your-own EHR swap — and so its absence — applies to BOTH gateway
+// children off the one resolved fhirDataURL, never a second computation that
+// could drift).
+func TestBuildStack_TrioPresent_FHIRDataURLDefault_SharedByBothChildren(t *testing.T) {
+	stack, err := BuildStack(trioCfg(t, nil))
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	want := "FHIR_DATA_URL=" + stack.DataServerURL + "/fhir/provider"
+	mainEnv := stack.Children[0].Env
+	pdEnv := stack.Children[len(stack.Children)-1].Env
+	if !hasEnv(mainEnv, want) {
+		t.Errorf("main child Env = %q, want %q", mainEnv, want)
+	}
+	if !hasEnv(pdEnv, want) {
+		t.Errorf("provider-data child Env = %q, want %q (same bundled default as the main child, A1)", pdEnv, want)
+	}
+}
+
 // TestBuildStack_TrioPresent_FHIRDataURLOverrideWins pins that a
 // caller-set FHIRDataURL is used VERBATIM, never overwritten by the trio
 // default.
@@ -1025,19 +1057,20 @@ func TestBuildStack_AdditionalValidatorLines_DuplicateOfPrimary_NoExtraChild(t *
 }
 
 // TestBuildStack_TrioPresent_ProviderDataChild proves the trio boots a SECOND
-// gateway child on the provider-data origination profile, routed by a static
-// payer directory to the hosted conformance payer, reading the trio's own data
-// server, with no ingress of its own and its own observer hub.
+// gateway child on the provider-data origination profile, reading the same
+// data source as the existing child (the bring-your-own swap applies to
+// both — spec amendment A1), with no ingress of its own and its own observer
+// hub, sharing the one static payer directory both children read.
 func TestBuildStack_TrioPresent_ProviderDataChild(t *testing.T) {
 	cfg := trioCfg(t, func(c *StackConfig) {
 		c.PHGURL = "http://127.0.0.1:9030"
-		// A bring-your-own SMART quad on the EXISTING child must NOT leak into
-		// the provider-data child (it reads the bundled server, unauthenticated).
+		// The bring-your-own SMART quad and swap target apply to BOTH children
+		// (A1): the provider-data child inherits them from the shared recipe.
 		c.FHIRTokenURL = "http://127.0.0.1:9040/token"
 		c.FHIRClientID = "partner-ehr"
 		c.FHIRClientKeyPath = "/secrets/ehr.key"
 		c.FHIRClientAlg = "RS384"
-		c.FHIRDataURL = "http://127.0.0.1:9050/fhir" // the swap target for the existing child only
+		c.FHIRDataURL = "http://127.0.0.1:9050/fhir"
 	})
 	stack, err := BuildStack(cfg)
 	if err != nil {
@@ -1052,7 +1085,11 @@ func TestBuildStack_TrioPresent_ProviderDataChild(t *testing.T) {
 		"ROLE=provider",
 		"ORIGINATION_PROFILE=provider-data",
 		"PAYER_DIRECTORY=" + dirPath,
-		"FHIR_DATA_URL=" + stack.DataServerURL + "/fhir/provider",
+		"FHIR_DATA_URL=http://127.0.0.1:9050/fhir",
+		"FHIR_TOKEN_URL=http://127.0.0.1:9040/token",
+		"FHIR_CLIENT_ID=partner-ehr",
+		"FHIR_CLIENT_KEY=/secrets/ehr.key",
+		"FHIR_CLIENT_ALG=RS384",
 		"PROVIDER_DTR_NATIVE=true",
 		"PROVIDER_DTR_POPULATE_URL=" + stack.DataServerURL + "/fhir/provider/Questionnaire/$populate",
 		"FHIR_VALIDATE_URL=" + stack.ValidatorURL + "/fhir",
@@ -1068,12 +1105,10 @@ func TestBuildStack_TrioPresent_ProviderDataChild(t *testing.T) {
 	}
 	for _, bad := range []string{
 		"PROVIDER_DAVINCI_INGRESS=", "PROVIDER_DAVINCI_INGRESS_BASE_URL=", "INGRESS_CLIENTS_FILE=",
-		"FHIR_TOKEN_URL=", "FHIR_CLIENT_ID=", "FHIR_CLIENT_KEY=", "FHIR_CLIENT_ALG=",
-		"FHIR_DATA_URL=http://127.0.0.1:9050/fhir",
 	} {
 		for _, e := range pd.Env {
 			if strings.HasPrefix(e, bad) {
-				t.Errorf("provider-data child env carries %q — no ingress, no partner SMART quad, never the swap target", e)
+				t.Errorf("provider-data child env carries %q — it mounts no ingress of its own", e)
 			}
 		}
 	}
@@ -1089,18 +1124,20 @@ func TestBuildStack_TrioPresent_ProviderDataChild(t *testing.T) {
 			t.Errorf("provider-data child env carries %d %s entries, want exactly 1", n, key)
 		}
 	}
-	// The existing child is untouched by the new one.
+	// The existing child is untouched by the new one (except the profile,
+	// which is the second child's alone).
 	gw := stack.Children[0]
 	for _, e := range gw.Env {
-		if strings.HasPrefix(e, "ORIGINATION_PROFILE=") || strings.HasPrefix(e, "PAYER_DIRECTORY=") {
+		if strings.HasPrefix(e, "ORIGINATION_PROFILE=") {
 			t.Errorf("the existing gateway child carries %q — the profile is the second child's, never this one's", e)
 		}
 	}
 	if !hasEnv(gw.Env, "FHIR_DATA_URL=http://127.0.0.1:9050/fhir") || !hasEnv(gw.Env, "FHIR_TOKEN_URL=http://127.0.0.1:9040/token") {
 		t.Errorf("the existing child lost its own swap target / SMART quad: %v", gw.Env)
 	}
-	// The directory: exactly one row, 00001 → conformance-payer (the published
-	// counterparty id — not a knob).
+	// The directory: first row is 00001 → conformance-payer (the published
+	// counterparty id — not a knob); no bridge holders configured here, so
+	// that is the only row.
 	raw, err := os.ReadFile(dirPath)
 	if err != nil {
 		t.Fatalf("read payer-directory.json: %v", err)
@@ -1110,7 +1147,7 @@ func TestBuildStack_TrioPresent_ProviderDataChild(t *testing.T) {
 		t.Fatalf("unmarshal payer-directory.json: %v", err)
 	}
 	if len(rows) != 1 || rows[0]["system"] != "urn:oid:2.16.840.1.113883.6.300" || rows[0]["value"] != "00001" || rows[0]["holderId"] != "conformance-payer" {
-		t.Fatalf("payer-directory.json = %v, want exactly [{00001 → conformance-payer}]", rows)
+		t.Fatalf("payer-directory.json first row = %v, want exactly [{00001 → conformance-payer}]", rows)
 	}
 	// Its own observer + ready probes; the lane's driver points at it; the
 	// existing lane's driver did not move.
@@ -1136,9 +1173,11 @@ func TestBuildStack_TrioPresent_ProviderDataChild(t *testing.T) {
 }
 
 // TestBuildStack_TrioAbsent_NoProviderDataChild is the rejection row: without
-// the trio there is no operated $populate, so there is no provider-data child,
-// no directory file, no lane driver — and the existing child never carries the
-// profile.
+// the trio there is no operated $populate, so there is no provider-data
+// child and no lane driver — but the ONE payer directory is still written
+// and still wired into the existing child (the Da Vinci lane must reach the
+// reference payer with no trio present), and that child never carries the
+// provider-data profile.
 func TestBuildStack_TrioAbsent_NoProviderDataChild(t *testing.T) {
 	cfg := StackConfig{
 		GatewayBinary: "/bin/true",
@@ -1158,32 +1197,169 @@ func TestBuildStack_TrioAbsent_NoProviderDataChild(t *testing.T) {
 	if stack.ProviderDataURL != "" || stack.ProviderDataObserverURL != "" || stack.ProviderDataObserverHealthURL != "" || stack.ProviderDataDriver.ProviderDataURL != "" {
 		t.Errorf("provider-data URLs set without the trio: %q %q %q %q", stack.ProviderDataURL, stack.ProviderDataObserverURL, stack.ProviderDataObserverHealthURL, stack.ProviderDataDriver.ProviderDataURL)
 	}
-	if _, err := os.Stat(filepath.Join(cfg.StateDir, "payer-directory.json")); err == nil {
-		t.Error("payer-directory.json written without the trio")
+	dirPath := filepath.Join(cfg.StateDir, "payer-directory.json")
+	raw, err := os.ReadFile(dirPath)
+	if err != nil {
+		t.Fatalf("payer-directory.json must be written even without the trio: %v", err)
+	}
+	var rows []map[string]string
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatalf("unmarshal payer-directory.json: %v", err)
+	}
+	if len(rows) != 1 || rows[0]["holderId"] != "conformance-payer" {
+		t.Errorf("payer-directory.json = %v, want exactly the conformance-payer row (no bridge holders configured)", rows)
+	}
+	if !hasEnv(stack.Children[0].Env, "PAYER_DIRECTORY="+dirPath) {
+		t.Errorf("the existing gateway child lacks PAYER_DIRECTORY without the trio: %v", stack.Children[0].Env)
 	}
 	for _, e := range stack.Children[0].Env {
-		if strings.HasPrefix(e, "ORIGINATION_PROFILE=") || strings.HasPrefix(e, "PAYER_DIRECTORY=") {
+		if strings.HasPrefix(e, "ORIGINATION_PROFILE=") {
 			t.Errorf("the existing gateway child carries %q — the profile is the second child's, never this one's", e)
 		}
 	}
 }
 
 // TestDeriveProviderDataEnv_Table pins the derivation: dropped keys are gone,
-// kept keys survive verbatim and in order, the five appended keys land last.
+// kept keys survive verbatim and in order — including the SMART quad and
+// PAYER_DIRECTORY, both inherited from the base recipe rather than recomputed
+// (A1: the swap and the one payer directory apply to both children) — and the
+// four appended keys land last.
 func TestDeriveProviderDataEnv_Table(t *testing.T) {
 	base := []string{
 		"ROLE=provider", "PORT=1", "HOST=127.0.0.1", "OBSERVER_ADDR=127.0.0.1:2",
 		"PROVIDER_DAVINCI_INGRESS=1", "PROVIDER_DAVINCI_INGRESS_BASE_URL=http://127.0.0.1:1", "INGRESS_CLIENTS_FILE=/s/ingress-clients.json",
 		"FHIR_DATA_URL=http://partner/fhir", "FHIR_TOKEN_URL=http://partner/token", "FHIR_CLIENT_ID=x", "FHIR_CLIENT_KEY=/k", "FHIR_CLIENT_ALG=RS384", "FHIR_CLIENT_SCOPE=s", "FHIR_CLIENT_KID=k",
-		"PROVIDER_DTR_NATIVE=true", "PATH=/usr/bin",
+		"PROVIDER_DTR_NATIVE=true", "PATH=/usr/bin", "PAYER_DIRECTORY=/s/payer-directory.json",
 	}
-	got := deriveProviderDataEnv(base, 7, "127.0.0.1:8", "http://data/fhir/provider", "/s/payer-directory.json")
+	got := deriveProviderDataEnv(base, 7, "127.0.0.1:8", "http://data/fhir/provider")
 	want := []string{
-		"ROLE=provider", "HOST=127.0.0.1", "PROVIDER_DTR_NATIVE=true", "PATH=/usr/bin",
+		"ROLE=provider", "HOST=127.0.0.1",
+		"FHIR_TOKEN_URL=http://partner/token", "FHIR_CLIENT_ID=x", "FHIR_CLIENT_KEY=/k", "FHIR_CLIENT_ALG=RS384", "FHIR_CLIENT_SCOPE=s", "FHIR_CLIENT_KID=k",
+		"PROVIDER_DTR_NATIVE=true", "PATH=/usr/bin", "PAYER_DIRECTORY=/s/payer-directory.json",
 		"PORT=7", "OBSERVER_ADDR=127.0.0.1:8", "FHIR_DATA_URL=http://data/fhir/provider",
-		"ORIGINATION_PROFILE=provider-data", "PAYER_DIRECTORY=/s/payer-directory.json",
+		"ORIGINATION_PROFILE=provider-data",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("deriveProviderDataEnv =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// ---- one payer directory for both gateway children (spec amendment A1) ------
+
+// The directory is written on EVERY boot (trio or not) and both children read it: the
+// reference payer row is constant; the bridge-demo rows are present iff configured.
+func TestBuildStack_PayerDirectory_BothChildren(t *testing.T) {
+	cfg := trioCfg(t, func(c *StackConfig) {
+		c.BridgeDemoHolder = "bridge-demo"
+		c.BridgeRefuseHolder = "bridge-demo-refuse"
+	})
+	stack, err := BuildStack(cfg)
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	dirPath := filepath.Join(cfg.StateDir, "payer-directory.json")
+	gw, pd := stack.Children[0], stack.Children[len(stack.Children)-1]
+	for _, child := range []supervisor.ChildSpec{gw, pd} {
+		if !hasEnv(child.Env, "PAYER_DIRECTORY="+dirPath) {
+			t.Errorf("%s lacks PAYER_DIRECTORY=%s: %v", child.Name, dirPath, child.Env)
+		}
+		n := 0
+		for _, e := range child.Env {
+			if strings.HasPrefix(e, "PAYER_DIRECTORY=") {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s carries %d PAYER_DIRECTORY entries, want exactly 1", child.Name, n)
+		}
+	}
+	if !hasEnv(stack.GatewayEnv, "PAYER_DIRECTORY="+dirPath) {
+		t.Errorf("Stack.GatewayEnv lacks the directory (the demo-toggle restart re-uses it)")
+	}
+	raw, err := os.ReadFile(dirPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]string
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatal(err)
+	}
+	want := []map[string]string{
+		{"system": "urn:oid:2.16.840.1.113883.6.300", "value": "00001", "holderId": "conformance-payer"},
+		{"system": "urn:shn:demo-payer", "value": "SHN-BRIDGE-DEMO", "holderId": "bridge-demo"},
+		{"system": "urn:shn:demo-payer", "value": "SHN-BRIDGE-REFUSE", "holderId": "bridge-demo-refuse"},
+	}
+	if !reflect.DeepEqual(rows, want) {
+		t.Errorf("payer-directory.json rows = %v, want %v", rows, want)
+	}
+}
+
+func TestBuildStack_PayerDirectory_NoTrio_AndNoBridgeRows(t *testing.T) {
+	cfg := baseCfg(t) // the existing no-trio config helper used by TestBuildStack_EnvRecipe
+	stack, err := BuildStack(cfg)
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	dirPath := filepath.Join(cfg.StateDir, "payer-directory.json")
+	if !hasEnv(stack.Children[0].Env, "PAYER_DIRECTORY="+dirPath) {
+		t.Fatalf("no-trio gateway child lacks PAYER_DIRECTORY — the Da Vinci lane must reach the reference payer without the trio")
+	}
+	raw, err := os.ReadFile(dirPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]string
+	_ = json.Unmarshal(raw, &rows)
+	if len(rows) != 1 || rows[0]["holderId"] != "conformance-payer" {
+		t.Errorf("rows = %v, want exactly the conformance-payer row when no bridge holder is configured", rows)
+	}
+}
+
+// The BYO-EHR swap (FHIR_DATA_URL + the SMART quad) applies to BOTH children (spec amendment A1).
+func TestBuildStack_TrioPresent_SwapAppliesToBothChildren(t *testing.T) {
+	cfg := trioCfg(t, func(c *StackConfig) {
+		c.FHIRTokenURL = "http://127.0.0.1:9040/token"
+		c.FHIRClientID = "partner-ehr"
+		c.FHIRClientKeyPath = "/secrets/ehr.key"
+		c.FHIRClientAlg = "RS384"
+		c.FHIRDataURL = "http://127.0.0.1:9050/fhir"
+	})
+	stack, err := BuildStack(cfg)
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	for _, child := range []supervisor.ChildSpec{stack.Children[0], stack.Children[len(stack.Children)-1]} {
+		for _, want := range []string{"FHIR_DATA_URL=http://127.0.0.1:9050/fhir", "FHIR_TOKEN_URL=http://127.0.0.1:9040/token", "FHIR_CLIENT_ID=partner-ehr", "FHIR_CLIENT_KEY=/secrets/ehr.key", "FHIR_CLIENT_ALG=RS384"} {
+			if !hasEnv(child.Env, want) {
+				t.Errorf("%s lacks %q under the swap: %v", child.Name, want, child.Env)
+			}
+		}
+	}
+	pd := stack.Children[len(stack.Children)-1]
+	if !hasEnv(pd.Env, "PROVIDER_DTR_POPULATE_URL="+stack.DataServerURL+"/fhir/provider/Questionnaire/$populate") {
+		t.Errorf("the provider-data child's $populate must stay on the bundled data server under the swap (the stated ceiling)")
+	}
+}
+
+// TestBuildStack_TrioPresent_NoSwap_NeitherChildCarriesTheSMARTQuad is the A1
+// rider's NEGATIVE half: "the swap applies to both children" is only a claim
+// about the swap if an unswapped boot leaves both children clean. A quad
+// emitted unconditionally would make the positive test above pass for the
+// wrong reason — and half-set (an empty FHIR_TOKEN_URL with the rest present)
+// is the exact shape the gateway's own emptiness guard rejects, so it would
+// not fail quietly either.
+func TestBuildStack_TrioPresent_NoSwap_NeitherChildCarriesTheSMARTQuad(t *testing.T) {
+	stack, err := BuildStack(trioCfg(t, nil))
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	for _, child := range []supervisor.ChildSpec{stack.Children[0], stack.Children[len(stack.Children)-1]} {
+		for _, bad := range []string{"FHIR_TOKEN_URL=", "FHIR_CLIENT_ID=", "FHIR_CLIENT_KEY=", "FHIR_CLIENT_ALG="} {
+			for _, e := range child.Env {
+				if strings.HasPrefix(e, bad) {
+					t.Errorf("%s carries %q with no swap configured — the SMART quad is the swap's, never the base recipe's", child.Name, e)
+				}
+			}
+		}
 	}
 }

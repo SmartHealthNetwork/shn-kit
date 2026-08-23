@@ -1,5 +1,5 @@
-github.com/SmartHealthNetwork/shn-gateway v0.38.0 h1:0ciH2hAQmkQ4LEa/DjNpR0gdn38KrBi9Srsi2qfltQA=
-github.com/SmartHealthNetwork/shn-gateway v0.38.0/go.mod h1:egfSSAJiSGtFzsbI//v8xqJUsMJiB76pDTDvq2xGsvg=
+github.com/SmartHealthNetwork/shn-gateway v0.38.1 h1:mN/cVrTaVRqPQv3BIlA6oCIJE1eK5TbDXM/3Zajxd64=
+github.com/SmartHealthNetwork/shn-gateway v0.38.1/go.mod h1:egfSSAJiSGtFzsbI//v8xqJUsMJiB76pDTDvq2xGsvg=
 github.com/SmartHealthNetwork/shn-sdk v0.45.0 h1:M0h4bWVjiQFX3a+BINmNB3WJiG9DHCSDTTQRHwg0Nzw=
 github.com/SmartHealthNetwork/shn-sdk v0.45.0/go.mod h1:dMc4ZSYqq3+eCfkPiDUbqJnAzUdnbw9cEdc504wY+qk=
 github.com/danieljoos/wincred v1.2.3 h1:v7dZC2x32Ut3nEfRH+vhoZGvN72+dQ/snVXo/vMFLdQ=

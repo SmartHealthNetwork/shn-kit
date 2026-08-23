@@ -134,8 +134,8 @@ export function edgeStatesFor(steps: Step[], lane: Lane): EdgeStates {
 // lane sor step maps to NO edge — there the provider node is the calling
 // Da Vinci client, not the data source; the read is gateway-internal.
 export function edgeForStep(step: Step, lane: Lane): EdgeKey | undefined {
-  // Both plain-EHR lanes (ehr, provider-data) read the provider's data
-  // source; the conformant lane's provider node is the calling client.
+  // The Plain EHR lane reads the provider's data source; the conformant
+  // lane's provider node is the calling client.
   if (step.kind === 'sor') return lane !== 'conformant' ? 'src' : undefined;
   if (step.kind === 'ingress') return 'src';
   if (step.kind === 'validate') return 'val';

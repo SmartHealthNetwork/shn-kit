@@ -36,8 +36,8 @@ export interface StatusResponse {
   validator?: 'stand-in' | 'packaged';
   brProviderUrl?: string;
   // providerDataUrl: present iff the Kit booted its provider-data gateway
-  // child (the packaged Java trio) — the signal the third lane exists. Same
-  // key-presence contract as brProviderUrl.
+  // child (the packaged Java trio) — the signal the Plain EHR lane exists.
+  // Same key-presence contract as brProviderUrl.
   providerDataUrl?: string;
   update?: { available: boolean; latest: string; url: string };
   // bridging mirrors kitd.go's bridgingStatus: the KEY ITSELF
@@ -78,11 +78,13 @@ export interface AboutManifest {
   };
 }
 
-// 'provider-data' is the third lane: every scenario originated off the Kit's
-// own FHIR data server and run against the hosted Da Vinci reference payer.
-// It exists only when StatusResponse.providerDataUrl is present (the packaged
-// Java trio); the ModeSwitch hides it otherwise.
-export type Lane = 'ehr' | 'conformant' | 'provider-data';
+// The Plain EHR lane exists only when StatusResponse.providerDataUrl is
+// present (the packaged Java trio boots its gateway child); the ModeSwitch
+// hides it otherwise. Both lanes run every scenario against the same hosted
+// Da Vinci reference payer. Old run-history records may still carry the
+// retired 'provider-data' lane value — App.tsx's runLane derivation and
+// RunInspector.tsx's laneFromEvent normalise it to 'ehr'.
+export type Lane = 'ehr' | 'conformant';
 
 // The scenario-card detail level: 'overview' is the plain-language outcome for
 // any reader; 'technical' is the Da Vinci-mechanics register for integrators.

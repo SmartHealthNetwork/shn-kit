@@ -1,22 +1,22 @@
 [
  {
-  "seq": 384,
-  "time": "2026-08-21T01:23:47.379232-04:00",
+  "seq": 46,
+  "time": "2026-08-23T00:58:49.421199-04:00",
   "type": "run.started",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03"
  },
  {
-  "seq": 385,
-  "time": "2026-08-21T01:23:47.383211-04:00",
+  "seq": 47,
+  "time": "2026-08-23T00:58:49.424554-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 200,
-   "time": "2026-08-21T01:23:47.383088-04:00",
+   "seq": 21,
+   "time": "2026-08-23T00:58:49.424408-04:00",
    "kind": "ingress.received",
    "legType": "crd-ingress",
    "direction": "ingress",
@@ -30,9 +30,9 @@
          "code": {
           "coding": [
            {
-            "code": "72148",
-            "display": "MRI lumbar spine",
-            "system": "http://www.ama-assn.org/go/cpt"
+            "code": "L8000",
+            "display": "Breast prosthesis, mastectomy bra",
+            "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
            }
           ]
          },
@@ -96,15 +96,15 @@
   }
  },
  {
-  "seq": 386,
-  "time": "2026-08-21T01:23:47.383356-04:00",
+  "seq": 48,
+  "time": "2026-08-23T00:58:49.424687-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 201,
-   "time": "2026-08-21T01:23:47.383297-04:00",
+   "seq": 22,
+   "time": "2026-08-23T00:58:49.424626-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -112,15 +112,15 @@
   }
  },
  {
-  "seq": 387,
-  "time": "2026-08-21T01:23:47.383372-04:00",
+  "seq": 49,
+  "time": "2026-08-23T00:58:49.424702-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 202,
-   "time": "2026-08-21T01:23:47.383323-04:00",
+   "seq": 23,
+   "time": "2026-08-23T00:58:49.424652-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -128,15 +128,15 @@
   }
  },
  {
-  "seq": 388,
-  "time": "2026-08-21T01:23:47.383377-04:00",
+  "seq": 50,
+  "time": "2026-08-23T00:58:49.424706-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 203,
-   "time": "2026-08-21T01:23:47.383327-04:00",
+   "seq": 24,
+   "time": "2026-08-23T00:58:49.424654-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -144,15 +144,15 @@
   }
  },
  {
-  "seq": 389,
-  "time": "2026-08-21T01:23:47.383386-04:00",
+  "seq": 51,
+  "time": "2026-08-23T00:58:49.424713-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 204,
-   "time": "2026-08-21T01:23:47.383329-04:00",
+   "seq": 25,
+   "time": "2026-08-23T00:58:49.424656-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -160,20 +160,20 @@
   }
  },
  {
-  "seq": 390,
-  "time": "2026-08-21T01:23:47.383525-04:00",
+  "seq": 52,
+  "time": "2026-08-23T00:58:49.424857-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 205,
-   "time": "2026-08-21T01:23:47.383429-04:00",
+   "seq": 26,
+   "time": "2026-08-23T00:58:49.424774-04:00",
    "kind": "leg.originated",
    "legType": "crd-order-select",
    "direction": "originate",
-   "correlationId": "818500aee85d1c02c968829d2265778a",
-   "counterpart": "payer",
+   "correlationId": "a7ad12c98dbe6bb6fe1a4d93915b66a9",
+   "counterpart": "conformance-payer",
    "authorityFrame": "provider-tpo",
    "op": "crd-order-select",
    "payload": {
@@ -186,9 +186,9 @@
          "code": {
           "coding": [
            {
-            "code": "72148",
-            "display": "MRI lumbar spine",
-            "system": "http://www.ama-assn.org/go/cpt"
+            "code": "L8000",
+            "display": "Breast prosthesis, mastectomy bra",
+            "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
            }
           ]
          },
@@ -275,20 +275,20 @@
   }
  },
  {
-  "seq": 391,
-  "time": "2026-08-21T01:23:47.388559-04:00",
+  "seq": 53,
+  "time": "2026-08-23T00:58:49.431307-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 206,
-   "time": "2026-08-21T01:23:47.388447-04:00",
+   "seq": 27,
+   "time": "2026-08-23T00:58:49.431127-04:00",
    "kind": "leg.response",
    "legType": "crd-order-select",
    "direction": "originate",
-   "correlationId": "818500aee85d1c02c968829d2265778a",
-   "counterpart": "payer",
+   "correlationId": "a7ad12c98dbe6bb6fe1a4d93915b66a9",
+   "counterpart": "conformance-payer",
    "authorityFrame": "payer-coverage",
    "op": "crd-cards",
    "payload": {
@@ -309,15 +309,15 @@
   }
  },
  {
-  "seq": 392,
-  "time": "2026-08-21T01:23:47.388578-04:00",
+  "seq": 54,
+  "time": "2026-08-23T00:58:49.431332-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 207,
-   "time": "2026-08-21T01:23:47.388473-04:00",
+   "seq": 28,
+   "time": "2026-08-23T00:58:49.431164-04:00",
    "kind": "ingress.responded",
    "legType": "crd-ingress",
    "direction": "ingress",
@@ -340,15 +340,15 @@
   }
  },
  {
-  "seq": 393,
-  "time": "2026-08-21T01:23:47.390318-04:00",
+  "seq": 55,
+  "time": "2026-08-23T00:58:49.433167-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 208,
-   "time": "2026-08-21T01:23:47.390168-04:00",
+   "seq": 29,
+   "time": "2026-08-23T00:58:49.433025-04:00",
    "kind": "ingress.received",
    "legType": "dtr-ingress",
    "direction": "ingress",
@@ -413,15 +413,15 @@
   }
  },
  {
-  "seq": 394,
-  "time": "2026-08-21T01:23:47.390416-04:00",
+  "seq": 56,
+  "time": "2026-08-23T00:58:49.433302-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 209,
-   "time": "2026-08-21T01:23:47.390318-04:00",
+   "seq": 30,
+   "time": "2026-08-23T00:58:49.433209-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -429,20 +429,20 @@
   }
  },
  {
-  "seq": 395,
-  "time": "2026-08-21T01:23:47.390476-04:00",
+  "seq": 57,
+  "time": "2026-08-23T00:58:49.433464-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 210,
-   "time": "2026-08-21T01:23:47.39036-04:00",
+   "seq": 31,
+   "time": "2026-08-23T00:58:49.433254-04:00",
    "kind": "leg.originated",
    "legType": "dtr-questionnaire-fetch",
    "direction": "originate",
-   "correlationId": "c10b39815f0604d18d18a3879dc48be4",
-   "counterpart": "payer",
+   "correlationId": "5756887857fc7eb3010d73909965d3e3",
+   "counterpart": "conformance-payer",
    "authorityFrame": "provider-tpo",
    "op": "dtr-questionnaire-fetch",
    "payload": {
@@ -496,20 +496,20 @@
   }
  },
  {
-  "seq": 396,
-  "time": "2026-08-21T01:23:47.395334-04:00",
+  "seq": 58,
+  "time": "2026-08-23T00:58:49.438614-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 211,
-   "time": "2026-08-21T01:23:47.395186-04:00",
+   "seq": 32,
+   "time": "2026-08-23T00:58:49.43843-04:00",
    "kind": "leg.response",
    "legType": "dtr-questionnaire-fetch",
    "direction": "originate",
-   "correlationId": "c10b39815f0604d18d18a3879dc48be4",
-   "counterpart": "payer",
+   "correlationId": "5756887857fc7eb3010d73909965d3e3",
+   "counterpart": "conformance-payer",
    "authorityFrame": "payer-coverage",
    "op": "dtr-questionnaire",
    "payload": {
@@ -649,15 +649,15 @@
   }
  },
  {
-  "seq": 397,
-  "time": "2026-08-21T01:23:47.395353-04:00",
+  "seq": 59,
+  "time": "2026-08-23T00:58:49.438641-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 212,
-   "time": "2026-08-21T01:23:47.395226-04:00",
+   "seq": 33,
+   "time": "2026-08-23T00:58:49.438477-04:00",
    "kind": "ingress.responded",
    "legType": "dtr-ingress",
    "direction": "ingress",
@@ -799,208 +799,242 @@
   }
  },
  {
-  "seq": 398,
-  "time": "2026-08-21T01:23:47.397333-04:00",
+  "seq": 60,
+  "time": "2026-08-23T00:58:49.441381-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 213,
-   "time": "2026-08-21T01:23:47.397189-04:00",
+   "seq": 34,
+   "time": "2026-08-23T00:58:49.441233-04:00",
    "kind": "ingress.received",
    "legType": "pas-ingress",
    "direction": "ingress",
    "payload": {
     "entry": [
      {
+      "fullUrl": "https://shn.example/fhir/Claim/convergence-claim",
+      "resource": {
+       "created": "2026-08-23T04:58:49Z",
+       "id": "convergence-claim",
+       "identifier": [
+        {
+         "system": "urn:shn:correlation",
+         "value": "kit-uc03-89170d2c910da083"
+        }
+       ],
+       "insurance": [
+        {
+         "coverage": {
+          "identifier": {
+           "system": "urn:shn:coverage",
+           "value": "MBR-COVERED"
+          }
+         },
+         "focal": true,
+         "sequence": 1
+        }
+       ],
+       "insurer": {
+        "reference": "https://shn.example/fhir/Organization/cms-payer"
+       },
+       "item": [
+        {
+         "category": {
+          "coding": [
+           {
+            "code": "1",
+            "display": "Medical Care",
+            "system": "https://codesystem.x12.org/005010/1365"
+           }
+          ]
+         },
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-requestedService",
+           "valueReference": {
+            "reference": "https://shn.example/fhir/ServiceRequest/convergence-sr"
+           }
+          }
+         ],
+         "productOrService": {
+          "coding": [
+           {
+            "code": "L8000",
+            "display": "Breast prosthesis, mastectomy bra",
+            "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
+           }
+          ]
+         },
+         "sequence": 1
+        }
+       ],
+       "patient": {
+        "reference": "https://shn.example/fhir/Patient/MBR-COVERED"
+       },
+       "priority": {
+        "coding": [
+         {
+          "code": "normal"
+         }
+        ]
+       },
+       "provider": {
+        "display": "provider"
+       },
+       "resourceType": "Claim",
+       "status": "active",
+       "type": {
+        "coding": [
+         {
+          "code": "professional",
+          "system": "http://terminology.hl7.org/CodeSystem/claim-type"
+         }
+        ]
+       },
+       "use": "preauthorization"
+      }
+     },
+     {
+      "fullUrl": "https://shn.example/fhir/Patient/MBR-COVERED",
       "resource": {
        "id": "MBR-COVERED",
        "resourceType": "Patient"
       }
      },
      {
+      "fullUrl": "https://shn.example/fhir/Coverage/convergence-coverage",
       "resource": {
        "beneficiary": {
         "reference": "Patient/MBR-COVERED"
        },
-       "id": "cov1",
+       "id": "convergence-coverage",
+       "identifier": [
+        {
+         "system": "urn:shn:coverage",
+         "type": {
+          "coding": [
+           {
+            "code": "MB",
+            "system": "http://terminology.hl7.org/CodeSystem/v2-0203"
+           }
+          ]
+         },
+         "value": "MBR-COVERED"
+        }
+       ],
        "payor": [
         {
          "identifier": {
           "system": "urn:oid:2.16.840.1.113883.6.300",
           "value": "00001"
-         }
+         },
+         "reference": "https://shn.example/fhir/Organization/cms-payer"
         }
        ],
+       "relationship": {
+        "coding": [
+         {
+          "code": "self",
+          "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship"
+         }
+        ]
+       },
        "resourceType": "Coverage",
        "status": "active"
       }
      },
      {
+      "fullUrl": "https://shn.example/fhir/ServiceRequest/convergence-sr",
       "resource": {
-       "meta": {
-        "profile": [
-         "http://hl7.org/fhir/us/core/StructureDefinition/us-core-servicerequest"
-        ]
-       },
-       "status": "draft",
-       "intent": "order",
        "code": {
         "coding": [
          {
-          "system": "http://www.ama-assn.org/go/cpt",
-          "code": "72148",
-          "display": "MRI lumbar spine w/o contrast"
+          "code": "L8000",
+          "display": "Breast prosthesis, mastectomy bra",
+          "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
          }
         ]
        },
-       "subject": {
-        "reference": "Patient/MBR-COVERED"
-       },
+       "id": "convergence-sr",
+       "intent": "order",
        "reasonCode": [
         {
          "coding": [
           {
-           "system": "http://hl7.org/fhir/sid/icd-10-cm",
-           "code": "M51.16"
+           "code": "M51.16",
+           "system": "http://hl7.org/fhir/sid/icd-10-cm"
           }
          ]
         }
        ],
-       "resourceType": "ServiceRequest"
-      }
-     },
-     {
-      "resource": {
-       "patient": {
-        "reference": "Patient/MBR-COVERED"
-       },
-       "resourceType": "Claim"
-      }
-     },
-     {
-      "resource": {
-       "extension": [
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
-         "valueReference": {
-          "reference": "Coverage/MBR-COVERED"
-         }
-        },
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
-         "valueReference": {
-          "reference": "ServiceRequest/sr1"
-         }
-        },
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
-         "valueCodeableConcept": {
-          "coding": [
-           {
-            "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/temp",
-            "code": "withpa",
-            "display": "Information needed for a prior authorization"
-           }
-          ]
-         }
-        }
-       ],
-       "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
-       "status": "completed",
+       "resourceType": "ServiceRequest",
+       "status": "draft",
        "subject": {
         "reference": "Patient/MBR-COVERED"
-       },
-       "authored": "2026-08-21T05:23:47Z",
-       "item": [
+       }
+      }
+     },
+     {
+      "fullUrl": "https://shn.example/fhir/Organization/cms-payer",
+      "resource": {
+       "id": "cms-payer",
+       "identifier": [
         {
-         "linkId": "clinical-history",
-         "item": [
-          {
-           "linkId": "conservative-therapy-weeks",
-           "answer": [
-            {
-             "extension": [
-              {
-               "extension": [
-                {
-                 "url": "source",
-                 "valueCode": "auto"
-                }
-               ],
-               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-              }
-             ],
-             "valueInteger": 6
-            }
-           ]
-          },
-          {
-           "linkId": "neuro-deficit",
-           "answer": [
-            {
-             "extension": [
-              {
-               "extension": [
-                {
-                 "url": "source",
-                 "valueCode": "auto"
-                }
-               ],
-               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-              }
-             ],
-             "valueBoolean": false
-            }
-           ]
-          },
-          {
-           "linkId": "prior-treatment",
-           "item": [
-            {
-             "linkId": "prior-imaging",
-             "answer": [
-              {
-               "extension": [
-                {
-                 "extension": [
-                  {
-                   "url": "source",
-                   "valueCode": "auto"
-                  }
-                 ],
-                 "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-                }
-               ],
-               "valueBoolean": true
-              }
-             ]
-            }
-           ]
-          }
-         ]
+         "system": "urn:oid:2.16.840.1.113883.6.300",
+         "value": "00001"
         }
        ],
-       "resourceType": "QuestionnaireResponse"
+       "name": "Centers for Medicare and Medicaid Services",
+       "resourceType": "Organization"
+      }
+     },
+     {
+      "fullUrl": "https://shn.example/fhir/QuestionnaireResponse/convergence-qr",
+      "resource": {
+       "authored": "2026-08-23T04:58:49Z",
+       "id": "convergence-qr",
+       "item": [
+        {
+         "answer": [
+          {
+           "valueString": "attested"
+          }
+         ],
+         "linkId": "1",
+         "text": "Clinician attestation"
+        }
+       ],
+       "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
+       "resourceType": "QuestionnaireResponse",
+       "status": "completed",
+       "subject": {
+        "reference": "https://shn.example/fhir/Patient/MBR-COVERED"
+       }
       }
      }
     ],
+    "identifier": {
+     "system": "urn:shn:pas:bundle",
+     "value": "kit-uc03-89170d2c910da083"
+    },
     "resourceType": "Bundle",
+    "timestamp": "2026-08-23T04:58:49Z",
     "type": "collection"
    }
   }
  },
  {
-  "seq": 399,
-  "time": "2026-08-21T01:23:47.39749-04:00",
+  "seq": 61,
+  "time": "2026-08-23T00:58:49.441549-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 214,
-   "time": "2026-08-21T01:23:47.397398-04:00",
+   "seq": 35,
+   "time": "2026-08-23T00:58:49.44145-04:00",
    "kind": "sor.read",
    "direction": "sor",
    "op": "ResolvePatient",
@@ -1008,217 +1042,251 @@
   }
  },
  {
-  "seq": 400,
-  "time": "2026-08-21T01:23:47.397688-04:00",
+  "seq": 62,
+  "time": "2026-08-23T00:58:49.441777-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 215,
-   "time": "2026-08-21T01:23:47.39754-04:00",
+   "seq": 36,
+   "time": "2026-08-23T00:58:49.441632-04:00",
    "kind": "leg.originated",
    "legType": "pas-claim",
    "direction": "originate",
-   "correlationId": "9ba92a3d0182707a27c79241460fedd3",
-   "counterpart": "payer",
+   "correlationId": "kit-uc03-89170d2c910da083",
+   "counterpart": "conformance-payer",
    "authorityFrame": "provider-tpo",
    "op": "pas-submit",
    "payload": {
     "entry": [
      {
+      "fullUrl": "https://shn.example/fhir/Claim/convergence-claim",
+      "resource": {
+       "created": "2026-08-23T04:58:49Z",
+       "id": "convergence-claim",
+       "identifier": [
+        {
+         "system": "urn:shn:correlation",
+         "value": "kit-uc03-89170d2c910da083"
+        }
+       ],
+       "insurance": [
+        {
+         "coverage": {
+          "identifier": {
+           "system": "urn:shn:coverage",
+           "value": "MBR-COVERED"
+          }
+         },
+         "focal": true,
+         "sequence": 1
+        }
+       ],
+       "insurer": {
+        "reference": "https://shn.example/fhir/Organization/cms-payer"
+       },
+       "item": [
+        {
+         "category": {
+          "coding": [
+           {
+            "code": "1",
+            "display": "Medical Care",
+            "system": "https://codesystem.x12.org/005010/1365"
+           }
+          ]
+         },
+         "extension": [
+          {
+           "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-requestedService",
+           "valueReference": {
+            "reference": "https://shn.example/fhir/ServiceRequest/convergence-sr"
+           }
+          }
+         ],
+         "productOrService": {
+          "coding": [
+           {
+            "code": "L8000",
+            "display": "Breast prosthesis, mastectomy bra",
+            "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
+           }
+          ]
+         },
+         "sequence": 1
+        }
+       ],
+       "patient": {
+        "reference": "https://shn.example/fhir/Patient/MBR-COVERED"
+       },
+       "priority": {
+        "coding": [
+         {
+          "code": "normal"
+         }
+        ]
+       },
+       "provider": {
+        "display": "provider"
+       },
+       "resourceType": "Claim",
+       "status": "active",
+       "type": {
+        "coding": [
+         {
+          "code": "professional",
+          "system": "http://terminology.hl7.org/CodeSystem/claim-type"
+         }
+        ]
+       },
+       "use": "preauthorization"
+      }
+     },
+     {
+      "fullUrl": "https://shn.example/fhir/Patient/MBR-COVERED",
       "resource": {
        "id": "MBR-COVERED",
        "resourceType": "Patient"
       }
      },
      {
+      "fullUrl": "https://shn.example/fhir/Coverage/convergence-coverage",
       "resource": {
        "beneficiary": {
         "reference": "Patient/MBR-COVERED"
        },
-       "id": "cov1",
+       "id": "convergence-coverage",
+       "identifier": [
+        {
+         "system": "urn:shn:coverage",
+         "type": {
+          "coding": [
+           {
+            "code": "MB",
+            "system": "http://terminology.hl7.org/CodeSystem/v2-0203"
+           }
+          ]
+         },
+         "value": "MBR-COVERED"
+        }
+       ],
        "payor": [
         {
          "identifier": {
           "system": "urn:oid:2.16.840.1.113883.6.300",
           "value": "00001"
-         }
+         },
+         "reference": "https://shn.example/fhir/Organization/cms-payer"
         }
        ],
+       "relationship": {
+        "coding": [
+         {
+          "code": "self",
+          "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship"
+         }
+        ]
+       },
        "resourceType": "Coverage",
        "status": "active"
       }
      },
      {
+      "fullUrl": "https://shn.example/fhir/ServiceRequest/convergence-sr",
       "resource": {
-       "meta": {
-        "profile": [
-         "http://hl7.org/fhir/us/core/StructureDefinition/us-core-servicerequest"
-        ]
-       },
-       "status": "draft",
-       "intent": "order",
        "code": {
         "coding": [
          {
-          "system": "http://www.ama-assn.org/go/cpt",
-          "code": "72148",
-          "display": "MRI lumbar spine w/o contrast"
+          "code": "L8000",
+          "display": "Breast prosthesis, mastectomy bra",
+          "system": "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
          }
         ]
        },
-       "subject": {
-        "reference": "Patient/MBR-COVERED"
-       },
+       "id": "convergence-sr",
+       "intent": "order",
        "reasonCode": [
         {
          "coding": [
           {
-           "system": "http://hl7.org/fhir/sid/icd-10-cm",
-           "code": "M51.16"
+           "code": "M51.16",
+           "system": "http://hl7.org/fhir/sid/icd-10-cm"
           }
          ]
         }
        ],
-       "resourceType": "ServiceRequest"
-      }
-     },
-     {
-      "resource": {
-       "patient": {
-        "reference": "Patient/MBR-COVERED"
-       },
-       "resourceType": "Claim"
-      }
-     },
-     {
-      "resource": {
-       "extension": [
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
-         "valueReference": {
-          "reference": "Coverage/MBR-COVERED"
-         }
-        },
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/qr-context",
-         "valueReference": {
-          "reference": "ServiceRequest/sr1"
-         }
-        },
-        {
-         "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/intendedUse",
-         "valueCodeableConcept": {
-          "coding": [
-           {
-            "system": "http://hl7.org/fhir/us/davinci-crd/CodeSystem/temp",
-            "code": "withpa",
-            "display": "Information needed for a prior authorization"
-           }
-          ]
-         }
-        }
-       ],
-       "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri|1.0.0",
-       "status": "completed",
+       "resourceType": "ServiceRequest",
+       "status": "draft",
        "subject": {
         "reference": "Patient/MBR-COVERED"
-       },
-       "authored": "2026-08-21T05:23:47Z",
-       "item": [
+       }
+      }
+     },
+     {
+      "fullUrl": "https://shn.example/fhir/Organization/cms-payer",
+      "resource": {
+       "id": "cms-payer",
+       "identifier": [
         {
-         "linkId": "clinical-history",
-         "item": [
-          {
-           "linkId": "conservative-therapy-weeks",
-           "answer": [
-            {
-             "extension": [
-              {
-               "extension": [
-                {
-                 "url": "source",
-                 "valueCode": "auto"
-                }
-               ],
-               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-              }
-             ],
-             "valueInteger": 6
-            }
-           ]
-          },
-          {
-           "linkId": "neuro-deficit",
-           "answer": [
-            {
-             "extension": [
-              {
-               "extension": [
-                {
-                 "url": "source",
-                 "valueCode": "auto"
-                }
-               ],
-               "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-              }
-             ],
-             "valueBoolean": false
-            }
-           ]
-          },
-          {
-           "linkId": "prior-treatment",
-           "item": [
-            {
-             "linkId": "prior-imaging",
-             "answer": [
-              {
-               "extension": [
-                {
-                 "extension": [
-                  {
-                   "url": "source",
-                   "valueCode": "auto"
-                  }
-                 ],
-                 "url": "http://hl7.org/fhir/us/davinci-dtr/StructureDefinition/information-origin"
-                }
-               ],
-               "valueBoolean": true
-              }
-             ]
-            }
-           ]
-          }
-         ]
+         "system": "urn:oid:2.16.840.1.113883.6.300",
+         "value": "00001"
         }
        ],
-       "resourceType": "QuestionnaireResponse"
+       "name": "Centers for Medicare and Medicaid Services",
+       "resourceType": "Organization"
+      }
+     },
+     {
+      "fullUrl": "https://shn.example/fhir/QuestionnaireResponse/convergence-qr",
+      "resource": {
+       "authored": "2026-08-23T04:58:49Z",
+       "id": "convergence-qr",
+       "item": [
+        {
+         "answer": [
+          {
+           "valueString": "attested"
+          }
+         ],
+         "linkId": "1",
+         "text": "Clinician attestation"
+        }
+       ],
+       "questionnaire": "http://smarthealth.network/fhir/Questionnaire/pa-lumbar-mri",
+       "resourceType": "QuestionnaireResponse",
+       "status": "completed",
+       "subject": {
+        "reference": "https://shn.example/fhir/Patient/MBR-COVERED"
+       }
       }
      }
     ],
+    "identifier": {
+     "system": "urn:shn:pas:bundle",
+     "value": "kit-uc03-89170d2c910da083"
+    },
     "resourceType": "Bundle",
+    "timestamp": "2026-08-23T04:58:49Z",
     "type": "collection"
    }
   }
  },
  {
-  "seq": 401,
-  "time": "2026-08-21T01:23:47.401755-04:00",
+  "seq": 63,
+  "time": "2026-08-23T00:58:49.446744-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 216,
-   "time": "2026-08-21T01:23:47.40163-04:00",
+   "seq": 37,
+   "time": "2026-08-23T00:58:49.446657-04:00",
    "kind": "leg.response",
    "legType": "pas-claim",
    "direction": "originate",
-   "correlationId": "9ba92a3d0182707a27c79241460fedd3",
-   "counterpart": "payer",
+   "correlationId": "kit-uc03-89170d2c910da083",
+   "counterpart": "conformance-payer",
    "authorityFrame": "payer-coverage",
    "op": "pas-response",
    "payload": {
@@ -1239,9 +1307,9 @@
     },
     "use": "preauthorization",
     "patient": {
-     "reference": "Patient/MBR-COVERED"
+     "reference": "https://shn.example/fhir/Patient/MBR-COVERED"
     },
-    "created": "2026-08-21T05:23:47Z",
+    "created": "2023-11-14T22:13:20Z",
     "insurer": {
      "reference": "Organization/payer"
     },
@@ -1249,12 +1317,12 @@
     "identifier": [
      {
       "system": "urn:shn:correlation",
-      "value": "9ba92a3d0182707a27c79241460fedd3"
+      "value": "partner"
      }
     ],
-    "preAuthRef": "PA-f786fb1356c9",
+    "preAuthRef": "AUTH-1294",
     "preAuthPeriod": {
-     "end": "2026-11-19"
+     "end": "2024-02-12"
     },
     "item": [
      {
@@ -1296,15 +1364,15 @@
   }
  },
  {
-  "seq": 402,
-  "time": "2026-08-21T01:23:47.401767-04:00",
+  "seq": 64,
+  "time": "2026-08-23T00:58:49.446815-04:00",
   "type": "observer",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "observer": {
-   "seq": 217,
-   "time": "2026-08-21T01:23:47.401674-04:00",
+   "seq": 38,
+   "time": "2026-08-23T00:58:49.446742-04:00",
    "kind": "ingress.responded",
    "legType": "pas-ingress",
    "direction": "ingress",
@@ -1326,9 +1394,9 @@
     },
     "use": "preauthorization",
     "patient": {
-     "reference": "Patient/MBR-COVERED"
+     "reference": "https://shn.example/fhir/Patient/MBR-COVERED"
     },
-    "created": "2026-08-21T05:23:47Z",
+    "created": "2023-11-14T22:13:20Z",
     "insurer": {
      "reference": "Organization/payer"
     },
@@ -1336,12 +1404,12 @@
     "identifier": [
      {
       "system": "urn:shn:correlation",
-      "value": "9ba92a3d0182707a27c79241460fedd3"
+      "value": "partner"
      }
     ],
-    "preAuthRef": "PA-f786fb1356c9",
+    "preAuthRef": "AUTH-1294",
     "preAuthPeriod": {
-     "end": "2026-11-19"
+     "end": "2024-02-12"
     },
     "item": [
      {
@@ -1384,15 +1452,15 @@
   }
  },
  {
-  "seq": 403,
-  "time": "2026-08-21T01:23:47.403652-04:00",
+  "seq": 65,
+  "time": "2026-08-23T00:58:49.447309-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 149,
-   "timestamp": "2026-08-21T01:23:47-04:00",
+   "seq": 12,
+   "timestamp": "2026-08-23T00:58:49-04:00",
    "sender": "shn-kit-live01",
    "recipient": "authz",
    "transactionType": "authz-decision:crd-order-select",
@@ -1403,17 +1471,17 @@
   }
  },
  {
-  "seq": 404,
-  "time": "2026-08-21T01:23:47.403664-04:00",
+  "seq": 66,
+  "time": "2026-08-23T00:58:49.447316-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 150,
-   "timestamp": "2026-08-21T01:23:47-04:00",
+   "seq": 13,
+   "timestamp": "2026-08-23T00:58:49-04:00",
    "sender": "shn-kit-live01",
-   "recipient": "payer",
+   "recipient": "conformance-payer",
    "transactionType": "crd-order-select",
    "authorityFrame": "provider-tpo",
    "scope": "crd-context",
@@ -1422,16 +1490,16 @@
   }
  },
  {
-  "seq": 405,
-  "time": "2026-08-21T01:23:47.403667-04:00",
+  "seq": 67,
+  "time": "2026-08-23T00:58:49.447318-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 151,
-   "timestamp": "2026-08-21T01:23:47-04:00",
-   "sender": "payer",
+   "seq": 14,
+   "timestamp": "2026-08-23T00:58:49-04:00",
+   "sender": "conformance-payer",
    "recipient": "authz",
    "transactionType": "authz-decision:crd-cards",
    "authorityFrame": "payer-coverage",
@@ -1441,16 +1509,16 @@
   }
  },
  {
-  "seq": 406,
-  "time": "2026-08-21T01:23:47.40367-04:00",
+  "seq": 68,
+  "time": "2026-08-23T00:58:49.44732-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 152,
-   "timestamp": "2026-08-21T01:23:47-04:00",
-   "sender": "payer",
+   "seq": 15,
+   "timestamp": "2026-08-23T00:58:49-04:00",
+   "sender": "conformance-payer",
    "recipient": "shn-kit-live01",
    "transactionType": "crd-order-select",
    "authorityFrame": "payer-coverage",
@@ -1460,15 +1528,15 @@
   }
  },
  {
-  "seq": 407,
-  "time": "2026-08-21T01:23:47.403672-04:00",
+  "seq": 69,
+  "time": "2026-08-23T00:58:49.447323-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 153,
-   "timestamp": "2026-08-21T01:23:47-04:00",
+   "seq": 16,
+   "timestamp": "2026-08-23T00:58:49-04:00",
    "sender": "shn-kit-live01",
    "recipient": "authz",
    "transactionType": "authz-decision:dtr-questionnaire-fetch",
@@ -1479,17 +1547,17 @@
   }
  },
  {
-  "seq": 408,
-  "time": "2026-08-21T01:23:47.403675-04:00",
+  "seq": 70,
+  "time": "2026-08-23T00:58:49.447325-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 154,
-   "timestamp": "2026-08-21T01:23:47-04:00",
+   "seq": 17,
+   "timestamp": "2026-08-23T00:58:49-04:00",
    "sender": "shn-kit-live01",
-   "recipient": "payer",
+   "recipient": "conformance-payer",
    "transactionType": "dtr-questionnaire-fetch",
    "authorityFrame": "provider-tpo",
    "scope": "questionnaire-only",
@@ -1498,16 +1566,16 @@
   }
  },
  {
-  "seq": 409,
-  "time": "2026-08-21T01:23:47.403677-04:00",
+  "seq": 71,
+  "time": "2026-08-23T00:58:49.447334-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 155,
-   "timestamp": "2026-08-21T01:23:47-04:00",
-   "sender": "payer",
+   "seq": 18,
+   "timestamp": "2026-08-23T00:58:49-04:00",
+   "sender": "conformance-payer",
    "recipient": "authz",
    "transactionType": "authz-decision:dtr-questionnaire",
    "authorityFrame": "payer-coverage",
@@ -1517,16 +1585,16 @@
   }
  },
  {
-  "seq": 410,
-  "time": "2026-08-21T01:23:47.403679-04:00",
+  "seq": 72,
+  "time": "2026-08-23T00:58:49.447336-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 156,
-   "timestamp": "2026-08-21T01:23:47-04:00",
-   "sender": "payer",
+   "seq": 19,
+   "timestamp": "2026-08-23T00:58:49-04:00",
+   "sender": "conformance-payer",
    "recipient": "shn-kit-live01",
    "transactionType": "dtr-questionnaire-fetch",
    "authorityFrame": "payer-coverage",
@@ -1536,15 +1604,15 @@
   }
  },
  {
-  "seq": 411,
-  "time": "2026-08-21T01:23:47.403681-04:00",
+  "seq": 73,
+  "time": "2026-08-23T00:58:49.447338-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 157,
-   "timestamp": "2026-08-21T01:23:47-04:00",
+   "seq": 20,
+   "timestamp": "2026-08-23T00:58:49-04:00",
    "sender": "shn-kit-live01",
    "recipient": "authz",
    "transactionType": "authz-decision:pas-submit",
@@ -1555,17 +1623,17 @@
   }
  },
  {
-  "seq": 412,
-  "time": "2026-08-21T01:23:47.403684-04:00",
+  "seq": 74,
+  "time": "2026-08-23T00:58:49.447341-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 158,
-   "timestamp": "2026-08-21T01:23:47-04:00",
+   "seq": 21,
+   "timestamp": "2026-08-23T00:58:49-04:00",
    "sender": "shn-kit-live01",
-   "recipient": "payer",
+   "recipient": "conformance-payer",
    "transactionType": "pas-claim",
    "authorityFrame": "provider-tpo",
    "scope": "pas-bundle",
@@ -1574,16 +1642,16 @@
   }
  },
  {
-  "seq": 413,
-  "time": "2026-08-21T01:23:47.403686-04:00",
+  "seq": 75,
+  "time": "2026-08-23T00:58:49.447343-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 159,
-   "timestamp": "2026-08-21T01:23:47-04:00",
-   "sender": "payer",
+   "seq": 22,
+   "timestamp": "2026-08-23T00:58:49-04:00",
+   "sender": "conformance-payer",
    "recipient": "authz",
    "transactionType": "authz-decision:pas-response",
    "authorityFrame": "payer-coverage",
@@ -1593,16 +1661,16 @@
   }
  },
  {
-  "seq": 414,
-  "time": "2026-08-21T01:23:47.403689-04:00",
+  "seq": 76,
+  "time": "2026-08-23T00:58:49.447346-04:00",
   "type": "audit",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
   "audit": {
-   "seq": 160,
-   "timestamp": "2026-08-21T01:23:47-04:00",
-   "sender": "payer",
+   "seq": 23,
+   "timestamp": "2026-08-23T00:58:49-04:00",
+   "sender": "conformance-payer",
    "recipient": "shn-kit-live01",
    "transactionType": "pas-claim",
    "authorityFrame": "payer-coverage",
@@ -1612,12 +1680,12 @@
   }
  },
  {
-  "seq": 415,
-  "time": "2026-08-21T01:23:47.40369-04:00",
+  "seq": 77,
+  "time": "2026-08-23T00:58:49.447348-04:00",
   "type": "run.finished",
-  "runId": "run-1787289827379-15",
+  "runId": "run-1787461129421-4",
   "lane": "conformant",
   "uc": "uc03",
-  "detail": "CRD card + DTR package + PAS submit approved via direct-mint ingress, auth PA-f786fb1356c9"
+  "detail": "CRD card + DTR package + PAS submit approved by the reference payer, auth AUTH-1294"
  }
 ]

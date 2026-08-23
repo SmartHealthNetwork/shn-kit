@@ -118,6 +118,15 @@ describe('RunInspector — fixture replay (ehr uc03)', () => {
     expect(screen.getByText('Passed')).toBeDefined();
   });
 
+  it('a run.started event carrying the retired lane: "provider-data" renders as the Plain EHR lane', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started', runId: 'run-legacy-pd', lane: 'provider-data', uc: 'uc03' }),
+    ];
+    render(<RunInspector runId="run-legacy-pd" events={events} source="live" results={[]} />);
+
+    expect(screen.getByText('ehr/uc03')).toBeDefined();
+  });
+
   it('clicking a step shows StepDetail for it', async () => {
     const user = userEvent.setup();
     render(<RunInspector runId={ehrRunId} events={ehrEvents} source="live" results={[]} />);
@@ -174,13 +183,13 @@ describe('RunInspector — substrate toggle + audit anchors', () => {
     evt({ seq: 5, type: 'run.finished', runId: 'run-audit' }),
   ];
 
-  it('one control labeled "Substrate view"; clinical view hides the audit strip; flipping shows it with one row per AuditAnchor, and audit rows never render inside the step-detail pane', async () => {
+  it('one control labeled "Network view"; clinical view hides the audit strip; flipping shows it with one row per AuditAnchor, and audit rows never render inside the step-detail pane', async () => {
     const user = userEvent.setup();
     render(<RunInspector runId="run-audit" events={auditEvents} source="live" results={[]} />);
 
     expect(document.querySelector('.audit-anchors')).toBeNull();
 
-    const toggle = screen.getByLabelText('Substrate view');
+    const toggle = screen.getByLabelText('Network view');
     await user.click(toggle);
 
     expect(document.querySelector('.audit-anchors')).not.toBeNull();
@@ -210,7 +219,7 @@ describe('RunInspector — substrate toggle + audit anchors', () => {
     ];
     render(<RunInspector runId="run-noaudit" events={events} source="live" results={[]} />);
 
-    await user.click(screen.getByLabelText('Substrate view'));
+    await user.click(screen.getByLabelText('Network view'));
 
     expect(screen.getByText('audit merge skipped: seq window unavailable')).toBeDefined();
     expect(document.querySelectorAll('.audit-anchor-row')).toHaveLength(0);

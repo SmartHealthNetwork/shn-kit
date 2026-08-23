@@ -4,6 +4,7 @@
 // can be tested standalone (mirrors UCCards' split).
 import type { JSX } from 'react';
 import type { HistorySummary } from './types';
+import { laneLabel } from './inspect';
 import { StatusChip } from './StatusChip';
 
 export interface RunHistoryProps {
@@ -52,8 +53,12 @@ export function RunHistory({
                     "demo/carry-engine" without a separate branch — no
                     species dispatch needed here. Demo records also always
                     carry an empty Branch, so the branch element below never
-                    renders for one. */}
-                <span className="run-history-lane-uc">{`${h.lane}/${h.uc}`}</span>
+                    renders for one — which is exactly why the lane goes
+                    through laneLabel (retired value in, current name out) and
+                    NOT through the two-lane normaliser: a demonstration's
+                    "demo" lane must pass through verbatim, never be folded
+                    into one of the run lanes. */}
+                <span className="run-history-lane-uc">{`${laneLabel(h.lane)}/${h.uc}`}</span>
                 {h.branch && (
                   <span className="run-history-branch" data-testid={`history-branch-${h.runId}`}>
                     {h.branch}
