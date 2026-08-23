@@ -34,13 +34,20 @@ import (
 // The CRD cards, in the exact shape scenariodriver.ParseCards reads
 // (gateway/scenariodriver/cards.go — extension{covered,paNeeded,questionnaires}).
 // Which card each family gets is the reference payer's own answer, mirrored:
-// E0250 covered/no-auth, L8000 covered/auth-needed + a questionnaire canonical,
-// E0424 CONDITIONAL with NO questionnaire advertised, J3490 not-covered.
+// E0250 covered with NO pa-needed at all, L8000 covered/auth-needed + a questionnaire
+// canonical, E0424 CONDITIONAL with NO questionnaire advertised, J3490 not-covered.
+//
+// dvCardCovered carries NO paNeeded on purpose: that is the LIVE shape of the reference
+// payer's no-PA card (two-RI pin TestTwoRI_BRP_DVNoPA — covered, pa-needed absent). The
+// earlier fixture spelled out "no-auth", which is what let uc02's `== no-auth` fence pass
+// here and fail on a fresh machine (v0.15.1). dvCardCoveredNoAuth keeps the spelled-out
+// variant so the row's TOLERANCE of both shapes is itself pinned.
 const (
-	dvCardCovered     = `{"cards":[{"summary":"No prior authorization required","indicator":"info","extension":{"covered":"covered","paNeeded":"no-auth"}}]}`
-	dvCardAuthNeeded  = `{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + shnsdk.QuestionnaireCanonicalLumbarMRI + `"]}}]}`
-	dvCardConditional = `{"cards":[{"summary":"Coverage is conditional","indicator":"warning","extension":{"covered":"conditional","paNeeded":"no-auth"}}]}`
-	dvCardNotCovered  = `{"cards":[{"summary":"Not covered under the member's plan","indicator":"warning","extension":{"covered":"not-covered"}}]}`
+	dvCardCovered       = `{"cards":[{"summary":"No prior authorization required","indicator":"info","extension":{"covered":"covered"}}]}`
+	dvCardCoveredNoAuth = `{"cards":[{"summary":"No prior authorization required","indicator":"info","extension":{"covered":"covered","paNeeded":"no-auth"}}]}`
+	dvCardAuthNeeded    = `{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + shnsdk.QuestionnaireCanonicalLumbarMRI + `"]}}]}`
+	dvCardConditional   = `{"cards":[{"summary":"Coverage is conditional","indicator":"warning","extension":{"covered":"conditional","paNeeded":"no-auth"}}]}`
+	dvCardNotCovered    = `{"cards":[{"summary":"Not covered under the member's plan","indicator":"warning","extension":{"covered":"not-covered"}}]}`
 
 	// dvCardAuthNeededNotCovered is dvCardAuthNeeded with ONE fact mutated: the
 	// coverage answer. The prior-authorization answer and the questionnaire
@@ -454,7 +461,7 @@ func TestConformantRows_Pass(t *testing.T) {
 	}{
 		{"uc01 covered", "uc01", "covered", []string{"covered=true", "active coverage"}},
 		{"uc01 notcovered", "uc01", "notcovered", []string{"covered=false", "coverage terminated"}},
-		{"uc02", "uc02", "", []string{"E0250", "covered=covered", "paNeeded=no-auth"}},
+		{"uc02", "uc02", "", []string{"E0250", "covered=covered", "no prior authorization (the card advertises no pa-needed)"}},
 		{"uc03", "uc03", "", []string{"AUTH-2000", "approved by the reference payer"}},
 		{"uc04", "uc04", "", []string{"held by the reference payer", "operative report", "AUTH-2001"}},
 		{"uc05", "uc05", "", []string{"federated facility evidence", "AUTH-2001"}},
@@ -669,7 +676,10 @@ func TestConformantRows_Reject(t *testing.T) {
 		{"uc03 bare package carries no Questionnaire", "uc03", "", nil, nil, packageIs(dvPackageBareNoQuestionnaire), "no Questionnaire"},
 		{"uc06 package wrapper carries no Questionnaire", "uc06", "", nil, nil, packageIs(dvPackageWrappedNoQuestionnaire), "no Questionnaire"},
 		{"uc06 bare package carries no Questionnaire", "uc06", "", nil, nil, packageIs(dvPackageBareNoQuestionnaire), "no Questionnaire"},
-		{"uc02 coverage check demands prior authorization", "uc02", "", cardFor("E0250", dvCardAuthNeeded), nil, nil, "no-auth"},
+		// uc02's fence refuses ONE value — a card that demands prior authorization. The
+		// tolerated shapes (pa-needed absent, pa-needed "no-auth") are pinned as PASSES by
+		// TestConformantUC02_ToleratesBothNoPAShapes.
+		{"uc02 coverage check demands prior authorization", "uc02", "", cardFor("E0250", dvCardAuthNeeded), nil, nil, `want anything but "auth-needed"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ing := newDVIngress(t)
@@ -681,6 +691,47 @@ func TestConformantRows_Reject(t *testing.T) {
 			}
 			if res.State != StateFailed || !strings.Contains(res.Detail, tc.wantErr) {
 				t.Errorf("state=%s detail=%q, want failed naming %q", res.State, res.Detail, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestConformantUC02_ToleratesBothNoPAShapes pins uc02's fence as `!= auth-needed`, the
+// two-RI pin's shape — NOT `== no-auth`, the stand-in's. A conformant payer may say "no
+// prior authorization" either by OMITTING pa-needed (what the real reference payer does:
+// test/tworilive/origination_test.go TestTwoRI_BRP_DVNoPA) or by spelling out "no-auth";
+// both must pass, and the row detail must report what the card actually said rather than
+// a value the Kit assumed. This is the regression test for the v0.15.1 fresh-machine
+// failure (`paNeeded="", want "no-auth"`): restore `== shnsdk.PANeededNoAuth` in
+// conformantUC02 and the omitted-pa-needed case below goes red with exactly that message.
+func TestConformantUC02_ToleratesBothNoPAShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name, card, wantDetail string
+	}{
+		{"pa-needed omitted (the live reference-payer shape)", dvCardCovered, "no prior authorization (the card advertises no pa-needed)"},
+		{"pa-needed spelled out as no-auth", dvCardCoveredNoAuth, "no prior authorization (paNeeded=no-auth)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ing := newDVIngress(t)
+			ing.card = func(code string) string {
+				if code == "E0250" {
+					return tc.card
+				}
+				return ""
+			}
+			rn := dvRunner(t, ing, nil)
+			res, err := rn.Run(t.Context(), Req{Lane: "conformant", UC: "uc02", Branch: ""})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if res.State != StatePassed {
+				t.Fatalf("state=%s, want passed (detail=%q)", res.State, res.Detail)
+			}
+			if !strings.Contains(res.Detail, tc.wantDetail) {
+				t.Errorf("detail = %q, want it to contain %q", res.Detail, tc.wantDetail)
+			}
+			if strings.Contains(res.Detail, "paNeeded=no-auth") != (tc.card == dvCardCoveredNoAuth) {
+				t.Errorf("detail = %q must print the payer's OWN pa-needed value, never one the Kit assumed", res.Detail)
 			}
 		})
 	}

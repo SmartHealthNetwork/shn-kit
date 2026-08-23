@@ -463,6 +463,15 @@ func originated(viaBFF bool, detail string) string {
 
 // conformantUC02 — E0250 hospital bed: the reference payer covers it and asks for no
 // prior authorization, so the row ends at the coverage check.
+//
+// THE NO-PA FENCE IS `!= auth-needed`, NEVER `== no-auth`. The reference payer OMITS the
+// pa-needed sub-extension entirely on a no-PA card: its live answer for this family is
+// covered with pa-needed absent (PANeeded() == ""). That is the two-RI pin —
+// test/tworilive/origination_test.go TestTwoRI_BRP_DVNoPA and tworilive_test.go
+// TestTwoRI_DVNoPA both assert Covered()=="covered" && PANeeded()!="auth-needed" — and the
+// pin, not the hermetic stand-in, is what a Kit fence is copied from. An explicit "no-auth"
+// is equally acceptable (a payer MAY spell the absence out), so the fence tolerates both
+// and refuses only a card that actually demands prior authorization.
 func conformantUC02(rn *Runner, branch string) (string, error) {
 	const member = "MBR-COVERED"
 	order := scenariodriver.PersonaOrders["noPA"] // E0250, Hospital Bed with Side Rails
@@ -474,11 +483,23 @@ func conformantUC02(rn *Runner, branch string) (string, error) {
 	if cards.Covered() != shnsdk.CoveredCovered {
 		return "", fmt.Errorf("runner: conformant/uc02: covered=%q, want %q", cards.Covered(), shnsdk.CoveredCovered)
 	}
-	if cards.PANeeded() != shnsdk.PANeededNoAuth {
-		return "", fmt.Errorf("runner: conformant/uc02: paNeeded=%q, want %q (the reference payer requires no prior authorization for this family)", cards.PANeeded(), shnsdk.PANeededNoAuth)
+	if cards.PANeeded() == shnsdk.PANeededAuthNeeded {
+		return "", fmt.Errorf("runner: conformant/uc02: paNeeded=%q, want anything but %q — the reference payer advertises no prior authorization for this family (it omits pa-needed)",
+			cards.PANeeded(), shnsdk.PANeededAuthNeeded)
 	}
-	return originated(viaBFF, fmt.Sprintf("%s (HCPCS %s %s): covered=%s paNeeded=%s",
-		cards.Cards[0].Summary, order.Code, order.Display, cards.Covered(), cards.PANeeded())), nil
+	return originated(viaBFF, fmt.Sprintf("%s (HCPCS %s %s): covered=%s, %s",
+		cards.Cards[0].Summary, order.Code, order.Display, cards.Covered(), noPADetail(cards.PANeeded()))), nil
+}
+
+// noPADetail renders the no-prior-authorization half of uc02's row detail out of what the
+// card ACTUALLY said — never a value the Kit assumed on the payer's behalf. The reference
+// payer omits pa-needed on a no-PA card, so the common case has no value to print at all;
+// when a payer does spell one out, the raw value is shown.
+func noPADetail(paNeeded string) string {
+	if paNeeded == "" {
+		return "no prior authorization (the card advertises no pa-needed)"
+	}
+	return "no prior authorization (paNeeded=" + paNeeded + ")"
 }
 
 // conformantPayorFromCRD reads the payer identity out of a driver-built CDS
