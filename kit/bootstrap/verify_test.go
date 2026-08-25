@@ -273,7 +273,10 @@ func TestVerify_HolderMissingFromFeed(t *testing.T) {
 func TestVerify_ReferencePayerMissing(t *testing.T) {
 	holders := []shnsdk.Holder{
 		{ID: "kit-h1", Role: "provider"},
-		{ID: "payer", Role: "payer", PayerIDs: []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity}}, // the sandbox holder is NOT what the probe wants
+		// A payer holder that publishes the routable payer identity but is NOT the
+		// reference payer holder: claiming the identity is not the same as BEING the
+		// holder the probe names, and the probe must not accept the substitution.
+		{ID: "some-other-payer", Role: "payer", PayerIDs: []shnsdk.PayerIdentifier{shnsdk.CMSPayerIdentity}},
 	}
 	reg := fakeRegistrarSrv(t, holders)
 	disc := fakeDiscoverySrv(t, reg.URL)

@@ -66,7 +66,7 @@ Dev builds default to the file store; either is selectable explicitly via
 | `--audit-url` | `""` | Audit Plane URL; omit to run without the run-timeline audit merge |
 | `--phg-url` | `""` | PHG (Smart Health account) URL |
 | `--consent-url` | `""` | Consent service URL |
-| `--fhir-data-url` | `""` | Provider FHIR data server URL; `""` ⇒ an in-memory stub |
+| `--fhir-data-url` | `""` | Provider FHIR data server URL. `""` ⇒ the packaged HAPI data server when the Java trio is configured, otherwise a read-only endpoint the daemon serves from its own seed bundles. The gateway requires a system of record either way — there is no in-memory persona stub. |
 | `--gateway-port` | `0` | Gateway child port; `0` ⇒ allocate |
 | `--api-addr` | `127.0.0.1:0` | The daemon's own loopback API bind address (host must be `127.0.0.1`/`::1`/`localhost`) |
 | `--token` | `""` | Session token; `""` ⇒ generate a 128-bit random hex token |

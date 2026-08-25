@@ -2,7 +2,7 @@
 // a Kit user can point the kit at their own
 // EHR (a US Core FHIR data server, optionally SMART Backend Services
 // authenticated) and/or register their own Da Vinci ingress client, instead
-// of running purely against the bundled sandbox.
+// of running purely against the bundled stand-in.
 //
 // Validation here is EXACT PARITY with the gateway's own boot-time checks
 // (gateway/app/app.go loadConfig's FHIR_TOKEN_URL all-or-nothing guard +

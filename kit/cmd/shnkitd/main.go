@@ -86,7 +86,7 @@ func main() {
 	auditURL := flag.String("audit-url", "", "AUDIT_URL")
 	phgURL := flag.String("phg-url", "", "PHG_URL")
 	consentURL := flag.String("consent-url", "", "CONSENT_URL")
-	fhirDataURL := flag.String("fhir-data-url", "", `FHIR_DATA_URL ("" => memstub SoR)`)
+	fhirDataURL := flag.String("fhir-data-url", "", `FHIR_DATA_URL ("" => the packaged data server with --java-assets, else a read-only endpoint served from the Kit's own seed bundles; the gateway requires one either way)`)
 	gatewayPort := flag.Int("gateway-port", 0, "gateway child port (0 = allocate)")
 	apiAddr := flag.String("api-addr", "127.0.0.1:0", "kitd's loopback API bind address")
 	token := flag.String("token", "", `kitd session token ("" => generate)`)
@@ -272,7 +272,7 @@ func main() {
 	// process's lifetime — a swap only takes effect on restart. A missing
 	// file is not an error (byo.Store.Load's contract):
 	// byoCfg stays the zero Config, meaning "nothing swapped, use the
-	// bundled sandbox defaults." A present-but-corrupt file IS an error;
+	// bundled defaults." A present-but-corrupt file IS an error;
 	// fail safe rather than fail closed — boot proceeds on demo
 	// defaults, and the load error is surfaced via BYORuntime.LoadError
 	// rather than silently swallowed.
@@ -544,6 +544,11 @@ func main() {
 					return
 				}
 				bus.Emit(event.Event{Type: event.TypeChild, Child: spec.Name, Detail: "start failed: " + err.Error()})
+				// The event bus alone leaves no trace once nothing is left
+				// subscribed to it — a child that fails to start otherwise
+				// produces a silent boot failure with no explanation in
+				// shnkitd's own log.
+				log.Printf("shnkitd: child %s failed to start: %v", spec.Name, err)
 				close(bootFailed)
 				cancel()
 				return

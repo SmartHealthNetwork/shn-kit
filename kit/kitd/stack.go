@@ -17,6 +17,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -243,6 +245,24 @@ type Stack struct {
 	// URL — nil/empty when no additional lines were configured (today's
 	// default).
 	AdditionalValidatorURLs map[string]string
+
+	// closeFixtureSoR shuts the in-process fixture system of record down. Non-nil ONLY on
+	// the no-trio lane with no bring-your-own FHIR server (fixturefhir.go). Call it via
+	// Stack.Close.
+	closeFixtureSoR func() error
+}
+
+// Close releases the in-process resources BuildStack owns — today exactly the no-trio
+// lane's fixture system-of-record listener. Child PROCESSES are the supervisor's to stop;
+// this is only for what BuildStack itself started. Safe to call on any Stack, including a
+// zero one, and safe to call more than once.
+func (s *Stack) Close() error {
+	if s == nil || s.closeFixtureSoR == nil {
+		return nil
+	}
+	closer := s.closeFixtureSoR
+	s.closeFixtureSoR = nil
+	return closer()
 }
 
 // ResolveValidatorLines resolves (StackConfig.Line, StackConfig.
@@ -313,6 +333,23 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	if cfg.GatewayPort == 0 {
 		need++
 	}
+	// The no-trio lane runs ONE in-process FHIR endpoint of its own (fixturefhir.go), for
+	// two independent reasons — hence one listener, two conditions:
+	//
+	//   - localFHIR: Questionnaire/$populate. Every origination lane that talks to a real
+	//     payer must be handed an operated $populate endpoint, and the packaged Java
+	//     clinical-reasoning engine is what supplies one when the trio is present. Without
+	//     the trio this endpoint is it — see handlePopulate for what it will and will not
+	//     answer. Needed whether or not this process is the system of record, so it is keyed
+	//     on the trio alone.
+	//   - fixtureSoR: the read routes. A gateway requires FHIR_DATA_URL on every role, and
+	//     with no packaged data server and no bring-your-own server there is nothing else to
+	//     point it at.
+	localFHIR := !trio
+	fixtureSoR := localFHIR && cfg.FHIRDataURL == ""
+	if localFHIR {
+		need++
+	}
 	if trio {
 		need += 2                   // data server, br-provider
 		need += len(validatorLines) // one validator port per configured line (1 by default)
@@ -333,6 +370,10 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	gatewayPort := cfg.GatewayPort
 	if gatewayPort == 0 {
 		gatewayPort = nextPort()
+	}
+	localFHIRPort := 0
+	if localFHIR {
+		localFHIRPort = nextPort()
 	}
 	var validatorPort, dataServerPort, brProviderPort, providerDataPort int
 	var validatorURL, dataServerURL, brProviderURL string
@@ -455,6 +496,37 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	if trio && fhirDataURL == "" {
 		fhirDataURL = dataServerURL + "/fhir/provider"
 	}
+	// The no-trio lane's own in-process FHIR endpoint (see localFHIR/fixtureSoR above). The
+	// listener is owned by the returned Stack (Stack.Close) so a test that builds many stacks
+	// does not leak one per build.
+	var closeFixtureSoR func() error
+	localPopulateURL := ""
+	if localFHIR {
+		// The index is built ONLY when this process is the system of record. Under a
+		// bring-your-own server it would be fixtures about a world the participant replaced,
+		// so the read routes stay closed and only $populate is served.
+		var sor *fixtureFHIR
+		if fixtureSoR {
+			fx, err := newFixtureFHIR()
+			if err != nil {
+				return Stack{}, err
+			}
+			sor = fx
+		}
+		const tenantPrefix = "/fhir/provider"
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", localFHIRPort))
+		if err != nil {
+			return Stack{}, fmt.Errorf("kitd: listen for the local FHIR endpoint: %w", err)
+		}
+		srv := &http.Server{Handler: localFHIRHandler(tenantPrefix, sor)}
+		go srv.Serve(ln) //nolint:errcheck // Serve always returns a non-nil error; Close is the shutdown path
+		closeFixtureSoR = srv.Close
+		base := fmt.Sprintf("http://127.0.0.1:%d%s", localFHIRPort, tenantPrefix)
+		localPopulateURL = base + populateSuffix
+		if fixtureSoR {
+			fhirDataURL = base
+		}
+	}
 
 	// The one static payer directory both gateway children read. It is written
 	// on EVERY boot, trio or not, because a static directory is what replaces
@@ -520,6 +592,29 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 			"PROVIDER_DTR_NATIVE=true",
 			"PROVIDER_DTR_POPULATE_URL="+dataServerURL+"/fhir/provider/Questionnaire/$populate",
 		)
+	} else {
+		// No trio: the operated $populate endpoint is the one this process serves
+		// (fixturefhir.go's handlePopulate). The gateway requires one on this lane — the
+		// questionnaire on the wire belongs to the payer, so a filler that only knows its
+		// own questionnaires cannot honestly fill it — and refuses to boot without it.
+		//
+		// PROVIDER_DTR_NATIVE is deliberately NOT set alongside it. That flag declares a
+		// posture ("this deployment forwards DTR population to its own DTR server"); what
+		// is true here is narrower — the lane's profile already requires an operated
+		// endpoint, and this is the endpoint. Naming only the URL says exactly that much.
+		//
+		// The two conditions that must agree — this branch (no trio) and localFHIR (which
+		// is what SET localPopulateURL) — agree today by construction, and this refuses to
+		// build if they ever stop. Emitting the key with an empty value would be the worst
+		// of the three outcomes: the child would still refuse to boot, but on a config
+		// error naming a variable that IS set, which reads as a broken endpoint rather
+		// than a missing one.
+		if localPopulateURL == "" {
+			return Stack{}, fmt.Errorf("kitd: no trio and no local $populate endpoint — the gateway child " +
+				"requires an operated $populate on this lane and would refuse to boot; the local FHIR " +
+				"listener must be started for every no-trio stack")
+		}
+		env = append(env, "PROVIDER_DTR_POPULATE_URL="+localPopulateURL)
 	}
 	// The SMART quad: gated on FHIRTokenURL, mirroring gateway/app/app.go's
 	// own FHIR_TOKEN_URL emptiness guard (loadConfig:256-266) — a half-set
@@ -656,6 +751,7 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	stack := Stack{
 		Children:          children,
 		DeferredChildren:  deferredChildren,
+		closeFixtureSoR:   closeFixtureSoR,
 		ObserverURL:       observerURL,
 		ObserverHealthURL: observerHealthURL,
 		GatewayURL:        gatewayURL,

@@ -664,11 +664,11 @@ func TestRun_ConformantUC03BridgeDemo_UnderBFF_StillDriverMinted(t *testing.T) {
 	ingressMux.HandleFunc("POST /cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
 		crdHit = true
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + shnsdk.QuestionnaireCanonicalLumbarMRI + `"]}}]}`))
+		w.Write([]byte(`{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + l8000Canonical + `"]}}]}`))
 	})
 	ingressMux.HandleFunc("POST /Questionnaire/$questionnaire-package", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"resourceType":"Bundle","type":"collection","entry":[{"resource":{"resourceType":"Questionnaire","id":"pa-lumbar-mri"}}]}`))
+		w.Write([]byte(`{"resourceType":"Bundle","type":"collection","entry":[{"resource":{"resourceType":"Questionnaire","id":"pkg-q","status":"active","url":"` + l8000Canonical + `"}}]}`))
 	})
 	ingressMux.HandleFunc("POST /Claim/$submit", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -711,17 +711,22 @@ func TestRun_ConformantUC03BridgeDemo_UnderBFF_StillDriverMinted(t *testing.T) {
 	if strings.Contains(res.Detail, brProviderOriginatedPrefix) {
 		t.Errorf("Result.Detail = %q, must NOT contain the provider-system provenance line for the bridging demo", res.Detail)
 	}
-	if !strings.Contains(res.Detail, "bridging demo payer") {
-		t.Errorf("Result.Detail = %q, want it to name the bridging demo payer as the verdict source", res.Detail)
+	// The detail names what the exhibit IS — a boundary crossed — not who decided. After the
+	// rebase the bridging demo peer forwards its verdict to the reference payer like every
+	// other lane, so a detail claiming the demo payer decided would be a false provenance line.
+	if !strings.Contains(res.Detail, "contract-version boundary") {
+		t.Errorf("Result.Detail = %q, want it to name the contract-version boundary this exhibit crosses", res.Detail)
+	}
+	if strings.Contains(res.Detail, "bridging demo payer") {
+		t.Errorf("Result.Detail = %q, must not name the bridging demo payer as the verdict source — it forwards to the reference payer", res.Detail)
 	}
 }
 
 // TestRun_ConformantUC03_BridgeDemoSelectsMember pins the member switch:
 // branch "" drives MBR-COVERED and branch "bridge-demo" drives
-// MBR-BRIDGE-DEMO. Only the bridge-demo branch is a byte-unchanged fence —
-// branch "" was re-authored wholesale for the reference payer (the L8000
-// family), while bridge-demo keeps its original lumbar legs because the live
-// bridging gate observes those exact bytes. Observed the same way
+// MBR-BRIDGE-DEMO. BOTH branches now drive the reference payer's L8000 family
+// — the branches differ in WHICH PEER answers (and therefore whether the legs
+// cross a contract-version boundary), never in what is asked for. Observed the same way
 // TestRun_ConformantUC03_UnderBFF_StillDriverMinted observes driver-minted
 // origination: a lexical pin on the ingress CRD request body (member appears
 // as context.patientId/prefetch.patient.id/subject.reference — build.go's
@@ -743,13 +748,13 @@ func TestRun_ConformantUC03_BridgeDemoSelectsMember(t *testing.T) {
 				b, _ := io.ReadAll(r.Body)
 				crdBody = string(b)
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(`{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + shnsdk.QuestionnaireCanonicalLumbarMRI + `"]}}]}`))
+				w.Write([]byte(`{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + l8000Canonical + `"]}}]}`))
 			})
 			ingressMux.HandleFunc("POST /Questionnaire/$questionnaire-package", func(w http.ResponseWriter, r *http.Request) {
 				b, _ := io.ReadAll(r.Body)
 				pkgBody = string(b)
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(`{"resourceType":"Bundle","type":"collection","entry":[{"resource":{"resourceType":"Questionnaire","id":"pa-lumbar-mri"}}]}`))
+				w.Write([]byte(`{"resourceType":"Bundle","type":"collection","entry":[{"resource":{"resourceType":"Questionnaire","id":"pkg-q","status":"active","url":"` + l8000Canonical + `"}}]}`))
 			})
 			ingressMux.HandleFunc("POST /Claim/$submit", func(w http.ResponseWriter, r *http.Request) {
 				b, _ := io.ReadAll(r.Body)

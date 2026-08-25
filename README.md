@@ -55,7 +55,7 @@ Health Network traffic is a once-per-launch check for a newer release
 (configurable via `--releases-url`/`kit.config.json`'s `releasesUrl`,
 repointable or effectively disableable). Every credential and log stays on
 your machine — or, for the signed-in refresh token, your OS keychain. All
-bundled demo/sandbox data is synthetic; this app never handles real patient
+bundled demo data is synthetic; this app never handles real patient
 data.
 
 ## License

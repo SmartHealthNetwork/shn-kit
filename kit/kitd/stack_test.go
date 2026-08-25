@@ -65,6 +65,7 @@ func TestBuildStack_EnvRecipe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStack: %v", err)
 	}
+	defer stack.Close() //nolint:errcheck // releases the no-trio lane's fixture SoR listener
 	if len(stack.Children) != 1 {
 		t.Fatalf("Children = %d, want exactly 1 (no ExtraChildren configured)", len(stack.Children))
 	}
@@ -88,6 +89,17 @@ func TestBuildStack_EnvRecipe(t *testing.T) {
 		"PROVIDER_DAVINCI_INGRESS=1",
 		fmt.Sprintf("PROVIDER_DAVINCI_INGRESS_BASE_URL=%s", stack.GatewayURL),
 		"INGRESS_CLIENTS_FILE=" + filepath.Join(stateDir, "ingress-clients.json"),
+		// The no-trio lane's own system of record: the daemon serves the Kit's seed
+		// bundles over a loopback read-only FHIR endpoint (fixturefhir.go). It is NOT
+		// optional — a gateway with no FHIR_DATA_URL refuses to boot.
+		fmt.Sprintf("FHIR_DATA_URL=http://127.0.0.1:%d/fhir/provider", fixtureSoRPortOf(t, stack)),
+		// Nor is the operated $populate endpoint optional: this lane originates against a
+		// real payer, so the questionnaire it must fill is the PAYER's resource, and the
+		// gateway refuses to boot without an endpoint to populate it at. Same listener as
+		// the system of record above, one operation deeper (fixturefhir.go's
+		// handlePopulate). PROVIDER_DTR_NATIVE is deliberately NOT emitted beside it — see
+		// the recipe in stack.go for why naming only the URL is the truthful half.
+		fmt.Sprintf("PROVIDER_DTR_POPULATE_URL=http://127.0.0.1:%d/fhir/provider/Questionnaire/$populate", fixtureSoRPortOf(t, stack)),
 	}
 	if path := os.Getenv("PATH"); path != "" {
 		want = append(want, "PATH="+path)
@@ -101,11 +113,13 @@ func TestBuildStack_EnvRecipe(t *testing.T) {
 			t.Errorf("Env[%d] = %q, want %q", i, spec.Env[i], w)
 		}
 	}
-	for _, bad := range []string{"FHIR_DATA_URL=", "ORIGINATION_PROFILE="} {
-		for _, e := range spec.Env {
-			if strings.HasPrefix(e, bad) {
-				t.Errorf("Env contains %q, want it omitted when unset", e)
-			}
+	// ORIGINATION_PROFILE stays omitted when unset. FHIR_DATA_URL does NOT: it is
+	// ALWAYS wired — from the packaged data server with the Java trio, from the daemon's
+	// own fixture endpoint without it — because a gateway with no system of record refuses
+	// to boot. Its exact value is pinned in the recipe above.
+	for _, e := range spec.Env {
+		if strings.HasPrefix(e, "ORIGINATION_PROFILE=") {
+			t.Errorf("Env contains %q, want it omitted when unset", e)
 		}
 	}
 
@@ -574,12 +588,21 @@ func TestBuildStack_TrioAbsent_ByteIdenticalToToday(t *testing.T) {
 	if len(stack.Children) != 1 || stack.Children[0].Name != gatewayChildName {
 		t.Fatalf("Children = %+v, want exactly [gateway]", stack.Children)
 	}
-	for _, bad := range []string{"FHIR_VALIDATE_URL=", "PROVIDER_DTR_NATIVE=", "PROVIDER_DTR_POPULATE_URL="} {
+	// Trio-only env stays absent. PROVIDER_DTR_POPULATE_URL is NO LONGER on this list, and
+	// the reason is not a relaxation: the gateway requires an operated $populate endpoint on
+	// this lane and refuses to boot without one, so "absent" would pin a stack that cannot
+	// start. It is asserted positively below instead — still exactly, and still pinned to
+	// the daemon's OWN endpoint so a trio URL can never leak in here.
+	for _, bad := range []string{"FHIR_VALIDATE_URL=", "PROVIDER_DTR_NATIVE="} {
 		for _, e := range stack.Children[0].Env {
 			if strings.HasPrefix(e, bad) {
 				t.Errorf("Env contains %q, want it absent when no trio is configured", e)
 			}
 		}
+	}
+	wantPopulate := fmt.Sprintf("PROVIDER_DTR_POPULATE_URL=http://127.0.0.1:%d/fhir/provider/Questionnaire/$populate", fixtureSoRPortOf(t, stack))
+	if !hasEnv(stack.Children[0].Env, wantPopulate) {
+		t.Errorf("Env = %q, want %q — the no-trio lane's operated $populate is the daemon's own endpoint", stack.Children[0].Env, wantPopulate)
 	}
 	if stack.ValidatorURL != "" || stack.DataServerURL != "" || stack.BRProviderURL != "" {
 		t.Errorf("trio URLs = %q/%q/%q, want all empty", stack.ValidatorURL, stack.DataServerURL, stack.BRProviderURL)
@@ -1362,4 +1385,27 @@ func TestBuildStack_TrioPresent_NoSwap_NeitherChildCarriesTheSMARTQuad(t *testin
 			}
 		}
 	}
+}
+
+// fixtureSoRPortOf reads back the port BuildStack bound the no-trio lane's fixture system
+// of record on. It is allocated, not fixed, so the recipe pin reads it off the assembled
+// env rather than guessing.
+func fixtureSoRPortOf(t *testing.T, stack Stack) int {
+	t.Helper()
+	for _, kv := range stack.GatewayEnv {
+		if !strings.HasPrefix(kv, "FHIR_DATA_URL=") {
+			continue
+		}
+		u, err := url.Parse(strings.TrimPrefix(kv, "FHIR_DATA_URL="))
+		if err != nil {
+			t.Fatalf("FHIR_DATA_URL is not a URL: %v", err)
+		}
+		port, err := strconv.Atoi(u.Port())
+		if err != nil {
+			t.Fatalf("FHIR_DATA_URL has no port: %v", err)
+		}
+		return port
+	}
+	t.Fatal("no FHIR_DATA_URL in the gateway env — the no-trio child would refuse to boot")
+	return 0
 }

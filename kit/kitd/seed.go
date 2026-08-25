@@ -19,14 +19,14 @@
 //   - FreshenPersonas is POST-READY: it runs after the data server child
 //     passes its ReadyURLs probe, before the daemon's SetRunner. Unlike the
 //     H2 copy, this one has NO gate — it re-POSTs the provider-data persona
-//     bundles, the sandbox provider personas bundle, and
+//     bundles, the demo provider personas bundle, and
 //     re-writes the seed-complete marker on EVERY boot, unconditionally.
 //     That's deliberate: FreshenObservations rewrites each Observation's
 //     effectiveDateTime to now, keeping the operated CQL's 3-month
 //     ObservationLookBack alive across restarts — a stale prewarmed dataset
 //     would otherwise silently age out of the lookback window (this was true
 //     of the provider-data bundles from the start; the same fix later closed
-//     the same gap for the sandbox personas bundle, whose lumbar-questionnaire
+//     the same gap for the demo personas bundle, whose lumbar-questionnaire
 //     therapy-weeks Observation is the ehr-lane uc03..08 prepop answer).
 package kitd
 
@@ -197,7 +197,7 @@ func copyDirTree(src, dst string) error {
 	})
 }
 
-// FreshenPersonas (re)loads the provider-data persona bundles AND the sandbox
+// FreshenPersonas (re)loads the provider-data persona bundles AND the demo
 // provider personas bundle into the data server's "provider" tenant, then
 // (re)writes its seed-complete marker — ALWAYS, unconditionally, every time
 // it is called (the caller — shnkitd's boot goroutine — gates the call
@@ -205,7 +205,7 @@ func copyDirTree(src, dst string) error {
 // re-run every boot. Runs after the data server child has passed its
 // ReadyURLs probe (dataURL is reachable) and before the daemon's SetRunner.
 //
-// The sandbox personas bundle (fhirseed.SandboxProviderPersonasBundle)
+// The demo personas bundle (fhirseed.DemoProviderPersonasBundle)
 // carries baked static Observation effectiveDateTime values — the same
 // therapy-weeks freshness trap LoadProviderDataBundles already closes for the
 // provider-data bundles via FreshenObservations. Without re-posting it here
@@ -219,12 +219,12 @@ func FreshenPersonas(ctx context.Context, dataURL string, logf func(string, ...a
 	if err := c.LoadProviderDataBundles(ctx, seedTenant); err != nil {
 		return fmt.Errorf("kitd: freshen provider-data personas: %w", err)
 	}
-	freshPersonas, err := fhirseed.FreshenObservations(fhirseed.SandboxProviderPersonasBundle())
+	freshPersonas, err := fhirseed.FreshenObservations(fhirseed.DemoProviderPersonasBundle())
 	if err != nil {
-		return fmt.Errorf("kitd: freshen sandbox personas bundle: %w", err)
+		return fmt.Errorf("kitd: freshen demo personas bundle: %w", err)
 	}
 	if err := c.PostTransaction(ctx, seedTenant, freshPersonas); err != nil {
-		return fmt.Errorf("kitd: repost sandbox personas bundle: %w", err)
+		return fmt.Errorf("kitd: repost demo personas bundle: %w", err)
 	}
 	if err := c.WriteSeedMarker(ctx, seedTenant); err != nil {
 		return fmt.Errorf("kitd: write provider seed marker: %w", err)

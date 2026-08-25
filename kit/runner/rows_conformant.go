@@ -30,6 +30,11 @@ import (
 // Every approval is fenced on the reference payer's own AUTH-NNNN authorization
 // (requireAuthRef): a run that quietly fell back to some other payer cannot pass.
 //
+// uc03's "bridge-demo" branch is the one row the directory routes ELSEWHERE — to a peer
+// that declares newer contract lines, so its legs cross a version boundary. That peer
+// forwards to the same reference payer, so the row drives the same L8000 family and is
+// fenced on the same AUTH-NNNN: the exhibit is the boundary, not the verdict.
+//
 // test/tworilive is the executable reference each row was copied from — it drives
 // these same exchanges against the running reference payer, and it (not this file)
 // is where a shape is proven before it is written here. This package never imports
@@ -90,8 +95,8 @@ var conformantRows = map[string]rowFunc{
 // remedy here is "load the demo personas," not "check the id."
 //
 // Safe to map UNCONDITIONALLY, with no swap-state check: in un-swapped demo
-// mode every conformant row's member is a persona the memstub
-// (engine.NewStubHolderData, gateway/engine/holderdata.go) always resolves,
+// mode every conformant row's member is a persona the bundled demo data
+// always resolves,
 // so this shape cannot occur there — it is reachable ONLY once an EHR swap
 // has repointed the gateway's SoR at a partner server missing the persona.
 //
@@ -144,6 +149,17 @@ const (
 // reference payer (test/tworilive, R1), never guessed. Duplicated as a literal
 // because the Kit cannot import the private repository that owns it.
 const homeOxygenCanonical = "http://example.org/fhir/Questionnaire/HomeOxygenDispatch"
+
+// l8000Canonical is the reference payer's questionnaire canonical for the L8000
+// (approve) family — the value the live gate READ OFF the running reference payer
+// (test/tworilive's TestTwoRI_Pin_L8000Canonical, captured to
+// testdata/Questionnaire-L8000.json), never guessed. Duplicated as a literal for the
+// same reason as homeOxygenCanonical above.
+//
+// It replaced shnsdk.QuestionnaireCanonicalLumbarMRI on the L8000 rows: that constant is
+// SHN's OWN demo questionnaire, and stamping it on a QuestionnaireResponse bound for the
+// reference payer named a questionnaire that payer never advertised.
+const l8000Canonical = "http://example.org/fhir/Questionnaire/PriorAuthRequired"
 
 // buildOrderServiceRequest is shnsdk.BuildServiceRequest with an explicit
 // procedure coding system — needed because every reference-payer family is an
@@ -256,56 +272,29 @@ func conformantAmendBundle(member string, qrJSON, srJSON, drJSON, provJSON []byt
 //   - the bridging demo payer and SHN's own provider-data/$populate path answer a BARE
 //     collection Bundle.
 //
-// The unwrap is a deliberate SMALL LOCAL COPY of gateway/engine's
-// unwrapQuestionnairePackage and scenariodriver's packageBundleResource: the Kit cannot
-// take a gateway cut for this fix, and shnsdk.ExtractQuestionnaireFromPackage is
-// bare-Bundle-only by design. FOLLOW-UP: dedupe onto one shared unwrap the next time a
-// gateway/sdk cut is due.
+// The unwrap is scenariodriver.PackageEntries. This fence used to carry a SMALL LOCAL COPY
+// of gateway/engine's unwrapQuestionnairePackage and scenariodriver's (former,
+// unexported) packageBundleResource — kept local because shnsdk.ExtractQuestionnaireFromPackage
+// is bare-Bundle-only by design — but that copy is retired now that the gateway exports
+// the unwrap the Kit can call directly.
 //
 // The fence stays strict — a Parameters with no packagebundle Bundle, a packagebundle
 // Bundle carrying no Questionnaire, and an empty or malformed body are all false.
 func packageHasQuestionnaire(body []byte) bool {
-	var top struct {
-		ResourceType string `json:"resourceType"`
-		Parameter    []struct {
-			Name     string          `json:"name"`
-			Resource json.RawMessage `json:"resource"`
-		} `json:"parameter"`
-	}
-	if json.Unmarshal(body, &top) != nil {
+	entries, err := scenariodriver.PackageEntries(body)
+	if err != nil {
 		return false
 	}
-	if top.ResourceType == "Parameters" {
-		for _, param := range top.Parameter {
-			if param.Name == "packagebundle" && len(param.Resource) > 0 {
-				return bundleHasQuestionnaire(param.Resource)
-			}
-		}
-		return false
-	}
-	return bundleHasQuestionnaire(body)
-}
-
-// bundleHasQuestionnaire reports whether a $questionnaire-package collection Bundle
-// carries a Questionnaire entry. Only packageHasQuestionnaire calls it — a caller that
-// reached it directly would be back to the bare-Bundle-only fence.
-func bundleHasQuestionnaire(body []byte) bool {
-	var pkg struct {
-		ResourceType string `json:"resourceType"`
-		Entry        []struct {
+	for _, e := range entries {
+		var entry struct {
 			Resource struct {
 				ResourceType string `json:"resourceType"`
 			} `json:"resource"`
-		} `json:"entry"`
-	}
-	if json.Unmarshal(body, &pkg) != nil {
-		return false
-	}
-	if pkg.ResourceType != "Bundle" {
-		return false
-	}
-	for _, e := range pkg.Entry {
-		if e.Resource.ResourceType == "Questionnaire" {
+		}
+		if json.Unmarshal(e, &entry) != nil {
+			continue
+		}
+		if entry.Resource.ResourceType == "Questionnaire" {
 			return true
 		}
 	}
@@ -350,9 +339,19 @@ func conformantQR(rn *Runner, pkg scenariodriver.DTRPackage, member string, now 
 		}
 		return qr, nil
 	}
+	return attestedQR(pkg.Canonical, member, now)
+}
+
+// attestedQR is the minimal completed QuestionnaireResponse — subject, the questionnaire the
+// payer's own package advertised, one attested item — that conformantQR falls back to when no
+// provider system is wired. Split out so a row that must NOT take the br-provider prong can
+// ask for it by name: the bridging demo runs against a persona br-provider's curated seed
+// world has never heard of, so a populate call for that subject would be answering about a
+// patient that does not exist there.
+func attestedQR(canonical, member string, now time.Time) ([]byte, error) {
 	qr, err := json.Marshal(map[string]any{
 		"resourceType": "QuestionnaireResponse", "status": "completed",
-		"questionnaire": pkg.Canonical,
+		"questionnaire": canonical,
 		"subject":       map[string]any{"reference": "Patient/" + member},
 		"authored":      now.UTC().Format(time.RFC3339),
 		"item": []any{map[string]any{"linkId": "1", "text": "Clinician attestation",
@@ -594,18 +593,27 @@ func conformantUC03(rn *Runner, branch string) (string, error) {
 	return originated(viaBFF, fmt.Sprintf("CRD card + DTR package + PAS submit approved by the reference payer, auth %s", out.PreAuthRef)), nil
 }
 
-// conformantUC03BridgeDemo is the BRIDGING DEMO branch — a different exhibit from the
-// row above: the MBR-BRIDGE-DEMO persona's own Coverage names the demo payer holder
-// (gateway/engine/holderdata.go's MBR-BRIDGE-DEMO), so this run is routed there and
-// answered by the demo payer, not by the hosted Da Vinci reference payer. Its legs are
-// kept byte-for-byte as they were (the lumbar order, the demo payer's own questionnaire
-// and verdict shape) — this is the bridging exhibit the live bridging gate observes,
-// and changing its bytes would change what that gate sees.
+// conformantUC03BridgeDemo is the BRIDGING DEMO branch — a different exhibit from the row
+// above, and the only difference that matters is WHICH PEER answers. The MBR-BRIDGE-DEMO
+// persona's own Coverage names the bridging demo payer holder, which declares NEWER contract
+// lines than a stock build, so this run's CRD and DTR legs cross a contract-version boundary
+// to reach it. That boundary is the exhibit.
+//
+// The VERDICT is not part of the exhibit: this peer native-forwards to the same pinned
+// reference payer every other lane answers from, so the row drives the same family the
+// unbridged row above drives (L8000 — covered, prior authorization required, the payer's own
+// questionnaire on the card, approved on submit with an AUTH-NNNN reference). A bridged
+// exchange and an ordinary one differ on the wire, never in what the payer decided — which is
+// exactly the claim the exhibit is allowed to make.
 func conformantUC03BridgeDemo(rn *Runner) (string, error) {
 	const member = "MBR-BRIDGE-DEMO"
 	ref := "Patient/" + member
+	order := scenariodriver.PersonaOrders["approve"] // L8000
 
-	crdBody, err := scenariodriver.BuildCRDRequest(member, shnsdk.SystemCPT, "72148", "MRI lumbar spine")
+	// Direct-mint, never the br-provider BFF prong the unbridged row can take: br-provider's
+	// curated seed world has no bridging persona, and the payer identity this run must reach
+	// is read back off THIS request's own prefetch Coverage below.
+	crdBody, err := scenariodriver.BuildCRDRequest(member, scenariodriver.SystemHCPCS, order.Code, order.Display)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: build CRD request: %w", err)
 	}
@@ -619,6 +627,16 @@ func conformantUC03BridgeDemo(rn *Runner) (string, error) {
 	cards, err := scenariodriver.ParseCards(crdRes.Body)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: parse cards: %w", err)
+	}
+	// The SAME two-halves check the unbridged row makes, for the same reason: this family is
+	// covered AND needs prior authorization. Asserting it HERE is what proves the bridged
+	// legs carried the request faithfully — a transform that mangled the order would show up
+	// as a different coverage answer, not as a transport error.
+	if cards.Covered() != shnsdk.CoveredCovered {
+		return "", fmt.Errorf("runner: conformant/uc03(bridge-demo): covered=%q, want %q (the reference payer behind this peer covers this family — prior authorization is what it asks for)", cards.Covered(), shnsdk.CoveredCovered)
+	}
+	if cards.PANeeded() != shnsdk.PANeededAuthNeeded {
+		return "", fmt.Errorf("runner: conformant/uc03(bridge-demo): paNeeded=%q, want %q (this family needs prior authorization)", cards.PANeeded(), shnsdk.PANeededAuthNeeded)
 	}
 	qs := cards.Questionnaires()
 	if len(qs) == 0 {
@@ -638,11 +656,14 @@ func conformantUC03BridgeDemo(rn *Runner) (string, error) {
 	}
 
 	now := rn.now()
-	srJSON, err := shnsdk.BuildServiceRequest("72148", "MRI lumbar spine w/o contrast", "M51.16", ref)
+	srJSON, err := buildOrderServiceRequest(scenariodriver.SystemHCPCS, order.Code, order.Display, "M51.16", ref)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: build order ServiceRequest: %w", err)
 	}
-	qrJSON, err := fillLumbarQR(member, shnsdk.SandboxUC03Context(), now)
+	// The answers ride the peer's OWN questionnaire — the canonical its card advertised —
+	// never a questionnaire the Kit brought with it. attestedQR rather than conformantQR:
+	// see attestedQR's comment for why this row must not take the br-provider prong.
+	qrJSON, err := attestedQR(canonical, member, now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
 	}
@@ -665,24 +686,13 @@ func conformantUC03BridgeDemo(rn *Runner) (string, error) {
 	if out.Status != http.StatusOK {
 		return "", conformantIngressErr("uc03: submit", out.Status, out.Body)
 	}
-	if !out.Approved || out.PreAuthRef == "" {
-		return "", fmt.Errorf("runner: conformant/uc03: submit not approved: %s", excerpt(out.Body))
+	// The SAME anti-fallback fence every reference-payer row carries: this peer forwards its
+	// PAS pair to the reference payer, so an authorization that is not an AUTH-NNNN means the
+	// submit was answered by something else and the row must not pass as approved.
+	if err := requireAuthRef("uc03(bridge-demo)", out); err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("CRD card + DTR package + PAS submit approved by the bridging demo payer, auth %s", out.PreAuthRef), nil
-}
-
-// fillLumbarQR fills the lumbar-MRI DTR questionnaire for member under cc, authored at
-// now. Used ONLY by the bridging demo branch above, whose demo payer reads the ANSWERS
-// to decide (FR-35) — every reference-payer row is code-keyed instead.
-func fillLumbarQR(member string, cc shnsdk.ClinicalContext, now time.Time) ([]byte, error) {
-	ref := "Patient/" + member
-	qr, err := shnsdk.FillQuestionnaire(shnsdk.SandboxLumbarQuestionnaire(), cc, shnsdk.QRContext{
-		PatientRef: ref, CoverageRef: "Coverage/" + member, OrderRef: "ServiceRequest/sr1", Authored: now,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("runner: fill DTR questionnaire: %w", err)
-	}
-	return qr, nil
+	return fmt.Sprintf("CRD card + DTR package + PAS submit approved across a contract-version boundary, auth %s", out.PreAuthRef), nil
 }
 
 // bridgeDemoSubmitBundle is the bridging demo's PAS $submit bundle — the hand-assembled
@@ -917,7 +927,7 @@ func conformantUC07(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc07: build order ServiceRequest: %w", err)
 	}
-	qrJSON, err := conformantQR(rn, scenariodriver.DTRPackage{Canonical: shnsdk.QuestionnaireCanonicalLumbarMRI, Member: member}, member, now)
+	qrJSON, err := conformantQR(rn, scenariodriver.DTRPackage{Canonical: l8000Canonical, Member: member}, member, now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc07: %w", err)
 	}

@@ -346,16 +346,16 @@ func TestFreshenPersonas_AlwaysRuns(t *testing.T) {
 	}
 }
 
-// TestFreshenPersonas_SandboxPersonasBundle_ObservationsFreshened is the
-// regression pin: FreshenPersonas must also re-POST the sandbox
-// provider personas bundle (fhirseed.SandboxProviderPersonasBundle) through
+// TestFreshenPersonas_DemoPersonasBundle_ObservationsFreshened is the
+// regression pin: FreshenPersonas must also re-POST the demo
+// provider personas bundle (fhirseed.DemoProviderPersonasBundle) through
 // FreshenObservations, not just the provider-data bundles — the lumbar
 // questionnaire's "conservative-therapy-weeks" Observation carries a baked
 // static effectiveDateTime (2026-05-20 in the fixture) that would otherwise
 // age out of the operated CQL's 3-month ObservationLookBack. The stub
 // captures whichever POSTed transaction body names that Observation code and
 // asserts the baked date is gone and today's date is present.
-func TestFreshenPersonas_SandboxPersonasBundle_ObservationsFreshened(t *testing.T) {
+func TestFreshenPersonas_DemoPersonasBundle_ObservationsFreshened(t *testing.T) {
 	var mu sync.Mutex
 	var personasBody []byte
 	mux := http.NewServeMux()
@@ -385,18 +385,18 @@ func TestFreshenPersonas_SandboxPersonasBundle_ObservationsFreshened(t *testing.
 	body := string(personasBody)
 	mu.Unlock()
 	if body == "" {
-		t.Fatal("the sandbox personas bundle (carrying conservative-therapy-weeks) was never POSTed by FreshenPersonas")
+		t.Fatal("the demo personas bundle (carrying conservative-therapy-weeks) was never POSTed by FreshenPersonas")
 	}
 	// 2026-05-20 is the therapy-weeks Observation's baked effectiveDateTime (the field
 	// FreshenObservations rewrites). Other resource types in this bundle (e.g.
 	// DiagnosticReport) carry their own unrelated dates FreshenObservations
 	// deliberately leaves alone — asserting on those would be a false positive.
 	if strings.Contains(body, "2026-05-20") {
-		t.Errorf("posted sandbox personas bundle still carries the baked static therapy-weeks effectiveDateTime (2026-05-20) — FreshenObservations did not run on it")
+		t.Errorf("posted demo personas bundle still carries the baked static therapy-weeks effectiveDateTime (2026-05-20) — FreshenObservations did not run on it")
 	}
 	today := time.Now().UTC().Format("2006-01-02")
 	if !strings.Contains(body, today) {
-		t.Errorf("posted sandbox personas bundle does not carry today's freshened effectiveDateTime (%s)", today)
+		t.Errorf("posted demo personas bundle does not carry today's freshened effectiveDateTime (%s)", today)
 	}
 }
 

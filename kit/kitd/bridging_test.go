@@ -411,7 +411,7 @@ func TestBridgingCarryInputAsset_ParsesAndHasItemWeight(t *testing.T) {
 	if doc["resourceType"] != "QuestionnaireResponse" {
 		t.Fatalf("carry input asset resourceType = %v, want QuestionnaireResponse", doc["resourceType"])
 	}
-	// The sandbox questionnaire groups its leaves, so the weeks item sits inside
+	// The demo questionnaire groups its leaves, so the weeks item sits inside
 	// clinical-history — walk every depth (both QR nesting axes), not the top level.
 	var flatten func(items []any) []any
 	flatten = func(items []any) []any {

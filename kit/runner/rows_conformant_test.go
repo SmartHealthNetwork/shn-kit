@@ -45,7 +45,7 @@ import (
 const (
 	dvCardCovered       = `{"cards":[{"summary":"No prior authorization required","indicator":"info","extension":{"covered":"covered"}}]}`
 	dvCardCoveredNoAuth = `{"cards":[{"summary":"No prior authorization required","indicator":"info","extension":{"covered":"covered","paNeeded":"no-auth"}}]}`
-	dvCardAuthNeeded    = `{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + shnsdk.QuestionnaireCanonicalLumbarMRI + `"]}}]}`
+	dvCardAuthNeeded    = `{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + l8000Canonical + `"]}}]}`
 	dvCardConditional   = `{"cards":[{"summary":"Coverage is conditional","indicator":"warning","extension":{"covered":"conditional","paNeeded":"no-auth"}}]}`
 	dvCardNotCovered    = `{"cards":[{"summary":"Not covered under the member's plan","indicator":"warning","extension":{"covered":"not-covered"}}]}`
 
@@ -53,7 +53,7 @@ const (
 	// coverage answer. The prior-authorization answer and the questionnaire
 	// canonical are untouched, so a row that only reads paNeeded would sail
 	// straight past it.
-	dvCardAuthNeededNotCovered = `{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"not-covered","paNeeded":"auth-needed","questionnaires":["` + shnsdk.QuestionnaireCanonicalLumbarMRI + `"]}}]}`
+	dvCardAuthNeededNotCovered = `{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"not-covered","paNeeded":"auth-needed","questionnaires":["` + l8000Canonical + `"]}}]}`
 
 	// dvCardAuthNeededNoQuestionnaire is dvCardAuthNeeded with ONE fact
 	// mutated: the questionnaire canonical is gone. Coverage and the

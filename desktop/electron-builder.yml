@@ -37,6 +37,17 @@ extraResources:
   # desktop/-relative path, so `from` resolves identically either way.
   - from: THIRD_PARTY_NOTICES.md
     to: .
+  # Electron's own license and Chromium's aggregated third-party notices.
+  # electron-builder embeds these automatically in its Windows/Linux
+  # layouts, but NOT in the macOS .app (confirmed absent across several
+  # signed dmg cuts). Ship them explicitly on every platform, sourced from
+  # the installed electron package's own dist/ — the same files
+  # electron-builder's own Windows/Linux embed copies from — renamed to
+  # match electron-builder's own naming convention for the pair.
+  - from: node_modules/electron/dist/LICENSE
+    to: LICENSE.electron.txt
+  - from: node_modules/electron/dist/LICENSES.chromium.html
+    to: LICENSES.chromium.html
 
 mac:
   category: public.app-category.healthcare-fitness

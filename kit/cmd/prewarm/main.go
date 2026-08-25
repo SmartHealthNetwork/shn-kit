@@ -3,8 +3,8 @@
 // runs once on the asset-pipeline host while a packaged data server is booted for
 // seeding, and never runs on a user machine. Every artifact it installs goes
 // through the exported gateway/fhirseed API — including the operated-$populate
-// prepop CQL Library the sandbox DTR questionnaire depends on, built by
-// fhirseed.SandboxLumbarLibrary and installed with fhirseed.PutGlobalArtifact.
+// prepop CQL Library the demo lumbar DTR questionnaire depends on, built by
+// fhirseed.DemoLumbarLibrary and installed with fhirseed.PutGlobalArtifact.
 package main
 
 import (
@@ -37,12 +37,12 @@ func main() {
 
 	// Install the operated-CQL LumbarMRICQL prepop Library into the DEFAULT
 	// partition — a Library is a non-partitionable knowledge artifact, so it
-	// cannot live inside a tenant partition. Without this the sandbox lumbar
+	// cannot live inside a tenant partition. Without this the demo lumbar
 	// questionnaire's $populate fails "Could not load source for library
 	// LumbarMRICQL" and every DTR-carrying scenario denies at 0 weeks.
-	lumbarLib, err := fhirseed.SandboxLumbarLibrary()
+	lumbarLib, err := fhirseed.DemoLumbarLibrary()
 	if err != nil {
-		log.Fatalf("prewarm: SandboxLumbarLibrary: %v", err)
+		log.Fatalf("prewarm: DemoLumbarLibrary: %v", err)
 	}
 	dbase := *base + "/DEFAULT"
 	v := shnsdk.NewOperationValidator(dbase)
@@ -51,12 +51,12 @@ func main() {
 	step("WarmUpPopulate", c.WarmUpPopulate(ctx))
 	step("LoadProviderDataBundles(provider)", c.LoadProviderDataBundles(ctx, "provider"))
 
-	// The sandbox personas bundle carries baked static effectiveDateTime values
+	// The demo personas bundle carries baked static effectiveDateTime values
 	// that age out of the CQL engine's 3-month observation lookback window.
 	// Freshen them the same way LoadProviderDataBundles freshens the provider
 	// data bundles, so the packaged Kit's therapy-weeks answer is correct from
 	// day one instead of silently rotting a few months after packaging.
-	personasBundle, err := fhirseed.FreshenObservations(fhirseed.SandboxProviderPersonasBundle())
+	personasBundle, err := fhirseed.FreshenObservations(fhirseed.DemoProviderPersonasBundle())
 	if err != nil {
 		log.Fatalf("prewarm: FreshenObservations(personas): %v", err)
 	}

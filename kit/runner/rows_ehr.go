@@ -181,11 +181,11 @@ func ehrUC02(rn *Runner, branch string) (string, error) {
 }
 
 // ehrUC03 dispatches on branch: "" is the chart-driven home-oxygen row
-// (ehrUC03Order); "bridge-refuse" is the bridging demo — the lumbar order
-// originated on the MAIN child's default profile to the bridging demo payer
-// whose contract lines force a refusal (its persona's Coverage names that
-// payer; the directory routes it). Bridging-only: it is the one Plain-EHR row
-// that does not read the chart, and the one that needs no Java trio.
+// (ehrUC03Order); "bridge-refuse" is the bridging demo — the SAME prior-authorization
+// order every other lane originates, sent on the MAIN child's default profile to the
+// bridging demo payer whose declared contract lines force a refusal (its persona's
+// Coverage names that payer; the directory routes it). Bridging-only: it is the one
+// Plain-EHR row that does not read the chart, and the one that needs no Java trio.
 func ehrUC03(rn *Runner, branch string) (string, error) {
 	if branch == "bridge-refuse" {
 		// A req.Branch switch inside handleUC03 carries the member
@@ -203,18 +203,20 @@ func ehrUC03(rn *Runner, branch string) (string, error) {
 		if out.AuthNumber == "" {
 			return "", fmt.Errorf("runner: ehr/uc03: empty authNumber")
 		}
-		// Under the Java trio (native DTR), the gateway's nativePopulator
-		// forwards to a real SDC $populate and — by frozen, documented
-		// gateway design (gateway/engine/originate.go's QRAnswers comment;
-		// gateway/engine/nativepopulate.go) — DROPS per-item FilledItem
-		// attribution, so QRItems is always empty there; that is not a
-		// defect. cfg.BFFURL is only ever non-empty when the trio is
-		// configured, so keep the stronger attribution check as a regression
-		// pin for the non-trio managed-populator path, where FilledItem IS
-		// preserved.
-		if rn.cfg.BFFURL == "" && len(out.QRItems) == 0 {
-			return "", fmt.Errorf("runner: ehr/uc03: 0 qrItems, want >=1")
-		}
+		// NO per-item assertion here, and the reason is a fact about the
+		// questionnaire rather than about this Kit. This row's order is the
+		// payer's prior-authorization family, and that payer's questionnaire
+		// for it asks for no computed values at all — it is a group, a
+		// display line and one boolean for a clinician to answer. So a
+		// populate of it yields no filled items on ANY posture: not with the
+		// packaged clinical-reasoning engine, which correctly returns an
+		// empty in-progress response, and not without it. An item-count
+		// assertion here would demand something no engine can produce.
+		//
+		// What IS this row's contract is asserted above — the payer required
+		// prior authorization and issued an authorization number — plus the
+		// exhibit itself, which is the refusal this run reaches at its PAS
+		// leg when the recipient's contract lines force one.
 		return fmt.Sprintf("bridging demo: approved, auth %s, %d QR items", out.AuthNumber, len(out.QRItems)), nil
 	}
 	return ehrUC03Order(rn)
