@@ -13,6 +13,7 @@
 package runner
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	scenariodriver "github.com/SmartHealthNetwork/shn-gateway/scenariodriver"
 	shnsdk "github.com/SmartHealthNetwork/shn-sdk"
@@ -863,5 +865,95 @@ func TestPackageHasQuestionnaire(t *testing.T) {
 				t.Errorf("packageHasQuestionnaire(%s) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// ---- conformantSubmitBundle payor parameterization -------------------------
+
+// TestConformantSubmitBundle_PayorParameterized is the misroute rejection test the
+// bridge-demo submit row's move onto conformantSubmitBundle depends on:
+// conformantSubmitBundle used to hand the assembled bundle to
+// scenariodriver.AddRoutablePayor, which unconditionally stamped CMS regardless of the
+// payer argument — so a bridge-demo submit would silently route to the reference
+// payer's own holder instead of the bridge payer named by the run's own CRD leg. It
+// now uses scenariodriver.AddRoutablePayorFor(b, payer), so the inline
+// Coverage.payor[0].identifier must be the PASSED payer.
+//
+// It also pins the shape the reference payer itself enforces (first bundle entry must
+// be a Claim) and that an ordinary CMS call is unaffected: it still carries the CMS
+// identifier inline, byte-for-byte what AddRoutablePayor always produced.
+func TestConformantSubmitBundle_PayorParameterized(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	const member = "MBR-BRIDGE-DEMO"
+	bridgePayor := shnsdk.PayerIdentifier{System: "urn:shn:demo-payer", Value: "SHN-BRIDGE-DEMO"}
+
+	srJSON, err := buildOrderServiceRequest(scenariodriver.SystemHCPCS, "L8000", "Breast prosthesis, mastectomy bra", "M51.16", "Patient/"+member)
+	if err != nil {
+		t.Fatalf("build order ServiceRequest: %v", err)
+	}
+	qrJSON, err := attestedQR(l8000Canonical, member, now)
+	if err != nil {
+		t.Fatalf("attestedQR: %v", err)
+	}
+
+	bundle, err := conformantSubmitBundle(member, bridgePayor, srJSON, qrJSON, "kit-uc03-bridge-submit-test", now)
+	if err != nil {
+		t.Fatalf("conformantSubmitBundle: %v", err)
+	}
+
+	var b map[string]any
+	if err := json.Unmarshal(bundle, &b); err != nil {
+		t.Fatalf("unmarshal bundle: %v", err)
+	}
+	entries, _ := b["entry"].([]any)
+	if len(entries) == 0 {
+		t.Fatal("bundle has no entries")
+	}
+	// The shape a real Da Vinci PAS payer enforces (the exact failure the hand-assembled
+	// bridging bundle this replaces used to trip: "First bundle entry must be a Claim,
+	// got: Patient").
+	first, _ := entries[0].(map[string]any)["resource"].(map[string]any)
+	if first == nil || first["resourceType"] != "Claim" {
+		t.Fatalf("entry[0].resource.resourceType = %v, want Claim", first["resourceType"])
+	}
+
+	var coveragePayor shnsdk.PayerIdentifier
+	found := false
+	for _, e := range entries {
+		res, _ := e.(map[string]any)["resource"].(map[string]any)
+		if res == nil || res["resourceType"] != "Coverage" {
+			continue
+		}
+		payors, _ := res["payor"].([]any)
+		if len(payors) == 0 {
+			t.Fatal("Coverage has no payor entries")
+		}
+		p0, _ := payors[0].(map[string]any)
+		ident, _ := p0["identifier"].(map[string]any)
+		if ident == nil {
+			t.Fatal("Coverage.payor[0] has no inline identifier")
+		}
+		sys, _ := ident["system"].(string)
+		val, _ := ident["value"].(string)
+		coveragePayor = shnsdk.PayerIdentifier{System: sys, Value: val}
+		found = true
+	}
+	if !found {
+		t.Fatal("bundle has no Coverage entry")
+	}
+	if coveragePayor != bridgePayor {
+		t.Fatalf("Coverage.payor[0].identifier = %+v, want %+v (the misroute: a hardcoded CMS stamp would have produced %+v)",
+			coveragePayor, bridgePayor, shnsdk.CMSPayerIdentity)
+	}
+
+	// Control row: an ordinary CMS call is untouched — still carries the CMS identifier
+	// inline, byte-stable vs. the pre-parameterization AddRoutablePayor behavior.
+	cmsBundle, err := conformantSubmitBundle(member, shnsdk.CMSPayerIdentity, srJSON, qrJSON, "kit-uc03-cms-submit-test", now)
+	if err != nil {
+		t.Fatalf("conformantSubmitBundle (CMS): %v", err)
+	}
+	if !bytes.Contains(cmsBundle, []byte(`"`+shnsdk.CMSPayerIdentity.System+`"`)) ||
+		!bytes.Contains(cmsBundle, []byte(`"`+shnsdk.CMSPayerIdentity.Value+`"`)) {
+		t.Fatalf("CMS call must still carry the CMS identifier inline: %s", cmsBundle)
 	}
 }

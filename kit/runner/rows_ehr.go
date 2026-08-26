@@ -190,34 +190,35 @@ func ehrUC03(rn *Runner, branch string) (string, error) {
 	if branch == "bridge-refuse" {
 		// A req.Branch switch inside handleUC03 carries the member
 		// selection (gateway/engine/originate.go): "bridge-refuse" selects
-		// the demo refuse persona MBR-BRIDGE-REFUSE — expected to fail at
-		// the PAS leg when run live, which is the run failing as designed,
-		// not a bug.
-		var out uc03Resp
+		// the demo refuse persona MBR-BRIDGE-REFUSE, sent to a recipient
+		// whose declared contract lines force a refusal at the PAS leg. The
+		// daemon answers a structured HTTP 200 naming the layer
+		// ({"refused":true,"refusedAt":"pas-claim","refusal":"<text>"} —
+		// writeBridgeRefusal in the gateway engine), and this fence
+		// pins that exact shape: refused, at the pas-claim contract-version
+		// seam, carrying one of the two designed refusal grammars. Anything
+		// else — an approval, a refusal at another layer, or unrecognized
+		// refusal text — means the exhibit's version boundary isn't the
+		// thing that actually fired, and the row goes red.
+		var out struct {
+			Refused   bool   `json:"refused"`
+			RefusedAt string `json:"refusedAt"`
+			Refusal   string `json:"refusal"`
+		}
 		if err := ehrScenarioMain(rn, "/scenario/uc03", map[string]string{"branch": branch}, &out); err != nil {
 			return "", err
 		}
-		if !out.PARequired {
-			return "", fmt.Errorf("runner: ehr/uc03: paRequired=false, want true")
+		if !out.Refused {
+			return "", fmt.Errorf("runner: ehr/uc03(bridge-refuse): the exchange did not refuse — the contract-version boundary this exhibit demonstrates is gone (a run that approves here means the peer was reached natively)")
 		}
-		if out.AuthNumber == "" {
-			return "", fmt.Errorf("runner: ehr/uc03: empty authNumber")
+		if out.RefusedAt != "pas-claim" {
+			return "", fmt.Errorf("runner: ehr/uc03(bridge-refuse): refused at %q, want the pas-claim contract-version seam — a refusal at any other layer is an incidental failure wearing the exhibit's colors", out.RefusedAt)
 		}
-		// NO per-item assertion here, and the reason is a fact about the
-		// questionnaire rather than about this Kit. This row's order is the
-		// payer's prior-authorization family, and that payer's questionnaire
-		// for it asks for no computed values at all — it is a group, a
-		// display line and one boolean for a clinician to answer. So a
-		// populate of it yields no filled items on ANY posture: not with the
-		// packaged clinical-reasoning engine, which correctly returns an
-		// empty in-progress response, and not without it. An item-count
-		// assertion here would demand something no engine can produce.
-		//
-		// What IS this row's contract is asserted above — the payer required
-		// prior authorization and issued an authorization number — plus the
-		// exhibit itself, which is the refusal this run reaches at its PAS
-		// leg when the recipient's contract lines force one.
-		return fmt.Sprintf("bridging demo: approved, auth %s, %d QR items", out.AuthNumber, len(out.QRItems)), nil
+		if !strings.Contains(out.Refusal, "semantic-change refusal: pa.pas") &&
+			!strings.Contains(out.Refusal, "no shared contract line for pa.pas") {
+			return "", fmt.Errorf("runner: ehr/uc03(bridge-refuse): refusal text %q is not the designed contract-version refusal", out.Refusal)
+		}
+		return "designed refusal at the contract-version bridge: " + out.Refusal, nil
 	}
 	return ehrUC03Order(rn)
 }

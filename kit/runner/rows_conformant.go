@@ -196,12 +196,15 @@ func buildOrderServiceRequest(system, code, display, dxCode, patientRef string) 
 //     off bundle ENTRIES only — a contained payer Organization yields no payor at all)
 //     and AbsoluteRefs:true (it does not resolve relative refs against absolute entry
 //     fullUrls), THEN
-//  2. scenariodriver.AddRoutablePayor, because the Kit's own ingress routes
+//  2. scenariodriver.AddRoutablePayorFor(b, payer), because the Kit's own ingress routes
 //     payload-FIRST off an INLINE Coverage.payor[0].identifier — and step 1's
 //     AbsoluteRefs rewrote the payor REFERENCE into a form the ingress's relative-ref
 //     resolver cannot match, so without the inline identifier the ingress rejects the
 //     bundle ("no payer identifier on member coverage") before it ever reaches the
 //     payer. The stamp is purely additive: the payor reference step 1 needs survives.
+//     It is parameterized by payer (not hardcoded to the reference payer's CMS identity)
+//     so this SAME builder can also serve a row whose member's Coverage names a
+//     different payer holder — see conformantUC03BridgeDemo.
 //
 // qrJSON may be nil — this builder tolerates a submit with no questionnaire answers
 // (the amended re-submit builder does not; see conformantAmendBundle).
@@ -221,7 +224,7 @@ func conformantSubmitBundle(member string, payer shnsdk.PayerIdentifier, srJSON,
 	if err != nil {
 		return nil, fmt.Errorf("runner: build conformant PAS submit bundle: %w", err)
 	}
-	routable, err := scenariodriver.AddRoutablePayor(b)
+	routable, err := scenariodriver.AddRoutablePayorFor(b, payer)
 	if err != nil {
 		return nil, fmt.Errorf("runner: make the PAS submit bundle routable: %w", err)
 	}
@@ -671,11 +674,19 @@ func conformantUC03BridgeDemo(rn *Runner) (string, error) {
 	// routed to — read back off the driver's own CRD request rather than
 	// hardcoded, so this member, whose Coverage names the demo payer, cannot end
 	// up with its PAS leg routed to the reference payer's holder instead.
+	//
+	// The submit itself is the SAME conformant two-step shape every reference-payer row
+	// uses (conformantSubmitBundle), parameterized by that payer rather than a fixed CMS
+	// identity — it no longer needs its own hand-assembled bundle. The demo peer's
+	// payer-edge identity mapping (PAYER_DAVINCI_PAYOR_OWN / PAYER_DAVINCI_PAYOR_BACKEND)
+	// re-stamps ownership at its back edge before forwarding, so conformance and routing
+	// no longer trade off against each other — that trade-off was the old hand-assembled
+	// bundle's whole rationale, and it is dead now that the payer stamp is parameterized.
 	payer, err := conformantPayorFromCRD(crdBody)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
 	}
-	bundle, err := bridgeDemoSubmitBundle(member, payer, srJSON, qrJSON)
+	bundle, err := conformantSubmitBundle(member, payer, srJSON, qrJSON, randCorr("kit-uc03-bridge-submit"), now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc03: %w", err)
 	}
@@ -693,39 +704,6 @@ func conformantUC03BridgeDemo(rn *Runner) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("CRD card + DTR package + PAS submit approved across a contract-version boundary, auth %s", out.PreAuthRef), nil
-}
-
-// bridgeDemoSubmitBundle is the bridging demo's PAS $submit bundle — the hand-assembled
-// shape that exhibit has always put on the wire (Patient + Coverage + order + Claim +
-// the answered QuestionnaireResponse), kept byte-for-byte. It deliberately does NOT go
-// through conformantSubmitBundle: that builder stamps the reference payer's routable
-// identifier, which would misroute this run away from the demo payer holder the
-// exhibit is about.
-func bridgeDemoSubmitBundle(member string, payer shnsdk.PayerIdentifier, srJSON, qrJSON []byte) ([]byte, error) {
-	ref := "Patient/" + member
-	entries := []map[string]any{
-		{"resource": map[string]any{"resourceType": "Patient", "id": member}},
-		{"resource": map[string]any{
-			"resourceType": "Coverage", "id": "cov1", "status": "active",
-			"beneficiary": map[string]any{"reference": ref},
-			// The payor identifier is how the PAS ingress routes the bundle to the
-			// payer holder (FR-G40; no default route) — so it must name the SAME payer
-			// this run's earlier CRD/DTR legs routed to, or one run gets split across
-			// two payer holders. This row passes what it read back off its OWN CRD
-			// request (conformantPayorFromCRD), which is member-derived.
-			"payor": []any{map[string]any{"identifier": map[string]any{
-				"system": payer.System, "value": payer.Value,
-			}}},
-		}},
-		{"resource": json.RawMessage(srJSON)},
-		{"resource": map[string]any{"resourceType": "Claim", "patient": map[string]any{"reference": ref}}},
-		{"resource": json.RawMessage(qrJSON)},
-	}
-	b, err := json.Marshal(map[string]any{"resourceType": "Bundle", "type": "collection", "entry": entries})
-	if err != nil {
-		return nil, fmt.Errorf("runner: marshal bridging demo PAS submit bundle: %w", err)
-	}
-	return b, nil
 }
 
 // conformantHeldThenResolved is the shared body of the two rows that submit an E0424

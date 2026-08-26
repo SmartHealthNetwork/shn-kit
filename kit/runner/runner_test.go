@@ -828,7 +828,7 @@ func TestRun_ConformantUC03_BridgeDemoSelectsMember(t *testing.T) {
 func TestRun_EHRUC03SendsBranch(t *testing.T) {
 	for _, tc := range []struct{ branch, wantBody, wantResp string }{
 		{"", `{}`, `{"paRequired":true,"authNumber":"AUTH-BRANCH-TEST","qrAnswers":{"2.2":"87","2.3":"53"}}`},
-		{"bridge-refuse", `{"branch":"bridge-refuse"}`, `{"paRequired":true,"authNumber":"AUTH-BRANCH-TEST","qrItems":[{"linkId":"1","answer":"x","origin":"auto","sourceRef":"Observation/1"}]}`},
+		{"bridge-refuse", `{"branch":"bridge-refuse"}`, `{"refused":true,"refusedAt":"pas-claim","refusal":"semantic-change refusal: pa.pas 2.0->2.1 (up direction): lanes 2.0,2.1"}`},
 	} {
 		t.Run(tc.branch, func(t *testing.T) {
 			var mainBody, pdBody string

@@ -209,6 +209,66 @@ func TestEHRLane_RowShape(t *testing.T) {
 	}
 }
 
+// runMain builds a Runner whose MAIN-child driver serves body for every
+// request (bridge-refuse originates on the main child, never the
+// provider-data child) and runs ehr/uc03/bridge-refuse against it.
+func runMain(t *testing.T, body string) Result {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	rn := New(Config{
+		Driver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:    event.NewBus(fixedClock),
+	})
+	res, err := rn.Run(t.Context(), Req{Lane: "ehr", UC: "uc03", Branch: "bridge-refuse"})
+	if err != nil {
+		t.Fatalf("Run(ehr/uc03/bridge-refuse): %v", err)
+	}
+	return res
+}
+
+// Bridge refusal bodies mirror the engine's structured 200
+// (gateway/engine/originate.go's writeBridgeRefusal): the two designed
+// refusal grammars, one per contract-version boundary check.
+const (
+	bridgeRefuseSemantic  = `{"refused":true,"refusedAt":"pas-claim","refusal":"semantic-change refusal: pa.pas 2.0->2.1 (up direction): lanes 2.0,2.1 knob SHN_DEMO_EGRESS_NATIVE_LINES"}`
+	bridgeRefuseSelection = `{"refused":true,"refusedAt":"pas-claim","refusal":"no shared contract line for pa.pas (leg pas-claim): recipient advertises 2.1 only"}`
+)
+
+// TestEHRUC03BridgeRefuse_Pass pins the two designed-refusal grammars the row
+// must accept: the semantic-change and the no-shared-contract-line shape.
+func TestEHRUC03BridgeRefuse_Pass(t *testing.T) {
+	for _, tc := range []struct{ name, body, wantDetail string }{
+		{"semantic-change grammar", bridgeRefuseSemantic, "semantic-change refusal: pa.pas"},
+		{"no-shared-contract-line grammar", bridgeRefuseSelection, "no shared contract line for pa.pas"},
+	} {
+		res := runMain(t, tc.body)
+		if res.State != StatePassed || !strings.Contains(res.Detail, tc.wantDetail) {
+			t.Errorf("%s: state=%s detail=%q, want passed containing %q", tc.name, res.State, res.Detail, tc.wantDetail)
+		}
+	}
+}
+
+// TestEHRUC03BridgeRefuse_Impostors pins the fence against three ways a wire
+// body can look plausible while missing the version-boundary contract this
+// exhibit demonstrates: the old approval shape, a refusal at the wrong seam,
+// and a refusal at the right seam with an unrecognized grammar.
+func TestEHRUC03BridgeRefuse_Impostors(t *testing.T) {
+	for _, tc := range []struct{ name, body, wantErr string }{
+		{"old approval shape", `{"paRequired":true,"authNumber":"AUTH-0199","validUntil":"2026-12-01"}`, "did not refuse"},
+		{"refused at the wrong seam", `{"refused":true,"refusedAt":"crd-order-select","refusal":"semantic-change refusal: pa.pas x"}`, "crd-order-select"},
+		{"unrecognized refusal grammar", `{"refused":true,"refusedAt":"pas-claim","refusal":"hub routing failed"}`, "hub routing failed"},
+	} {
+		res := runMain(t, tc.body)
+		if res.State != StateFailed || !strings.Contains(res.Detail, tc.wantErr) {
+			t.Errorf("%s: state=%s detail=%q, want failed naming %q", tc.name, res.State, res.Detail, tc.wantErr)
+		}
+	}
+}
+
 // The bridge-refuse branch is the one Plain-EHR row that runs on the MAIN child
 // (origination of the lumbar order to the bridging demo payer); every other ehr
 // row runs on the provider-data child — and never the other way round.
