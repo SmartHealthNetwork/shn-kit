@@ -30,6 +30,7 @@
 package kitd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -40,6 +41,7 @@ import (
 	"time"
 
 	"github.com/SmartHealthNetwork/shn-kit/supervisor"
+	"github.com/SmartHealthNetwork/shn-kit/validatorwarm"
 )
 
 const (
@@ -251,9 +253,9 @@ func javaEnv(springJSON string) []string {
 }
 
 // BuildValidatorChildSpec assembles ONE validator child's ChildSpec at line
-// (single-tenant $validate-only HAPI carrying that line's full IG set — 9 IGs
-// for 2.0/2.1 (validator-sidecar + shnig), 10 for 2.2's
-// extensions-closure superset (validator-sidecar-ext + shnig)). An unrecognized line
+// (single-tenant $validate-only HAPI carrying that line's full IG set — 10 IGs
+// for 2.0/2.1 (validator-sidecar with local support), 11 for 2.2's
+// extensions-closure superset (validator-sidecar-ext with local support)). An unrecognized line
 // (kitdIGPinsValidator returns nil) is a fail-loud config error, never a
 // silent empty-IG boot. h2Dir ({stateDir}/{validatorChildDirName(line)}/h2)
 // is populated by seed.CopyPrewarmedH2 BEFORE this child is ever spawned —
@@ -261,10 +263,24 @@ func javaEnv(springJSON string) []string {
 // the child indexes its IGs from scratch (ReadyTimeout reflects that: the
 // fast javaReadyTimeout for the prewarmed default line, the cold
 // javaReadyTimeoutCold otherwise).
+//
+// Readiness is two halves under that one budget: /fhir/metadata answering
+// (ReadyURLs), then the line's full verdict corpus posted through
+// validatorwarm.Warm (ReadyURLs alone is the readiness definition the
+// validator container image retired: HAPI serves metadata long before its
+// first $validate can answer, and its first PAS verdicts can be false, so a
+// scenario whose first leg lands in that window fails or is misjudged even
+// though the child was reported healthy). The supervisor runs the hook once
+// per spawned process, so every crash bounce and deliberate Restart re-warms
+// the new JVM; a row that never answers or answers wrongly fails readiness
+// with that row and reason, never a bare timeout.
 func BuildValidatorChildSpec(assetsDir, jreDir, stateDir string, port int, goos, line string) (supervisor.ChildSpec, error) {
 	igs := kitdIGPinsValidator(line)
 	if igs == nil {
 		return supervisor.ChildSpec{}, fmt.Errorf("kitd: no validator IG pin set for line %q (kitdIGPinsValidator, tools/contracts/manifest.json)", line)
+	}
+	if validatorwarm.RowCount(line) == 0 {
+		return supervisor.ChildSpec{}, fmt.Errorf("kitd: no validator readiness corpus for line %q (kit/validatorwarm)", line)
 	}
 	name := validatorChildDirName(line)
 	workDir := filepath.Join(stateDir, name)
@@ -285,6 +301,7 @@ func BuildValidatorChildSpec(assetsDir, jreDir, stateDir string, port int, goos,
 	if line != defaultContractLine {
 		readyTimeout = javaReadyTimeoutCold
 	}
+	base := fmt.Sprintf("http://127.0.0.1:%d/fhir", port)
 	return supervisor.ChildSpec{
 		Name:         name,
 		Command:      javaCommand(jreDir, goos),
@@ -292,9 +309,12 @@ func BuildValidatorChildSpec(assetsDir, jreDir, stateDir string, port int, goos,
 		Env:          javaEnv(springJSON),
 		Dir:          workDir,
 		LogPath:      filepath.Join(stateDir, name+".log"),
-		ReadyURLs:    []string{fmt.Sprintf("http://127.0.0.1:%d/fhir/metadata", port)},
+		ReadyURLs:    []string{base + "/metadata"},
 		ReadyTimeout: readyTimeout,
 		RestartMax:   javaRestartMax,
+		Ready: func(ctx context.Context, progress func(string)) error {
+			return validatorwarm.Warm(ctx, base, line, progress)
+		},
 	}, nil
 }
 

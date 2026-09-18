@@ -317,6 +317,10 @@ func TestFreshenPersonas_AlwaysRuns(t *testing.T) {
 		atomic.AddInt32(&postCount, 1)
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("POST /fhir/provider/Patient/$validate", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/fhir+json")
+		_, _ = w.Write([]byte(`{"resourceType":"OperationOutcome","issue":[]}`))
+	})
 	mux.HandleFunc("PUT /fhir/provider/Basic/seed-complete", func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&putCount, 1)
 		w.WriteHeader(http.StatusOK)
@@ -371,6 +375,10 @@ func TestFreshenPersonas_DemoPersonasBundle_ObservationsFreshened(t *testing.T) 
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("POST /fhir/provider/Patient/$validate", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/fhir+json")
+		_, _ = w.Write([]byte(`{"resourceType":"OperationOutcome","issue":[]}`))
+	})
 	mux.HandleFunc("PUT /fhir/provider/Basic/seed-complete", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -402,6 +410,10 @@ func TestFreshenPersonas_DemoPersonasBundle_ObservationsFreshened(t *testing.T) 
 
 func TestFreshenPersonas_UpstreamFailure_NamedError(t *testing.T) {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /fhir/provider/Patient/$validate", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/fhir+json")
+		_, _ = w.Write([]byte(`{"resourceType":"OperationOutcome","issue":[]}`))
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -414,5 +426,62 @@ func TestFreshenPersonas_UpstreamFailure_NamedError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "freshen provider-data personas") {
 		t.Errorf("error = %q, want it named per FreshenPersonas' own wrapping", err.Error())
+	}
+}
+
+// A validator that cannot warm is named as such, before any persona bundle is
+// posted: the seeder fails honestly instead of writing a marker over a cold server.
+func TestFreshenPersonas_WarmFailure_NamedAndStopsBeforeSeeding(t *testing.T) {
+	var posts int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /fhir/provider", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&posts, 1)
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	err := FreshenPersonas(context.Background(), srv.URL, nil)
+	if err == nil || !strings.Contains(err.Error(), "kitd: warm validator") {
+		t.Fatalf("error = %v, want the warm-up named", err)
+	}
+	if atomic.LoadInt32(&posts) != 0 {
+		t.Fatalf("%d persona bundles were posted after the warm-up failed", posts)
+	}
+}
+
+// TestFreshenPersonas_WarmsTheValidatorFirst pins the order: the seeder's first
+// request is the validator warm-up, before any persona bundle and before the
+// marker — the cold first $validate is paid here, not by a consumer.
+func TestFreshenPersonas_WarmsTheValidatorFirst(t *testing.T) {
+	var mu sync.Mutex
+	var order []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		order = append(order, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path == "/fhir/provider/Patient/$validate" {
+			w.Header().Set("Content-Type", "application/fhir+json")
+			_, _ = w.Write([]byte(`{"resourceType":"OperationOutcome","issue":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	if err := FreshenPersonas(context.Background(), srv.URL, nil); err != nil {
+		t.Fatalf("FreshenPersonas: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) == 0 || order[0] != "POST /fhir/provider/Patient/$validate" {
+		t.Fatalf("first request = %v, want the warm-up $validate", order)
+	}
+	if order[len(order)-1] != "PUT /fhir/provider/Basic/seed-complete" {
+		t.Fatalf("last request = %q, want the seed-complete marker", order[len(order)-1])
 	}
 }

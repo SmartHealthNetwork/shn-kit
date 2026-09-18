@@ -260,6 +260,48 @@ describe('StatusPanel — reset flow', () => {
 });
 
 describe('StatusPanel — per-child restart', () => {
+  it('blocks all Java restarts during admission and preserves each pending request when admission clears', async () => {
+    const status: StatusResponse = { children: ['validator', 'data-server', 'br-provider'].map((name) => (
+      { name, state: 'ready', detail: 'ok', pid: 1, restarts: 0 }
+    )) };
+    let finish!: (value: { restarted: string }) => void;
+    vi.mocked(api.postChildRestart).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const { rerender } = render(<StatusPanel boot={boot()} status={status} sseState="open" admissionPending />);
+    for (const button of screen.getAllByRole('button', { name: /^restart$/i })) {
+      expect(button).toBeDisabled();
+      await userEvent.click(button);
+    }
+    expect(api.postChildRestart).not.toHaveBeenCalled();
+    rerender(<StatusPanel boot={boot()} status={status} sseState="open" admissionPending={false} />);
+    for (const button of screen.getAllByRole('button', { name: /^restart$/i })) expect(button).toBeEnabled();
+    await userEvent.click(screen.getAllByRole('button', { name: /^restart$/i })[0]);
+    rerender(<StatusPanel boot={boot()} status={status} sseState="open" admissionPending />);
+    rerender(<StatusPanel boot={boot()} status={status} sseState="open" admissionPending={false} />);
+    expect(screen.getByRole('button', { name: /restarting/i })).toBeDisabled();
+    for (const button of screen.getAllByRole('button', { name: /^restart$/i })) expect(button).toBeEnabled();
+    finish({ restarted: 'validator' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /restarting/i })).toBeNull());
+    for (const button of screen.getAllByRole('button', { name: /^restart$/i })) expect(button).toBeEnabled();
+  });
+
+  it('keeps whole-Kit restart and reset recovery available during admission', async () => {
+    vi.mocked(bridge.canRestart).mockReturnValue(true);
+    vi.mocked(api.postReset).mockResolvedValue({ restartRequired: true });
+    const status: StatusResponse = { children: [
+      { name: 'data-server', state: 'failed', detail: 'unavailable', pid: 0, restarts: 0 },
+    ] };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" admissionPending />);
+    const recovery = within(document.querySelector('.child-failure') as HTMLElement).getByRole('button', { name: /^restart$/i });
+    expect(recovery).toBeEnabled();
+    await userEvent.click(recovery);
+    expect(bridge.restartKit).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole('button', { name: /^reset$/i }));
+    expect(screen.getByRole('button', { name: /confirm reset/i })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: /confirm reset/i }));
+    expect(api.postReset).toHaveBeenCalledOnce();
+    expect(screen.getByText(/restart the kit to finish the reset/i)).toBeDefined();
+  });
+
   function statusWithChildren(names: string[]): StatusResponse {
     return {
       children: names.map((name) => ({ name, state: 'ready', detail: 'ok', pid: 1, restarts: 0 })),

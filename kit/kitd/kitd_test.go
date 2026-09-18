@@ -468,6 +468,149 @@ func TestRunDispatch(t *testing.T) {
 	}
 }
 
+type blockedHistorySink struct {
+	entered chan runner.Result
+	release chan struct{}
+}
+
+func (s *blockedHistorySink) RunCompleted(res runner.Result) {
+	s.entered <- res
+	<-s.release
+}
+
+func receiveCompletion[T any](t *testing.T, ch <-chan T) T {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(5 * time.Second):
+		t.Fatal("completion route did not respond within 5s")
+		var zero T
+		return zero
+	}
+}
+
+// Outcomes finish the story before synchronous history capture returns.
+// The authenticated result route must remain responsive without advertising
+// completion until run/watch admission and child restart are available.
+func TestCompletionRoutes_HistoryBoundary(t *testing.T) {
+	for _, kind := range []string{"run", "watch"} {
+		t.Run(kind, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /scenario/uc01", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"covered":true,"reason":"active coverage"}`))
+			})
+			gw := httptest.NewServer(mux)
+			t.Cleanup(gw.Close)
+			bus := event.NewBus(fixedClock)
+			sink := &blockedHistorySink{entered: make(chan runner.Result, 8), release: make(chan struct{})}
+			driver := scenariodriver.New(scenariodriver.Config{ProviderDataURL: gw.URL})
+			rn := runner.New(runner.Config{Driver: driver, ProviderDataDriver: driver, Bus: bus, Now: fixedClock, History: sink})
+			restarter := &fakeRestarter{}
+			const token = "completion-route-token"
+			_, base := startDaemon(t, Config{
+				APIAddr: "127.0.0.1:0", StateDir: t.TempDir(), Token: token,
+				Bus: bus, Sup: supervisor.New(nil), Runner: rn, Restarter: restarter,
+			})
+			var once sync.Once
+			release := func() { once.Do(func() { close(sink.release) }) }
+			t.Cleanup(release)
+			type reply struct {
+				status int
+				body   []byte
+			}
+			request := func(method, path string, body any) <-chan reply {
+				done := make(chan reply, 1)
+				go func() {
+					code, data := doJSON(t, method, base+path, token, body)
+					done <- reply{code, data}
+				}()
+				return done
+			}
+			check := func(method, path string, body any, want int) reply {
+				t.Helper()
+				got := receiveCompletion(t, request(method, path, body))
+				if got.status != want {
+					t.Fatalf("%s %s = %d, want %d: %s", method, path, got.status, want, got.body)
+				}
+				return got
+			}
+			runReq := map[string]string{"lane": "ehr", "uc": "uc01", "branch": "covered"}
+			var accepted reply
+			var stopped <-chan reply
+			if kind == "watch" {
+				accepted = check(http.MethodPost, "/api/watch", nil, http.StatusAccepted)
+				stopped = request(http.MethodDelete, "/api/watch", nil)
+			} else {
+				accepted = check(http.MethodPost, "/api/runs", runReq, http.StatusAccepted)
+			}
+			var started struct {
+				RunID string `json:"runId"`
+			}
+			if err := json.Unmarshal(accepted.body, &started); err != nil || started.RunID == "" {
+				t.Fatalf("start response = %s", accepted.body)
+			}
+			captured := receiveCompletion(t, sink.entered)
+			if captured.RunID != started.RunID || captured.State != runner.StatePassed {
+				t.Fatalf("history captured %+v for %s", captured, started.RunID)
+			}
+			foundOutcome := false
+			for _, frame := range bus.Since(0) {
+				if frame.RunID == started.RunID && frame.Type == event.TypeRunFinished {
+					foundOutcome = true
+				}
+			}
+			if !foundOutcome {
+				t.Fatal("history began before the terminal outcome")
+			}
+			got := check(http.MethodGet, "/api/runs", nil, http.StatusOK)
+			var results []runner.Result
+			if err := json.Unmarshal(got.body, &results); err != nil || len(results) != 0 {
+				t.Errorf("GET /api/runs prematurely published during history: %s (error %v)", got.body, err)
+			}
+			check(http.MethodPost, "/api/runs", runReq, http.StatusConflict)
+			check(http.MethodPost, "/api/watch", nil, http.StatusConflict)
+			check(http.MethodPost, "/api/children/validator/restart", nil, http.StatusConflict)
+			if restarter.callCount() != 0 {
+				t.Error("Java restart reached the child during history capture")
+			}
+			if stopped != nil {
+				select {
+				case got := <-stopped:
+					t.Fatalf("DELETE /api/watch returned before finalization: %+v", got)
+				default:
+				}
+			}
+			release()
+			if stopped != nil {
+				if got := receiveCompletion(t, stopped); got.status != http.StatusOK {
+					t.Fatalf("DELETE /api/watch after history = %d: %s", got.status, got.body)
+				}
+			}
+			// Poll only the read boundary. Admission operations below are attempted
+			// once, without sleeps or busy-response retry hiding a refusal.
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				got = check(http.MethodGet, "/api/runs", nil, http.StatusOK)
+				if err := json.Unmarshal(got.body, &results); err != nil {
+					t.Fatal(err)
+				}
+				if len(results) == 1 && results[0].RunID == started.RunID {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("finalized result never appeared: %s", got.body)
+				}
+			}
+			check(http.MethodPost, "/api/children/validator/restart", nil, http.StatusOK)
+			check(http.MethodPost, "/api/watch", nil, http.StatusAccepted)
+			check(http.MethodDelete, "/api/watch", nil, http.StatusOK)
+			check(http.MethodPost, "/api/runs", runReq, http.StatusAccepted)
+		})
+	}
+}
+
 // ---- Bootstrap API routes + daemon-first run gating ------------------------
 
 // ---- Row 1: run routes 503 before SetRunner, 202/200 after ----------------
@@ -2439,6 +2582,7 @@ func TestWatchPost_SurvivesItsOwnRequest(t *testing.T) {
 		if !ok {
 			t.Fatal("ResponseWriter does not support Flusher")
 		}
+		w.Header().Set("X-SHN-Observer-Incarnation", "test-source")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl.Flush()
@@ -2452,8 +2596,8 @@ func TestWatchPost_SurvivesItsOwnRequest(t *testing.T) {
 			}
 		}
 	})
-	obsMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(w, `{"events":%d}`, health.Load())
+	obsMux.HandleFunc("/barrier", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"protocol":1,"incarnation":"test-source","events":%d}`, health.Load())
 	})
 	obsSrv := httptest.NewServer(obsMux)
 	defer obsSrv.Close()

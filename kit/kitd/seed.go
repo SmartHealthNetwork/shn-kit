@@ -216,6 +216,12 @@ func copyDirTree(src, dst string) error {
 // keeps it on the identical idempotent-PUT posture as the rest of this func.
 func FreshenPersonas(ctx context.Context, dataURL string, logf func(string, ...any)) error {
 	c := &fhirseed.Client{Base: dataURL + "/fhir", Logf: logf}
+	// The first $validate after a cold boot pays the validation-support
+	// initialisation; the seeder pays it here, under the warm-up's own deadline,
+	// before any budgeted request and before the seed-complete marker.
+	if _, err := WarmValidate(ctx, dataURL+"/fhir", seedTenant, logf); err != nil {
+		return fmt.Errorf("kitd: warm validator: %w", err)
+	}
 	if err := c.LoadProviderDataBundles(ctx, seedTenant); err != nil {
 		return fmt.Errorf("kitd: freshen provider-data personas: %w", err)
 	}

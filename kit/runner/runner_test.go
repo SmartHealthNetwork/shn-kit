@@ -399,7 +399,7 @@ func TestRun_AuditURLEmpty(t *testing.T) {
 
 func TestRun_ConformantUC02(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 		// Transport fake: does NOT verify the minted bearer — real
 		// verification is the (later) live gate's job, not this test's.
 		if r.Header.Get("Authorization") == "" {
@@ -449,7 +449,7 @@ func TestRun_ConformantUC02(t *testing.T) {
 // raw 400 relayed verbatim.
 func TestRun_ConformantUC02_MemberNotOnConnectedEHR(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error":"unknown member"}`))
@@ -491,7 +491,7 @@ func TestRun_ConformantUC02_MemberNotOnConnectedEHR(t *testing.T) {
 // discriminator, and isConformantIngressUnknownMember must not over-match.
 func TestRun_ConformantUC02_OtherIngressFailure_NotRelabeled(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error":"missing context.patientId"}`))
@@ -536,12 +536,12 @@ func TestRun_ConformantUC02_OtherIngressFailure_NotRelabeled(t *testing.T) {
 // (the Java trio present), uc02's CRD leg originates through br-provider's
 // real BFF (scenariodriver.OriginateThroughBRProvider) — the fake BFF server
 // asserts the hit landed on ITS endpoint (POST /api/cds-services/
-// order-select-crd), the ingress server is NEVER hit directly, and the row
+// shn-order-sign), the ingress server is NEVER hit directly, and the row
 // detail carries the br-provider provenance line.
 func TestRun_ConformantUC02_BFFOrigination(t *testing.T) {
 	var bffHit bool
 	bffMux := http.NewServeMux()
-	bffMux.HandleFunc("POST /api/cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+	bffMux.HandleFunc("POST /api/cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 		bffHit = true
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"cards":[{"summary":"No prior authorization required","indicator":"info","extension":{"covered":"covered","paNeeded":"no-auth"}}]}`))
@@ -597,7 +597,7 @@ func TestRun_ConformantUC02_BFFOrigination(t *testing.T) {
 // deliberate pair.
 func TestRun_ConformantUC02_NoBFF_PostCRDUnchanged(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"cards":[{"summary":"No prior authorization required","indicator":"info","extension":{"covered":"covered","paNeeded":"no-auth"}}]}`))
 	})
@@ -651,7 +651,7 @@ func TestRun_ConformantUC02_NoBFF_PostCRDUnchanged(t *testing.T) {
 func TestRun_ConformantUC03BridgeDemo_UnderBFF_StillDriverMinted(t *testing.T) {
 	var bffHit bool
 	bffMux := http.NewServeMux()
-	bffMux.HandleFunc("POST /api/cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+	bffMux.HandleFunc("POST /api/cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 		bffHit = true
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"cards":[{"summary":"No prior authorization required","indicator":"info","extension":{"covered":"covered","paNeeded":"no-auth"}}]}`))
@@ -661,7 +661,7 @@ func TestRun_ConformantUC03BridgeDemo_UnderBFF_StillDriverMinted(t *testing.T) {
 
 	var crdHit bool
 	ingressMux := http.NewServeMux()
-	ingressMux.HandleFunc("POST /cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+	ingressMux.HandleFunc("POST /cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 		crdHit = true
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"cards":[{"summary":"Prior authorization required","indicator":"warning","extension":{"covered":"covered","paNeeded":"auth-needed","questionnaires":["` + l8000Canonical + `"]}}]}`))
@@ -744,7 +744,7 @@ func TestRun_ConformantUC03_BridgeDemoSelectsMember(t *testing.T) {
 		t.Run(tc.branch, func(t *testing.T) {
 			var crdBody, pkgBody, submitBody string
 			ingressMux := http.NewServeMux()
-			ingressMux.HandleFunc("POST /cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+			ingressMux.HandleFunc("POST /cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 				b, _ := io.ReadAll(r.Body)
 				crdBody = string(b)
 				w.Header().Set("Content-Type", "application/json")
@@ -1165,6 +1165,7 @@ func TestValidateRow_UC03BridgeBranches(t *testing.T) {
 func TestRun_TailFrameStampedBeforeTerminal(t *testing.T) {
 	healthPolled := make(chan struct{})
 	var healthOnce sync.Once
+	var barrierCalls atomic.Int64
 
 	obsMux := http.NewServeMux()
 	obsMux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
@@ -1172,6 +1173,7 @@ func TestRun_TailFrameStampedBeforeTerminal(t *testing.T) {
 		if !ok {
 			t.Fatal("ResponseWriter does not support Flusher")
 		}
+		w.Header().Set("X-SHN-Observer-Incarnation", "test-source")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl.Flush()
@@ -1180,9 +1182,13 @@ func TestRun_TailFrameStampedBeforeTerminal(t *testing.T) {
 		fl.Flush()
 		<-r.Context().Done()
 	})
-	obsMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+	obsMux.HandleFunc("/barrier", func(w http.ResponseWriter, _ *http.Request) {
+		if barrierCalls.Add(1) == 1 {
+			fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":0}`)
+			return
+		}
 		healthOnce.Do(func() { close(healthPolled) })
-		fmt.Fprint(w, `{"events":1}`)
+		fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":1}`)
 	})
 	obsSrv := httptest.NewServer(obsMux)
 	defer obsSrv.Close()
@@ -1258,13 +1264,14 @@ func TestRun_DrainTimeoutDoesNotFailRun(t *testing.T) {
 		if !ok {
 			t.Fatal("ResponseWriter does not support Flusher")
 		}
+		w.Header().Set("X-SHN-Observer-Incarnation", "test-source")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl.Flush()
 		<-r.Context().Done() // never sends a frame
 	})
-	obsMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"events":99}`)
+	obsMux.HandleFunc("/barrier", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":99}`)
 	})
 	obsSrv := httptest.NewServer(obsMux)
 	defer obsSrv.Close()
@@ -1335,6 +1342,7 @@ func TestRun_RowPanicWithRelayStillDrainsAndClears(t *testing.T) {
 
 	healthPolled := make(chan struct{})
 	var healthOnce sync.Once
+	var barrierCalls atomic.Int64
 
 	obsMux := http.NewServeMux()
 	obsMux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
@@ -1342,6 +1350,7 @@ func TestRun_RowPanicWithRelayStillDrainsAndClears(t *testing.T) {
 		if !ok {
 			t.Fatal("ResponseWriter does not support Flusher")
 		}
+		w.Header().Set("X-SHN-Observer-Incarnation", "test-source")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl.Flush()
@@ -1350,9 +1359,13 @@ func TestRun_RowPanicWithRelayStillDrainsAndClears(t *testing.T) {
 		fl.Flush()
 		<-r.Context().Done()
 	})
-	obsMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+	obsMux.HandleFunc("/barrier", func(w http.ResponseWriter, _ *http.Request) {
+		if barrierCalls.Add(1) == 1 {
+			fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":0}`)
+			return
+		}
 		healthOnce.Do(func() { close(healthPolled) })
-		fmt.Fprint(w, `{"events":1}`)
+		fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":1}`)
 	})
 	obsSrv := httptest.NewServer(obsMux)
 	defer obsSrv.Close()
@@ -1703,6 +1716,7 @@ func newControllableObs(t *testing.T) *controllableObs {
 		if !ok {
 			t.Fatal("ResponseWriter does not support Flusher")
 		}
+		w.Header().Set("X-SHN-Observer-Incarnation", "test-source")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl.Flush()
@@ -1716,8 +1730,8 @@ func newControllableObs(t *testing.T) *controllableObs {
 			}
 		}
 	})
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(w, `{"events":%d}`, o.health.Load())
+	mux.HandleFunc("/barrier", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"protocol":1,"incarnation":"test-source","events":%d}`, o.health.Load())
 	})
 	o.srv = httptest.NewServer(mux)
 	return o
@@ -2070,6 +2084,7 @@ func TestWatch_Lifecycle(t *testing.T) {
 func TestWatch_DrainBeforeTerminal(t *testing.T) {
 	healthPolled := make(chan struct{})
 	var healthOnce sync.Once
+	var barrierCalls atomic.Int64
 
 	obsMux := http.NewServeMux()
 	obsMux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
@@ -2077,6 +2092,7 @@ func TestWatch_DrainBeforeTerminal(t *testing.T) {
 		if !ok {
 			t.Fatal("ResponseWriter does not support Flusher")
 		}
+		w.Header().Set("X-SHN-Observer-Incarnation", "test-source")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl.Flush()
@@ -2085,9 +2101,13 @@ func TestWatch_DrainBeforeTerminal(t *testing.T) {
 		fl.Flush()
 		<-r.Context().Done()
 	})
-	obsMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+	obsMux.HandleFunc("/barrier", func(w http.ResponseWriter, _ *http.Request) {
+		if barrierCalls.Add(1) == 1 {
+			fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":0}`)
+			return
+		}
 		healthOnce.Do(func() { close(healthPolled) })
-		fmt.Fprint(w, `{"events":1}`)
+		fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":1}`)
 	})
 	obsSrv := httptest.NewServer(obsMux)
 	defer obsSrv.Close()
@@ -2304,12 +2324,14 @@ func TestWatch_CtxCancelSelfFinalizes(t *testing.T) {
 
 	healthPolled := make(chan struct{})
 	var healthOnce sync.Once
+	var barrierCalls atomic.Int64
 	obsMux := http.NewServeMux()
 	obsMux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
 		fl, ok := w.(http.Flusher)
 		if !ok {
 			t.Fatal("ResponseWriter does not support Flusher")
 		}
+		w.Header().Set("X-SHN-Observer-Incarnation", "test-source")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl.Flush()
@@ -2318,9 +2340,13 @@ func TestWatch_CtxCancelSelfFinalizes(t *testing.T) {
 		fl.Flush()
 		<-r.Context().Done()
 	})
-	obsMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+	obsMux.HandleFunc("/barrier", func(w http.ResponseWriter, _ *http.Request) {
+		if barrierCalls.Add(1) == 1 {
+			fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":0}`)
+			return
+		}
 		healthOnce.Do(func() { close(healthPolled) })
-		fmt.Fprint(w, `{"events":1}`)
+		fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":1}`)
 	})
 	obsSrv := httptest.NewServer(obsMux)
 	defer obsSrv.Close()
@@ -2588,6 +2614,7 @@ func TestWatch_PostTerminalFrameDropsAsAmbient(t *testing.T) {
 		if !ok {
 			t.Fatal("ResponseWriter does not support Flusher")
 		}
+		w.Header().Set("X-SHN-Observer-Incarnation", "test-source")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl.Flush()
@@ -2596,8 +2623,8 @@ func TestWatch_PostTerminalFrameDropsAsAmbient(t *testing.T) {
 		fl.Flush()
 		<-r.Context().Done()
 	})
-	obsMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"events":0}`) // never reports the held-back frame — Drain must not wait for it
+	obsMux.HandleFunc("/barrier", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"protocol":1,"incarnation":"test-source","events":0}`) // never reports the held-back frame — Drain must not wait for it
 	})
 	obsSrv := httptest.NewServer(obsMux)
 	defer obsSrv.Close()

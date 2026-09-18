@@ -42,6 +42,42 @@ function evt(partial: Partial<KitEvent> & { seq: number; type: string }): KitEve
 }
 
 describe('useEvents', () => {
+  it.each(['run.finished', 'run.failed'])('retains started metadata after %s and ring eviction', (terminal) => {
+    const { result } = renderHook(() => useEvents('tok-1'));
+    const source = FakeEventSource.instances[0];
+    const started = evt({ seq: 1, type: 'run.started', runId: 'watch-1', uc: 'external' });
+    act(() => {
+      source.emit(started);
+      source.emit(evt({ seq: 2, type: terminal, runId: 'watch-1' }));
+      for (let seq = 3; seq <= 2003; seq++) source.emit(evt({ seq, type: 'child.state' }));
+    });
+    expect(result.current.activeRunId).toBeUndefined();
+    expect(result.current.all).toHaveLength(2000);
+    expect(result.current.byRun('watch-1')).toEqual([]);
+    expect(result.current.latestStarted).toEqual(started);
+  });
+
+  it('keeps started metadata across automatic reconnect but resets it with the subscription', () => {
+    const { result, rerender } = renderHook(({ token }: { token: string | undefined }) => useEvents(token), {
+      initialProps: { token: 'tok-1' as string | undefined },
+    });
+    const first = FakeEventSource.instances[0];
+    const started = evt({ seq: 1, type: 'run.started', runId: 'run-1', uc: 'uc01' });
+    act(() => { first.emit(started); first.onerror?.(); first.onopen?.(); });
+    expect(result.current.latestStarted).toEqual(started);
+    rerender({ token: 'tok-2' });
+    expect(first.closed).toBe(true);
+    expect(result.current.latestStarted).toBeUndefined();
+    expect(result.current.activeRunId).toBeUndefined();
+    expect(result.current.all).toEqual([]);
+    act(() => FakeEventSource.instances[1].emit(started));
+    rerender({ token: undefined });
+    expect(FakeEventSource.instances[1].closed).toBe(true);
+    expect(result.current.latestStarted).toBeUndefined();
+    expect(result.current.activeRunId).toBeUndefined();
+    expect(result.current.all).toEqual([]);
+  });
+
   it('connects to eventsUrl(token) and accumulates events ordered by seq', () => {
     const { result } = renderHook(() => useEvents('tok-1'));
     const source = FakeEventSource.instances[0];

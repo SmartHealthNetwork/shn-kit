@@ -81,6 +81,60 @@ Dev builds default to the file store; either is selectable explicitly via
 | `--bridge-demo-holder` | `"bridge-demo"` | Holder id the `"bridge-demo-payer"` Verify probe expects on the registrar feed (the bridging demo's bridged-exchange exhibit); `""` ⇒ that probe is skipped entirely, not reported red |
 | `--bridge-demo-refuse-holder` | `"bridge-demo-refuse"` | Holder id the `"bridge-demo-refuse"` Verify probe expects on the registrar feed (the bridging demo's refusal exhibit); `""` ⇒ that probe is skipped entirely, not reported red |
 
+## Observation windows
+
+Runs and Watch sessions hold sequential admission from observation preparation
+through history capture. Start still returns its run ID immediately. Preparation
+and closing share one total five-second diagnostic wait allowance; clinical work
+and time spent watching do not consume it. Each window publishes one start and
+one terminal event atomically with relay attribution, and history capture follows
+that terminal boundary. Late observer bytes remain visible as ambient activity.
+
+The packaged gateway is v0.44.0 and the SDK v0.50.1. Packaging uses a versioned Go
+install and checks executable provenance before bundling it, including both slices
+of the universal macOS binary; it refuses any executable that does not read as the
+release this Kit pins. A manifest label alone is insufficient.
+
+An executable's identity decides only what may be excused, never what is assumed.
+A gateway that serves the completion barrier proves that capability in its own
+answer, so the Kit believes the answer rather than the identity; the one identity
+that changes behavior is the release that serves no barrier at all, whose absence
+is read as the known absence it is.
+
+| Gateway identity | Observer completion behavior |
+|---|---|
+| Any gateway serving the supported completion protocol, including the packaged v0.44.0 executable | Waits for entered operations and their evidence callbacks, then catches up the stream |
+| Published v0.43.1 executable with the exact module checksum and command path | Uses its synchronous observer counter for ordinary completed requests |
+| Unidentified `(devel)`, replaced module, mixed universal slices, or another unknown identity | Clinical work continues on the protocol when it is served; a missing barrier is reported, never excused |
+
+Replace old unidentified packaged children with the versioned-install build at the
+same Kit pin to restore recognized normal-run timelines. The desktop development
+recipe preserves this identity automatically. This is trusted build provenance,
+not attestation against a forged executable.
+
+A supported observer completion barrier covers HTTP work already entered at its
+cutoff, followed by accepted asynchronous evidence, then waits for the matching
+stream incarnation and count. It does not correlate arbitrary concurrent traffic
+or requests delivered after that cutoff. Timeout, unknown executable identity,
+unsupported protocol, source changes, and failed preparation are named in the
+result detail and never turn a successful clinical result into a failure. Failed
+preparation leaves every child unscoped for the entire window. A later successful
+barrier can restore attribution after a timeout of known accepted work.
+
+The published synchronous gateway v0.43.1 has a counter fallback only when its
+exact Go build metadata is verified automatically, and in a universal executable
+only when every architecture in it reads as that same release. Unknown or
+development binaries take no fallback: they are observed through the barrier they
+actually serve, and a missing one is reported rather than excused; endpoint
+absence alone proves nothing.
+A completed direct-gateway refusal keeps ordinary attribution. Unresolved direct
+or BFF dispatch, including incomplete response reads and uncertain forwarding
+failures, keeps future windows unscoped until the entire owned process chain exits
+and a new daemon starts. Restarting only a gateway cannot clear that uncertainty.
+Closing Watch additionally has this limitation for the verified legacy gateway,
+which cannot count external operations still in flight. Supported modern barriers
+can close entered Watch operations without that legacy limitation.
+
 ## `kit.config.json`
 
 The packaged Electron shell (`../desktop/`) resolves its own configuration from
@@ -133,7 +187,7 @@ set headers).
 | `POST` | `/api/bootstrap/signin` | token | Starts a loopback-PKCE browser sign-in |
 | `POST` | `/api/bootstrap/reset` | token | Clears stored credentials; `{"restartRequired":true}` |
 | `POST` | `/api/runs` | token | Start a scenario run (`{"lane","uc","branch","member"}`); `202 {"runId":...}`; `409` if a run is already in flight |
-| `GET` | `/api/runs` | token | In-flight/completed run results |
+| `GET` | `/api/runs` | token | Finalized run and watch results, oldest first; omits work still executing or finalizing |
 | `GET` | `/api/history`, `/api/history/{runId}` | token | Saved run history, including the full per-run event story (the same bytes the UI's "Export" button downloads) |
 | `GET` | `/events` | token | SSE stream of daemon/gateway events (`Last-Event-ID` replays the ring buffer) |
 | `GET` | `/api/byo`, `PUT`/`DELETE /api/byo/ehr`, `/api/byo/davinci` | token | Bring-your-own-systems config — see below |
@@ -148,9 +202,25 @@ set headers).
 | `GET` | `/ui/*` | **none (ungated)** | The built Kit UI, served as static assets |
 
 `POST /api/runs` is async: it validates and acquires the sequential run lock
-(one run at a time) and returns the pre-allocated `runId` immediately; poll
-`GET /api/runs` or subscribe to `/events` for the terminal
-`run.finished`/`run.failed`.
+(one run or watch at a time) and returns the pre-allocated `runId` immediately.
+The `/events` stream's `run.finished` and `run.failed` events report the outcome
+before synchronous history capture, so the saved story can include that event.
+An outcome event alone does not mean the runner is ready for another operation.
+
+Poll `GET /api/runs` for the matching finalized result. It becomes visible only
+after the history capture attempt finishes and that run or watch releases its
+admission lock. `Runner.Results()` has the same boundary; synchronous `Run` and
+`StopWatch` return after it. The UI keeps run/watch-start, Java-child restart,
+and bridging demo-mode controls disabled until the matching result appears;
+Stop Watch remains available while a watch is open. Observing a finalized result
+does not reserve the next operation: another client can start a run or watch
+first, and a competing request can still receive `409`.
+
+History capture is best-effort. The recorder logs save errors, and the runner
+isolates history-callback panics without changing the outcome or retaining the
+admission lock. A finalized result confirms that capture was attempted when
+configured; it does not guarantee durable storage or a saved `/api/history`
+record.
 
 On `Serve`, before the HTTP listener accepts connections, the daemon writes
 `session.json` into `--state-dir` (mode `0600`):
@@ -304,7 +374,19 @@ When the trio is present, the daemon boots the **gateway child first**, then the
 trio (validator, seeded data server, br-provider) — each blocking on its own
 readiness probe. Gateway-first boot: the gateway's ready check is its own
 sub-second endpoint, so it clears immediately and the multi-minute Java-server
-first launch becomes the *visible* boot stage. Either way the gateway is wired to
+first launch becomes the *visible* boot stage. A validator child (the default
+line and every `--additional-validator-lines` lane) is ready only after
+`/fhir/metadata` answers **and** `validatorwarm` has posted the line's full
+34-row verdict corpus — four profile-resolution rows, a PAS ClaimResponse
+initialization pass, two strict qualification passes and targeted negative
+controls, the same finite contract the hosted validator image proves — and every
+row answered with its expected verdict. Metadata alone is not readiness: HAPI
+serves it well before its first `$validate` can answer, and its first PAS
+verdicts can be false while lazily built profile snapshots settle. The warm-up
+runs inside the child's existing readiness budget, once per spawned process (a
+restart re-warms), and `GET /api/status` shows the row in flight as the child's
+detail while it is `starting`; a row that never answers or answers wrongly
+fails the child with that row and reason. Either way the gateway is wired to
 the trio by config — its `FHIR_VALIDATE_URL` at the validator and (absent an
 explicit `--fhir-data-url`/bring-your-own override) `FHIR_DATA_URL` at the seeded
 data server.

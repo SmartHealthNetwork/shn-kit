@@ -94,6 +94,7 @@ function eventsView(overrides: Partial<EventsView> = {}): EventsView {
   const all = overrides.all ?? [];
   return {
     activeRunId: undefined,
+    latestStarted: all.findLast((e) => e.type === 'run.started'),
     sseState: 'open',
     ...overrides,
     // `byRun` is always derived fresh from `all` (rather than accepting an
@@ -445,6 +446,140 @@ describe('App — reset-required banner survives the phase flip', () => {
 });
 
 describe('App — in-flight reconciliation', () => {
+  const started: KitEvent = { seq: 1, time: '2026-07-03T14:00:00Z', type: 'run.started', runId: 'run-finalizing', lane: 'conformant', uc: 'uc02' };
+  const finalized: RunResult = { runId: 'run-finalizing', lane: 'conformant', uc: 'uc02', branch: '', state: 'passed', detail: 'ok' };
+  const pending = () => eventsView({ latestStarted: started });
+  const runButtons = () => screen.getAllByRole('button', { name: /^run uc0\d$/i });
+  const configureWatch = () => vi.mocked(api.getBYO).mockResolvedValue({
+    ehr: null,
+    davinci: { clientId: 'partner-1', alg: 'RS384', publicKeyPem: 'public-test-key', applied: true },
+    ingress: null,
+  });
+
+  it.each(['run.finished', 'run.failed'])('%s before finalized results keeps Run and watch start disabled', async (terminal) => {
+    const outcome: RunResult = { ...finalized, state: terminal === 'run.failed' ? 'failed' : 'passed' };
+    configureWatch();
+    vi.mocked(useEvents).mockReturnValue(eventsView({
+      all: [started, { seq: 2, time: started.time, type: terminal, runId: started.runId }],
+    }));
+    await renderMain();
+    for (const button of runButtons()) expect(button).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^start watching$/i })).toBeDisabled();
+    vi.mocked(api.getRuns).mockResolvedValue([{ ...outcome, runId: 'unrelated' }]);
+    await advance(STATUS_POLL_MS);
+    for (const button of runButtons()) expect(button).toBeDisabled();
+    vi.mocked(api.getRuns).mockResolvedValue([outcome]);
+    await advance(STATUS_POLL_MS);
+    for (const button of runButtons()) expect(button).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^start watching$/i })).toBeEnabled();
+  });
+
+  it('retained started metadata blocks admission after its event ring frames are evicted', async () => {
+    vi.mocked(useEvents).mockReturnValue(pending());
+    await renderMain();
+    for (const button of runButtons()) expect(button).toBeDisabled();
+    vi.mocked(api.getRuns).mockResolvedValue([finalized]);
+    await advance(STATUS_POLL_MS);
+    for (const button of runButtons()) expect(button).toBeEnabled();
+  });
+
+  it('keeps Java restarts disabled until the matching finalized result reaches Systems', async () => {
+    vi.mocked(useEvents).mockReturnValue(pending());
+    await renderMain();
+    vi.mocked(api.getStatus).mockImplementation(() => Promise.resolve({ children: [
+      ...statusReady().children,
+      ...['validator', 'data-server', 'br-provider'].map((name) => ({ name, state: 'ready' as const, detail: 'ok', pid: 2, restarts: 0 })),
+    ] }));
+    await advance(STATUS_POLL_MS);
+    await clickNav(/^systems$/i);
+    for (const button of screen.getAllByRole('button', { name: /^restart$/i })) expect(button).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^reset$/i })).toBeEnabled();
+    vi.mocked(api.getRuns).mockResolvedValue([{ ...finalized, runId: 'unrelated' }]);
+    await advance(STATUS_POLL_MS);
+    for (const button of screen.getAllByRole('button', { name: /^restart$/i })) expect(button).toBeDisabled();
+    vi.mocked(api.getRuns).mockResolvedValue([finalized]);
+    await advance(STATUS_POLL_MS);
+    for (const button of screen.getAllByRole('button', { name: /^restart$/i })) expect(button).toBeEnabled();
+  });
+
+  it('a delayed started replay for an already finalized run does not re-block admission', async () => {
+    vi.mocked(api.getRuns).mockResolvedValue([finalized]);
+    await renderMain();
+    vi.mocked(useEvents).mockReturnValue(eventsView({ all: [started], activeRunId: started.runId }));
+    await advance(STATUS_POLL_MS);
+    for (const button of runButtons()) expect(button).toBeEnabled();
+  });
+
+  it('keeps a selected free-form Run disabled until finalization', async () => {
+    vi.mocked(useEvents).mockReturnValue(pending());
+    vi.mocked(api.getBYO).mockResolvedValue({
+      ehr: { dataUrl: 'https://ehr.example.org/fhir', hasClientKey: false, applied: true, demoPersonas: true },
+      davinci: null, ingress: null,
+    });
+    vi.mocked(api.getBYOPatients).mockResolvedValue([
+      { fhirId: 'pt-1', memberId: 'MBR-PD-UC03', name: 'Linda Johansson', birthDate: '1970-01-01' },
+    ]);
+    vi.mocked(api.getBYOContext).mockResolvedValue({
+      order: { resourceType: 'DeviceRequest', id: 'order-1' }, orderSummary: 'Open device order',
+      coverage: { resourceType: 'Coverage', id: 'cov-1' }, coverageSummary: 'Active coverage',
+    });
+    await renderMain();
+    vi.mocked(api.getStatus).mockImplementation(() => Promise.resolve({ ...statusReady(), providerDataUrl: 'http://127.0.0.1:9095' }));
+    await advance(STATUS_POLL_MS);
+    await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /plain ehr/i })); });
+    await flush();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /linda johansson/i })); });
+    expect(screen.getByRole('button', { name: /^run$/i })).toBeDisabled();
+    vi.mocked(api.getRuns).mockResolvedValue([finalized]);
+    await advance(STATUS_POLL_MS);
+    expect(screen.getByRole('button', { name: /^run$/i })).toBeEnabled();
+  });
+
+  it('keeps Stop watching available for an open watch and disables duplicate stop through finalization', async () => {
+    configureWatch();
+    vi.mocked(api.postWatch).mockResolvedValue({ runId: 'watch-1' });
+    let finishStop!: (result: RunResult) => void;
+    vi.mocked(api.deleteWatch).mockImplementation(() => new Promise((resolve) => { finishStop = resolve; }));
+    await renderMain();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^start watching$/i })); });
+    const watchStarted = { ...started, runId: 'watch-1', uc: 'external' };
+    vi.mocked(useEvents).mockReturnValue(eventsView({ latestStarted: watchStarted, activeRunId: 'watch-1' }));
+    await advance(STATUS_POLL_MS);
+    expect(screen.getByRole('button', { name: /^stop watching$/i })).toBeEnabled();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^stop watching$/i })); });
+    vi.mocked(useEvents).mockReturnValue(eventsView({ latestStarted: watchStarted }));
+    await advance(STATUS_POLL_MS);
+    expect(screen.getByRole('button', { name: /^stop watching$/i })).toBeDisabled();
+    expect(screen.getByRole('alert').textContent).toMatch(/watching for incoming flows/i);
+    for (const button of runButtons()) expect(button).toBeDisabled();
+    await act(async () => { finishStop({ ...finalized, runId: 'watch-1', uc: 'external' }); });
+    expect(screen.getByRole('button', { name: /^start watching$/i })).toBeDisabled();
+    vi.mocked(api.getRuns).mockResolvedValue([{ ...finalized, runId: 'watch-1', uc: 'external' }]);
+    await advance(STATUS_POLL_MS);
+    expect(screen.getByRole('button', { name: /^start watching$/i })).toBeEnabled();
+    for (const button of runButtons()) expect(button).toBeEnabled();
+  });
+
+  it('gates bridging wire runs and demo toggle while local exhibits stay available', async () => {
+    vi.mocked(useEvents).mockReturnValue(pending());
+    await renderMain();
+    vi.mocked(api.getStatus).mockImplementation(() => Promise.resolve({ ...statusReady(), bridging: {
+      demoMode: true, peer: { name: 'peer', ok: true, detail: 'ok' }, refusePeer: { name: 'refuse-peer', ok: true, detail: 'ok' },
+    } }));
+    await advance(STATUS_POLL_MS);
+    await clickNav(/^bridging$/i);
+    expect(screen.getByRole('checkbox')).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^run bridged exchange$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^run refusal wire exhibit$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^run refusal engine exhibit$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^run carry content exhibit$/i })).toBeEnabled();
+    vi.mocked(api.getRuns).mockResolvedValue([finalized]);
+    await advance(STATUS_POLL_MS);
+    expect(screen.getByRole('checkbox')).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^run bridged exchange$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^run refusal wire exhibit$/i })).toBeEnabled();
+  });
+
   it('activeRunId set with no terminal SSE event, then getRuns returns that runId with a terminal state → Run buttons re-enable', async () => {
     vi.mocked(useEvents).mockReturnValue(
       eventsView({
@@ -1045,6 +1180,9 @@ describe('App — bring your own', () => {
   });
 
   it('onRestart shows a confirm dialog ("Runs in progress will be reset.") and calls restartKit() through the same bridge path the restart-required screen uses', async () => {
+    vi.mocked(useEvents).mockReturnValue(eventsView({ latestStarted: {
+      seq: 1, time: '2026-07-03T14:00:00Z', type: 'run.started', runId: 'finalizing', lane: 'ehr', uc: 'uc01',
+    } }));
     vi.mocked(bridge.canRestart).mockReturnValue(true);
     vi.mocked(api.getBYO).mockResolvedValue({
       ehr: { dataUrl: 'https://ehr.example.org/fhir', hasClientKey: false, applied: true, demoPersonas: null },

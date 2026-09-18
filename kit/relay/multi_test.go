@@ -14,7 +14,11 @@ import (
 // healthServer serves the observer hub's GET /health {"events":n} shape.
 func healthServer(t *testing.T, n int) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			http.NotFound(w, req)
+			return
+		}
 		fmt.Fprintf(w, `{"events":%d}`, n)
 	}))
 	t.Cleanup(srv.Close)
@@ -34,6 +38,10 @@ func TestMulti_FansOutStampAndDrainsEvery(t *testing.T) {
 	bus := event.NewBus(time.Now)
 	a := New("http://127.0.0.1:1/events", healthServer(t, 0).URL, bus, t.Logf) // hub emitted 0 → caught up
 	b := New("http://127.0.0.1:1/events", healthServer(t, 1).URL, bus, t.Logf) // hub emitted 1, relayed 0 → lagging
+	a.SetGatewayProfile(GatewayLegacySync0431)
+	b.SetGatewayProfile(GatewayLegacySync0431)
+	a.connected = true
+	b.connected = true
 	m := NewMulti(a, nil, b)
 
 	want := Stamp{RunID: "run-1", Lane: "ehr", UC: "uc04"}

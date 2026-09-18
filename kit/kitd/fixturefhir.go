@@ -15,6 +15,7 @@
 package kitd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -273,11 +274,9 @@ func writeOutcome(w http.ResponseWriter, status int, detail string) {
 // A questionnaire only needs an engine if it ASKS for computation. The reference payer's
 // prior-authorization questionnaire carries no computation extension of any kind: it is a
 // group, a display item and one boolean for a clinician to answer. For a questionnaire like
-// that the correct operated answer is an in-progress QuestionnaireResponse SHELL — the
-// subject, the questionnaire it is about, no items — because there is nothing to compute.
-// That is not this endpoint imitating an engine; it is the answer a real engine returns for
-// this input class, and the same shell the substrate's own $populate stand-in returns for a
-// questionnaire with no computation in it.
+// that the response retains the delivered group, display and question tree, with no
+// answers. Returning structure does not require evaluating expressions or inventing
+// clinical facts; questionnaires requesting those capabilities remain refused.
 //
 // Which makes the FENCE the load-bearing half. A questionnaire that DOES ask for computation
 // (a bundled CQL library, an expression to evaluate, a sub-questionnaire to assemble) is
@@ -416,13 +415,24 @@ func handlePopulate(w http.ResponseWriter, r *http.Request) {
 		writeOutcome(w, http.StatusBadRequest, "the `questionnaire` parameter carries no resolvable url")
 		return
 	}
-	shell, err := json.Marshal(map[string]any{
-		"resourceType":  "QuestionnaireResponse",
-		"status":        "in-progress",
-		"questionnaire": url,
-		"subject":       map[string]string{"reference": subject},
-		"authored":      time.Now().UTC().Format(time.RFC3339),
-	})
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(questionnaire, &document); err != nil {
+		writeOutcome(w, http.StatusBadRequest, "could not read questionnaire structure")
+		return
+	}
+	response := map[string]any{
+		"resourceType": "QuestionnaireResponse", "status": "in-progress", "questionnaire": url,
+		"subject": map[string]string{"reference": subject}, "authored": time.Now().UTC().Format(time.RFC3339),
+	}
+	if item, present := document["item"]; present {
+		tree, err := unansweredPopulateItems(item)
+		if err != nil {
+			writeOutcome(w, http.StatusBadRequest, "invalid questionnaire item tree")
+			return
+		}
+		response["item"] = tree
+	}
+	shell, err := json.Marshal(response)
 	if err != nil {
 		writeOutcome(w, http.StatusInternalServerError, "could not encode the populated response")
 		return
@@ -527,4 +537,44 @@ func matchPopulationMechanism(rawURL string) (marker, mechanism string, found bo
 		}
 	}
 	return "", "", false
+}
+
+// unansweredPopulateItems maps only delivered QR structure. Present empty arrays
+// remain empty; null arrays/nodes/strings refuse, and no answers are synthesized.
+func unansweredPopulateItems(raw json.RawMessage) (json.RawMessage, error) {
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil || items == nil {
+		return nil, fmt.Errorf("expected item array")
+	}
+	output := make([]map[string]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		var node map[string]json.RawMessage
+		if err := json.Unmarshal(item, &node); err != nil || node == nil {
+			return nil, fmt.Errorf("expected item object")
+		}
+		var link string
+		if err := json.Unmarshal(node["linkId"], &link); err != nil || link == "" {
+			return nil, fmt.Errorf("expected linkId")
+		}
+		mapped := map[string]json.RawMessage{"linkId": node["linkId"]}
+		if rawText, present := node["text"]; present {
+			var text string
+			if bytes.Equal(bytes.TrimSpace(rawText), []byte("null")) {
+				return nil, fmt.Errorf("expected text string")
+			}
+			if err := json.Unmarshal(rawText, &text); err != nil {
+				return nil, fmt.Errorf("expected text string")
+			}
+			mapped["text"] = rawText
+		}
+		if children, present := node["item"]; present {
+			tree, err := unansweredPopulateItems(children)
+			if err != nil {
+				return nil, err
+			}
+			mapped["item"] = tree
+		}
+		output = append(output, mapped)
+	}
+	return json.Marshal(output)
 }

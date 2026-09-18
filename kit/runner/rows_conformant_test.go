@@ -104,13 +104,23 @@ func dvApproved(preAuthRef string) string {
 	return `{"resourceType":"ClaimResponse","outcome":"complete","preAuthRef":"` + preAuthRef + `"}`
 }
 
-// dvPended is the held (A4) response shape, built by the sdk's own producer.
+// dvPended is the held (A4) response shape: a pended ClaimResponse and the
+// payer's profiled Task asking for a questionnaire.
 func dvPended() string {
-	b, err := shnsdk.BuildPendedResponse("Patient/MBR-COVERED", "corr-fake", []string{"pend-resolution-timer"}, fixedClock())
-	if err != nil {
-		panic(err)
-	}
-	return string(b)
+	return `{"resourceType":"Bundle","type":"collection","timestamp":"2026-06-04T00:00:00Z","entry":[` +
+		`{"fullUrl":"https://payer.example/fhir/ClaimResponse/cr-held","resource":{"resourceType":"ClaimResponse","id":"cr-held",` +
+		`"status":"active","use":"preauthorization","patient":{"reference":"Patient/MBR-COVERED"},"outcome":"queued",` +
+		`"item":[{"itemSequence":1,"adjudication":[{"category":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/adjudication","code":"submitted"}]},` +
+		`"extension":[{"url":"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewAction","extension":[` +
+		`{"url":"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewActionCode",` +
+		`"valueCodeableConcept":{"coding":[{"system":"https://codesystem.x12.org/005010/306","code":"A4","display":"Pended"}]}}]}]}]}]}},` +
+		`{"fullUrl":"https://payer.example/fhir/Task/task-held","resource":{"resourceType":"Task","id":"task-held",` +
+		`"identifier":[{"system":"https://payer.example/pa-request","value":"held-1"}],"status":"requested","intent":"order",` +
+		`"code":{"coding":[{"system":"http://hl7.org/fhir/us/davinci-pas/CodeSystem/PASTempCodes","code":"attachment-request-questionnaire"}]},` +
+		`"for":{"reference":"Patient/MBR-COVERED"},"input":[` +
+		`{"type":{"coding":[{"system":"http://hl7.org/fhir/us/davinci-pas/CodeSystem/PASTempCodes","code":"payer-url"}]},"valueUrl":"https://payer.example/fhir"},` +
+		`{"type":{"coding":[{"system":"http://hl7.org/fhir/us/davinci-pas/CodeSystem/PASTempCodes","code":"questionnaires-needed"}]},` +
+		`"valueIdentifier":{"system":"https://payer.example/questionnaire","value":"home-oxygen"}}]}}]}`
 }
 
 // dvDenied is the formal denial, rationale included.
@@ -211,7 +221,7 @@ func newDVIngress(t *testing.T) *dvIngress {
 		_, _ = w.Write([]byte(`{"covered":false,"reason":"coverage terminated"}`))
 	})
 
-	mux.HandleFunc("POST /cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 		body := readBody(t, r)
 		ing.record(&ing.crdBodies, body)
 		code := dvCRDOrderCode(t, body)
@@ -379,7 +389,7 @@ func newDVBFF(t *testing.T) *dvBFF {
 	t.Helper()
 	b := &dvBFF{}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/cds-services/order-select-crd", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
 		body := readBody(t, r)
 		b.mu.Lock()
 		b.crdHits++
@@ -955,5 +965,63 @@ func TestConformantSubmitBundle_PayorParameterized(t *testing.T) {
 	if !bytes.Contains(cmsBundle, []byte(`"`+shnsdk.CMSPayerIdentity.System+`"`)) ||
 		!bytes.Contains(cmsBundle, []byte(`"`+shnsdk.CMSPayerIdentity.Value+`"`)) {
 		t.Fatalf("CMS call must still carry the CMS identifier inline: %s", cmsBundle)
+	}
+}
+
+func TestConformantEvidenceUsesKnownHolderIdentity(t *testing.T) {
+	for _, uc := range []string{"uc04", "uc05", "uc06"} {
+		t.Run(uc, func(t *testing.T) {
+			ing := newDVIngress(t)
+			rn := dvRunner(t, ing, nil)
+			res, err := rn.Run(t.Context(), Req{Lane: "conformant", UC: uc})
+			if err != nil || res.State != StatePassed {
+				t.Fatalf("run=%v %v", res, err)
+			}
+			submits := ing.submits()
+			if len(submits) != 2 {
+				t.Fatalf("submits=%d", len(submits))
+			}
+			var b struct {
+				Entry []struct {
+					Resource struct {
+						ResourceType string
+						Agent        []struct {
+							Who struct {
+								Reference  string
+								Identifier struct{ System, Value string }
+							}
+						}
+						Policy []string
+						Reason []struct {
+							Coding []struct{ System, Code string }
+						}
+					}
+				}
+			}
+			if err = json.Unmarshal([]byte(submits[1]), &b); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, e := range b.Entry {
+				p := e.Resource
+				if p.ResourceType != "Provenance" {
+					continue
+				}
+				found = true
+				want := "provider"
+				if uc == "uc05" {
+					want = "metro-spine"
+				}
+				if len(p.Agent) != 1 || p.Agent[0].Who.Reference != "" || p.Agent[0].Who.Identifier.System != "http://smarthealth.network/ids/holder" || p.Agent[0].Who.Identifier.Value != want {
+					t.Fatalf("wrong provenance source: %+v", p)
+				}
+				if uc == "uc05" && (len(p.Policy) != 1 || p.Policy[0] != "Consent/uc05-treat" || len(p.Reason) != 1 || len(p.Reason[0].Coding) != 1 || p.Reason[0].Coding[0].Code != "TREAT") {
+					t.Fatalf("facility consent attribution lost: %+v", p)
+				}
+			}
+			if !found {
+				t.Fatal("missing provenance")
+			}
+		})
 	}
 }

@@ -108,12 +108,26 @@ extract_war() { # extract_war <image> <container-path> <dest>
 # asserted, so a cached/rebuilt WAR converges and a future dylib reintroduction
 # fails the build here, not 25 minutes into mac notarization.
 strip_mac_natives_from_war() { # $1 = war path
-  local war="$1" jarent stage
-  jarent="$(unzip -Z1 "$war" 'WEB-INF/lib/sqlite-jdbc-*.jar' 2>/dev/null | head -1 || true)"
+  local war="$1" jarent stage natives status
+  # Consume the complete listing: early-exiting consumers can SIGPIPE unzip
+  # under pipefail and mistake present entries for an empty archive.
+  status=0
+  jarent="$(unzip -Z1 "$war" 'WEB-INF/lib/sqlite-jdbc-*.jar')" || status=$?
+  case "$status" in
+    0|11) ;; # unzip's 11 means no matching entries, not an unreadable archive.
+    *) die "notarization strip: cannot list $war (unzip exit $status)" ;;
+  esac
+  jarent="${jarent%%$'\n'*}"
   [ -n "$jarent" ] || { log "notarization strip: no sqlite-jdbc jar in $war — nothing to strip"; return 0; }
   stage="$(mktemp -d)"
   ( cd "$stage" && unzip -oq "$war" "$jarent" )
-  if unzip -Z1 "$stage/$jarent" 'org/sqlite/native/Mac/*' 2>/dev/null | grep -q .; then
+  status=0
+  natives="$(unzip -Z1 "$stage/$jarent" 'org/sqlite/native/Mac/*')" || status=$?
+  case "$status" in
+    0|11) ;;
+    *) rm -rf "$stage"; die "notarization strip: cannot list $jarent (unzip exit $status)" ;;
+  esac
+  if [ -n "$natives" ]; then
     zip -dq "$stage/$jarent" 'org/sqlite/native/Mac/*'
     ( cd "$stage" && zip -0 -X -q "$war" "$jarent" )
     log "notarization strip: removed org/sqlite/native/Mac/** from $jarent in $war"
@@ -124,19 +138,23 @@ strip_mac_natives_from_war() { # $1 = war path
   # nested jar is exactly what fails Apple notarization.
   rm -f "$stage/$jarent"
   ( cd "$stage" && unzip -oq "$war" "$jarent" )
-  if unzip -Z1 "$stage/$jarent" 'org/sqlite/native/Mac/*' 2>/dev/null | grep -q .; then
+  status=0
+  natives="$(unzip -Z1 "$stage/$jarent" 'org/sqlite/native/Mac/*')" || status=$?
+  case "$status" in
+    0|11) ;;
+    *) rm -rf "$stage"; die "notarization strip: cannot verify $jarent (unzip exit $status)" ;;
+  esac
+  if [ -n "$natives" ]; then
     rm -rf "$stage"; die "notarization strip failed: Mac natives still present in $jarent ($war)"
   fi
   rm -rf "$stage"
 }
 
 # ── (a) HAPI WAR from the pinned digest ───────────────────────────────────────
-if [ ! -f "$DIST/hapi/main.war" ]; then
-  log "extracting HAPI WAR from $HAPI_DIGEST"
-  extract_war "$HAPI_DIGEST" /app/main.war "$DIST/hapi/main.war"
-else
-  log "hapi/main.war present — skip"
-fi
+BACKPORT_CACHE="${KIT_BACKPORT_CACHE:-$REPO/dist/validator-backport}"
+HAPI_REFRESH="$(bash "$REPO/tools/kitassets/copy-backport.sh" "$BACKPORT_CACHE" "$DIST/hapi" "$REPO/tools/kitassets/build.sh")"
+HAPI_BACKPORT_DIR="$(cat "$BACKPORT_CACHE/selected-path")"
+log "HAPI backport $HAPI_REFRESH"
 
 # ── (b) br-provider WAR (build the pinned image if absent) ────────────────────
 if [ ! -f "$DIST/brprovider/main.war" ]; then
@@ -153,6 +171,9 @@ fi
 # Runs every build (idempotent) so a WAR cached from before this guard converges;
 # it runs BEFORE prewarm/verify below, so both boot the already-stripped WARs.
 strip_mac_natives_from_war "$DIST/hapi/main.war"
+PYTHONDONTWRITEBYTECODE=1 python3 "$REPO/tools/kitassets/backport/runtime.py" record "$HAPI_BACKPORT_DIR" "$DIST/hapi" "$REPO/tools/kitassets/build.sh" >/dev/null
+HAPI_PREWARM_KEY="$(shasum -a 256 "$DIST/hapi/stripping-provenance.json")"
+HAPI_PREWARM_KEY="${HAPI_PREWARM_KEY%% *}"
 strip_mac_natives_from_war "$DIST/brprovider/main.war"
 
 # ── (c) IG packages, from the manifest-generated PER-LINE pin tables
@@ -168,12 +189,19 @@ strip_mac_natives_from_war "$DIST/brprovider/main.war"
 # exactly ONCE thanks to ig()'s existing "skip if already present" guard, so
 # the union costs less than a naive per-line-subdirectory layout would.
 ig() { # ig <dir> <file> <simplifier-path> — download-to-tmp + atomic mv (see above)
+  if [[ "$3" == shn.fhir.validation-support/* ]]; then
+    if ! cmp -s "$REPO/tools/kitassets/support/$2" "$DIST/$1/$2"; then
+      rm -f "$DIST/prewarm/validator-h2/.prewarm-ok"
+    fi
+    bash "$REPO/tools/kitassets/copy-support.sh" "$DIST/$1/$2"
+    return
+  fi
   if [ ! -s "$DIST/$1/$2" ]; then
     case "$3" in
       shn.fhir.carry/*)
-        # shn.fhir.carry is SHN-authored, never published to Simplifier — every
-        # OTHER row in igpins.gen.sh is a real Simplifier package, so this is
-        # the ONE name that must never hit the curl branch below.
+        # shn.fhir.carry is SHN-authored, never published to Simplifier — other
+        # remote rows in igpins.gen.sh is a real Simplifier package, so this is
+        # another local package that must never hit the curl branch below.
         #
         # THREE sources, in order, because this script runs from two different
         # checkouts. The published shn-kit snapshot carries tools/kitassets but
@@ -229,7 +257,11 @@ for line in "${KITASSETS_LINES[@]}"; do
     ig igs-data "$name-$version.tgz" "$name/$version"
   done
 done
-( cd "$DIST" && shasum -a 256 igs-validator/*.tgz igs-data/*.tgz ) | tee "$DIST/igs.sha256"
+# Every downloaded archive must match the manifest digest (tools/contracts/manifest.json
+# `digests`, rendered by tools/contractsgen into tools/kitassets/igs.sha256). A
+# registry that served different bytes for a pinned version fails the build here.
+( cd "$DIST" && shasum -a 256 -c "$REPO/tools/kitassets/igs.sha256" ) \
+  || die "IG archive digest mismatch against tools/kitassets/igs.sha256 (the manifest's digests) — do not bypass; a pinned version served different bytes"
 
 # Size-delta note (the delta is recorded in the kit manifest) —
 # unique tgz file counts, all-lines union vs. the single-line-2.0 baseline;
@@ -328,20 +360,20 @@ assert_workdir_clean() { # $1=workdir
 }
 
 # ── (d) prewarm: validator (8 IGs, single-tenant) ─────────────────────────────
-if [ ! -f "$DIST/prewarm/validator-h2/.prewarm-ok" ]; then
+if [ "$(cat "$DIST/prewarm/validator-h2/.prewarm-ok" 2>/dev/null || true)" != "$HAPI_PREWARM_KEY" ]; then
   rm -rf "$DIST/prewarm/validator-h2" "$DIST/prewarm/.work-validator"
   log "prewarm validator: first boot (IG indexing — the slow one)"
   boot_war "$DIST/prewarm/.work-validator" "$(validator_config "$DIST/prewarm/validator-h2")" /fhir/metadata "$READY_BOUND_FIRST"
   log "validator first boot ready in ${BOOT_ELAPSED}s"
   stop_war
   assert_workdir_clean "$DIST/prewarm/.work-validator"
-  touch "$DIST/prewarm/validator-h2/.prewarm-ok"
+  printf '%s\n' "$HAPI_PREWARM_KEY" > "$DIST/prewarm/validator-h2/.prewarm-ok"
 else
   log "validator-h2 prewarmed — skip"
 fi
 
 # ── (d) prewarm: data server (4 IGs, URL_BASED + partitions + CR + personas) ──
-if [ ! -f "$DIST/prewarm/data-h2/.prewarm-ok" ]; then
+if [ "$(cat "$DIST/prewarm/data-h2/.prewarm-ok" 2>/dev/null || true)" != "$HAPI_PREWARM_KEY" ]; then
   rm -rf "$DIST/prewarm/data-h2" "$DIST/prewarm/.work-data"
   log "prewarm data server: first boot + full persona seed"
   boot_war "$DIST/prewarm/.work-data" "$(data_config "$DIST/prewarm/data-h2")" /fhir/DEFAULT/metadata "$READY_BOUND_FIRST"
@@ -349,7 +381,7 @@ if [ ! -f "$DIST/prewarm/data-h2/.prewarm-ok" ]; then
   ( cd "$REPO/kit" && go run ./cmd/prewarm --base "http://127.0.0.1:$PORT/fhir" )
   stop_war
   assert_workdir_clean "$DIST/prewarm/.work-data"
-  touch "$DIST/prewarm/data-h2/.prewarm-ok"
+  printf '%s\n' "$HAPI_PREWARM_KEY" > "$DIST/prewarm/data-h2/.prewarm-ok"
 else
   log "data-h2 prewarmed — skip"
 fi

@@ -3,7 +3,7 @@
 # tools/kitassets/verify.sh — the "module union verified" gate: boot
 # validator, data server (both on COPIES of their prewarmed H2), and
 # br-provider on the CURRENT platform's freshly linked JRE; all three ready
-# probes 2xx ⇒ PASS. jdeps output is advisory — THIS is the proof.
+# probes and explicit-profile verdicts pass. jdeps output is advisory.
 #
 # br-provider's payer env quad deliberately points at a NOT-YET-LIVE loopback
 # port and the script asserts it still reaches /fhir/metadata ready anyway:
@@ -22,6 +22,8 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 DIST="${KIT_ASSETS_DIST:-$REPO/dist/kitassets}"
 # shellcheck source=tools/kitassets/igpins.gen.sh
 . "$REPO/tools/kitassets/igpins.gen.sh"
+PYTHONDONTWRITEBYTECODE=1 python3 "$REPO/tools/kitassets/backport/runtime.py" packaged "$DIST/hapi" "$REPO/tools/kitassets/build.sh"
+
 case "$(uname -sm)" in
   "Darwin arm64")  HOST_TARGET=darwin-arm64 ;;
   "Darwin x86_64") HOST_TARGET=darwin-amd64 ;;
@@ -97,6 +99,11 @@ cp -R "$DIST/prewarm/data-h2" "$WORK/data-h2"
 DCONF="{\"spring.datasource.url\":\"jdbc:h2:file:$WORK/data-h2/db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE\",\"spring.datasource.username\":\"sa\",\"spring.datasource.driverClassName\":\"org.h2.Driver\",\"server.port\":\"$DPORT\",$(igj_join igs-data "${KITASSETS_DATA_IGS_20[@]}"),\"hapi.fhir.tenant_identification_strategy\":\"URL_BASED\",\"hapi.fhir.partitioning.partitioning_include_in_search_hashes\":\"false\",\"hapi.fhir.partitioning.allow_references_across_partitions\":\"false\",\"hapi.fhir.cr.enabled\":\"true\"}"
 boot data-server "$DIST/hapi/main.war" "$WORK/data" "http://127.0.0.1:$DPORT/fhir/DEFAULT/metadata" 120 \
   SPRING_APPLICATION_JSON="$DCONF"
+
+# Preserve the raw profile controls separately from disposable H2 working copies.
+PROFILE_EVIDENCE="${KIT_VERIFY_EVIDENCE:-$REPO/dist/kitverify-$(date +%s)}"
+PYTHONDONTWRITEBYTECODE=1 python3 "$REPO/tools/kitassets/backport/wire.py" "http://127.0.0.1:$VPORT/fhir" "$PROFILE_EVIDENCE/validator"
+PYTHONDONTWRITEBYTECODE=1 python3 "$REPO/tools/kitassets/backport/wire.py" "http://127.0.0.1:$DPORT/fhir/DEFAULT" "$PROFILE_EVIDENCE/data"
 
 # 3. br-provider — payer URLs at a DEAD port (M10), throwaway PFX (its
 # CertificateHolder needs a loadable cert file at boot; fetch-cert=false).

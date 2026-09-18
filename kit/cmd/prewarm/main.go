@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/SmartHealthNetwork/shn-gateway/fhirseed"
+	"github.com/SmartHealthNetwork/shn-kit/kitd"
 	shnsdk "github.com/SmartHealthNetwork/shn-sdk"
 )
 
@@ -32,6 +33,10 @@ func main() {
 		log.Printf("prewarm: %s OK", name)
 	}
 	step("WaitReady", c.WaitReady(ctx, 20*time.Minute))
+	// The cold first $validate is paid here, under the warm-up's own deadline, before
+	// any seed request and before the marker the Kit's smokes wait on.
+	_, warmErr := kitd.WarmValidate(ctx, *base, "DEFAULT", log.Printf)
+	step("WarmValidate(DEFAULT)", warmErr)
 	step("CreatePartitions(provider)", c.CreatePartitions(ctx, []string{"provider"}))
 	step("InstallCRLibraries", c.InstallCRLibraries(ctx))
 

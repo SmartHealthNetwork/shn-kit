@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -212,10 +213,8 @@ func plainQuestionnaire() map[string]any {
 	}
 }
 
-// TestPopulate_ShellForAQuestionnaireThatComputesNothing pins the answer this lane gives when
-// there is nothing to compute: an in-progress QuestionnaireResponse naming the questionnaire
-// and the subject, with no items. Empty is the CORRECT answer here, not a degraded one — the
-// questionnaire asks for no computed values, so a real engine returns the same shell.
+// TestPopulate_ShellForAQuestionnaireThatComputesNothing preserves the delivered
+// unanswered tree without evaluating or inventing clinical answers.
 func TestPopulate_ShellForAQuestionnaireThatComputesNothing(t *testing.T) {
 	status, out := populateOn(t, plainQuestionnaire(), "Patient/pat-scoped-123")
 	if status != http.StatusOK {
@@ -238,9 +237,11 @@ func TestPopulate_ShellForAQuestionnaireThatComputesNothing(t *testing.T) {
 	if out["questionnaire"] != "http://example.org/fhir/Questionnaire/PriorAuthRequired" {
 		t.Errorf("questionnaire = %v, want the posted questionnaire's own url", out["questionnaire"])
 	}
-	if _, present := out["item"]; present {
-		t.Errorf("the response carries items (%v) — a questionnaire with nothing to compute must come back empty, never invented", out["item"])
+	want := []any{map[string]any{"linkId": "1", "item": []any{map[string]any{"linkId": "1.1", "text": "Attestation"}, map[string]any{"linkId": "1.2", "text": "Documentation on file?"}}}}
+	if !reflect.DeepEqual(out["item"], want) {
+		t.Errorf("delivered unanswered tree=%v want %v", out["item"], want)
 	}
+
 	if _, ok := out["authored"].(string); !ok {
 		t.Errorf("authored = %v, want a timestamp", out["authored"])
 	}
@@ -533,4 +534,71 @@ func outcomeDetail(out map[string]any) string {
 	first, _ := issues[0].(map[string]any)
 	d, _ := first["diagnostics"].(string)
 	return d
+}
+
+func TestPopulate_UnansweredTreeStructure(t *testing.T) {
+	q := plainQuestionnaire()
+	q["item"] = []any{map[string]any{"linkId": "a", "type": "group", "text": "Group", "item": []any{map[string]any{"linkId": "b", "type": "display", "text": "", "item": []any{}}, map[string]any{"linkId": "c", "type": "group", "item": []any{map[string]any{"linkId": "d", "type": "string", "text": "Question", "initial": []any{map[string]any{"valueString": "not an answer"}}, "answerOption": []any{map[string]any{"valueString": "choice"}}, "answer": []any{map[string]any{"valueString": "do not copy"}}}}}}}, map[string]any{"linkId": "e", "type": "boolean"}}
+	before, _ := json.Marshal(q)
+	status, out := populateOn(t, q, "Patient/p")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d: %v", status, out)
+	}
+	want := []any{map[string]any{"linkId": "a", "text": "Group", "item": []any{map[string]any{"linkId": "b", "text": "", "item": []any{}}, map[string]any{"linkId": "c", "item": []any{map[string]any{"linkId": "d", "text": "Question"}}}}}, map[string]any{"linkId": "e"}}
+	if !reflect.DeepEqual(out["item"], want) {
+		t.Fatalf("tree=%v want %v", out["item"], want)
+	}
+	after, _ := json.Marshal(q)
+	if !bytes.Equal(before, after) {
+		t.Fatal("input mutated")
+	}
+	out["item"].([]any)[0].(map[string]any)["linkId"] = "changed"
+	after, _ = json.Marshal(q)
+	if !bytes.Equal(before, after) {
+		t.Fatal("output aliases input")
+	}
+	for _, present := range []bool{false, true} {
+		q = plainQuestionnaire()
+		delete(q, "item")
+		if present {
+			q["item"] = []any{}
+		}
+		status, out = populateOn(t, q, "Patient/p")
+		if status != http.StatusOK {
+			t.Fatal(status, out)
+		}
+		if present {
+			if !reflect.DeepEqual(out["item"], []any{}) {
+				t.Fatal("empty tree changed", out)
+			}
+		} else if _, ok := out["item"]; ok {
+			t.Fatal("invented tree", out)
+		}
+	}
+}
+func TestPopulate_RejectsMalformedUnansweredTree(t *testing.T) {
+	for _, item := range []any{nil, "items", map[string]any{}, []any{nil}, []any{"node"}, []any{map[string]any{}}, []any{map[string]any{"linkId": nil}}, []any{map[string]any{"linkId": ""}}, []any{map[string]any{"linkId": 1}}, []any{map[string]any{"linkId": "1", "text": nil}}, []any{map[string]any{"linkId": "1", "text": false}}, []any{map[string]any{"linkId": "1", "item": nil}}, []any{map[string]any{"linkId": "1", "item": "children"}}, []any{map[string]any{"linkId": "1", "item": []any{map[string]any{"linkId": nil}}}}} {
+		q := plainQuestionnaire()
+		q["item"] = item
+		status, out := populateOn(t, q, "Patient/p")
+		if status != http.StatusBadRequest {
+			t.Errorf("item=%#v status=%d: %v", item, status, out)
+		}
+	}
+}
+
+func TestPopulate_UnansweredItemsCopyRawStructure(t *testing.T) {
+	source := []byte(`[{"linkId":"a","text":"A\u0020label","item":[{"linkId":"b"}]}]`)
+	before := bytes.Clone(source)
+	out, err := unansweredPopulateItems(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(`"text":"A\u0020label"`)) {
+		t.Fatalf("raw text changed: %s", out)
+	}
+	out[0] = ' '
+	if !bytes.Equal(source, before) {
+		t.Fatal("output aliases input")
+	}
 }

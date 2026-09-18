@@ -275,11 +275,9 @@ func conformantAmendBundle(member string, qrJSON, srJSON, drJSON, provJSON []byt
 //   - the bridging demo payer and SHN's own provider-data/$populate path answer a BARE
 //     collection Bundle.
 //
-// The unwrap is scenariodriver.PackageEntries. This fence used to carry a SMALL LOCAL COPY
-// of gateway/engine's unwrapQuestionnairePackage and scenariodriver's (former,
-// unexported) packageBundleResource — kept local because shnsdk.ExtractQuestionnaireFromPackage
-// is bare-Bundle-only by design — but that copy is retired now that the gateway exports
-// the unwrap the Kit can call directly.
+// The unwrap is scenariodriver.PackageEntries, which reads the package Bundle under each
+// name the DTR lines publish for it (return, PackageBundle, packagebundle), as
+// shnsdk.ExtractQuestionnaireFromPackage and the gateway's own reader do.
 //
 // The fence stays strict — a Parameters with no packagebundle Bundle, a packagebundle
 // Bundle carrying no Questionnaire, and an empty or malformed body are all false.
@@ -489,8 +487,12 @@ func conformantUC02(rn *Runner, branch string) (string, error) {
 		return "", fmt.Errorf("runner: conformant/uc02: paNeeded=%q, want anything but %q — the reference payer advertises no prior authorization for this family (it omits pa-needed)",
 			cards.PANeeded(), shnsdk.PANeededAuthNeeded)
 	}
+	summary := "coverage answer"
+	if len(cards.Cards) > 0 && cards.Cards[0].Summary != "" {
+		summary = cards.Cards[0].Summary
+	}
 	return originated(viaBFF, fmt.Sprintf("%s (HCPCS %s %s): covered=%s, %s",
-		cards.Cards[0].Summary, order.Code, order.Display, cards.Covered(), noPADetail(cards.PANeeded()))), nil
+		summary, order.Code, order.Display, cards.Covered(), noPADetail(cards.PANeeded()))), nil
 }
 
 // noPADetail renders the no-prior-authorization half of uc02's row detail out of what the
@@ -782,7 +784,7 @@ func conformantUC04(rn *Runner, branch string) (string, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("build operative DiagnosticReport: %w", err)
 		}
-		provJSON, err := shnsdk.BuildProvenance("DiagnosticReport/dr-kit-uc04", "Organization/provider", now)
+		provJSON, err := shnsdk.BuildProvenanceWithIdentifier("DiagnosticReport/dr-kit-uc04", shnsdk.ProvenanceIdentifier{System: "http://smarthealth.network/ids/holder", Value: "provider"}, now)
 		if err != nil {
 			return nil, nil, fmt.Errorf("build Provenance: %w", err)
 		}
@@ -871,7 +873,7 @@ func conformantUC06(rn *Runner, branch string) (string, error) {
 
 	// The Provenance attests the QuestionnaireResponse itself (no report on this row);
 	// the sdk rewrites the target onto the QR id the update bundle carries.
-	provJSON, err := shnsdk.BuildProvenance("QuestionnaireResponse/attested", "Organization/provider", now)
+	provJSON, err := shnsdk.BuildProvenanceWithIdentifier("QuestionnaireResponse/attested", shnsdk.ProvenanceIdentifier{System: "http://smarthealth.network/ids/holder", Value: "provider"}, now)
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: build Provenance: %w", err)
 	}

@@ -74,9 +74,11 @@ const auditUnavailableDetail = "no readable Audit Plane configured (hosted reads
 // incompleteness honestly rather than failing the run.
 const drainTimeout = 5 * time.Second
 
-// Sink receives every completed run's final Result, synchronously, from
-// inside runLocked's defer — the kit/runhistory Recorder implements
-// this to capture a run-history Record at the moment its story is complete.
+// Sink receives each run or watch's outcome synchronously after its terminal
+// event, while admission is still held and before Results publishes it. The
+// kit/runhistory Recorder implements this to capture the completed story.
+// Capture is best-effort: a returned callback or recovered panic completes
+// the attempt, without promising durable storage or changing the row outcome.
 // The runner package sees only this interface; it never imports runhistory
 // (import direction is one-way: runhistory → runner + event).
 type Sink interface{ RunCompleted(res Result) }
@@ -115,6 +117,8 @@ type Config struct {
 	// (scenariodriver.OriginateThroughBRProvider) instead of the driver's
 	// own direct-mint PostCRD (rows_conformant.go).
 	BFFURL string
+	// Dispatch is shared by all owned gateway/BFF driver clients for the daemon lifetime.
+	Dispatch *DispatchObserver
 }
 
 // Result is one completed run's outcome, as returned by Run and accumulated
@@ -150,12 +154,13 @@ type Req struct {
 // may be called more than once, or race a ctx-driven self-finalize); done
 // buffers exactly the one Result finishWatch ever produces for this window.
 type watch struct {
-	runID      string
-	stop       chan struct{}
-	done       chan Result
-	once       sync.Once
-	mergeAudit bool
-	preHW      int
+	runID       string
+	stop        chan struct{}
+	done        chan Result
+	once        sync.Once
+	mergeAudit  bool
+	preHW       int
+	observation *observationWindow
 }
 
 // Runner drives scenario rows sequentially (v1: at most one Run/Start at a
@@ -191,7 +196,7 @@ type Runner struct {
 
 	// inFlight mirrors mu's hold, set true the instant a TryLock succeeds
 	// (Run/Start/StartWatch — a run OR a watch) and cleared at every one of
-	// mu's release points (runLocked's and finishWatch's defers, and
+	// mu's release points (completeLocked, and
 	// StartWatch's own early-unlock on a pre-fetch failure). It is a plain
 	// atomic flag, NOT a TryLock probe: InFlight()
 	// is read by kitd's restart handler as a best-effort admission gate, and
@@ -242,10 +247,10 @@ func (r *Runner) now() time.Time { return r.cfg.Now() }
 func (r *Runner) InFlight() bool { return r.inFlight.Load() }
 
 // Run validates req, acquires the sequential lock (ErrRunInFlight if busy —
-// including a watch session holding it), and blocks until the row completes,
-// returning its Result. The caller's ctx governs the run's HTTP work (Run
-// blocks for its duration, so caller cancellation is meaningful here —
-// unlike Start).
+// including a watch session holding it), and blocks through history capture
+// and admission release before returning its Result. The caller's ctx governs
+// the run's HTTP work (Run blocks for its duration, so caller cancellation is
+// meaningful here — unlike Start).
 func (r *Runner) Run(ctx context.Context, req Req) (Result, error) {
 	row, err := r.validate(req)
 	if err != nil {
@@ -261,7 +266,8 @@ func (r *Runner) Run(ctx context.Context, req Req) (Result, error) {
 // Start validates req, acquires the sequential lock (ErrRunInFlight if
 // busy — including a watch session holding it), and spawns the row in a
 // goroutine, returning the pre-allocated run id immediately (the daemon's
-// contract: a caller polls Results()/the event bus for completion). Run and
+// contract: a caller polls Results() for finalized completion; the event bus
+// reports the outcome before history capture and admission release). Run and
 // Start delegate to the same runLocked internals — Run is simply Start's
 // blocking form.
 //
@@ -322,10 +328,7 @@ func (r *Runner) StartWatch(ctx context.Context) (string, error) {
 	r.watch = w
 	r.watchMu.Unlock()
 
-	if r.cfg.Relay != nil {
-		r.cfg.Relay.SetStamp(relay.Stamp{RunID: runID, Lane: watchLane, UC: watchUC})
-	}
-	r.cfg.Bus.Emit(event.Event{Type: event.TypeRunStarted, RunID: runID, Lane: watchLane, UC: watchUC})
+	w.observation = r.beginObservation(ctx, relay.Stamp{RunID: runID, Lane: watchLane, UC: watchUC}, "")
 	if !mergeAudit {
 		r.cfg.Bus.Emit(event.Event{
 			Type: event.TypeAuditUnavailable, RunID: runID, Lane: watchLane, UC: watchUC,
@@ -357,7 +360,8 @@ func (r *Runner) StartWatch(ctx context.Context) (string, error) {
 	return runID, nil
 }
 
-// StopWatch closes the window opened by StartWatch and returns its Result.
+// StopWatch closes the window opened by StartWatch and returns its Result
+// after history capture and admission release.
 // The finalize path (finishWatch, run either from StopWatch's own close of
 // w.stop or from a ctx-cancel self-finalize) nils r.watch itself,
 // so a Stop after that finalize — or a second Stop — answers
@@ -387,139 +391,72 @@ func (r *Runner) StopWatch() (Result, error) {
 	return res, nil
 }
 
-// finishWatch closes watch w's window and produces its Result. Tail order
-// (load-bearing — do not reorder): drain → audit post-fetch +
-// emits → terminal run.finished/run.failed → ClearStamp → nil r.watch under
-// watchMu → appendResult → History Sink → r.mu.Unlock.
-//
-// ClearStamp landing BEFORE nil-ing r.watch and appending/saving the Result
-// is what makes a partner frame racing the stop drop as ambient/unstamped
-// instead of landing stamped post-terminal inside the history Record: once
-// ClearStamp has run, the relay's stamp is already gone, so any frame the
-// gateway emits after this point (even one relayed a moment later) can never
-// carry this watch's identity again.
-//
-// finishWatch runs exactly once per watch by construction — a single
-// goroutine (StartWatch's) owns the whole tail; w.once only guards the
-// stop-channel close so StopWatch itself is safe to call more than once.
-// Unlocking r.mu from this (possibly different-from-StartWatch) goroutine is
-// deliberate: sync.Mutex permits it, and the lock guards the one-flow
-// invariant, not goroutine identity (mirrors runLocked's own defer, which
-// likewise unlocks from whichever goroutine — Run's caller or Start's
-// spawned one — happens to be running it).
-//
-// A top-level deferred recover guards the WHOLE tail — not just the History
-// Sink call — because
-// StartWatch's caller goroutine does `res := r.finishWatch(...); w.done <-
-// res` OUTSIDE this function: any unrecovered panic here (in drainRelay,
-// auditPostFetchAndEmit, the terminal Emit, ClearStamp, the watch-slot nil,
-// or appendResult — not just Sink) would crash that goroutine before
-// `w.done <- res` ever runs, wedging StopWatch's `<-w.done` forever AND
-// leaving r.mu held forever (permanent ErrRunInFlight). The defer
-// guarantees, on every path: the watch slot is nil'd, the Result (a failed
-// one, built from the recovered panic value, if the happy path never
-// finished computing one) is delivered on w.done via the return value and
-// appended, and r.mu is unlocked. This is the SAME guarantee runLocked's own
-// top-level defer gives execute's row — finishWatch was simply missing its
-// mirror image. The pre-existing Sink-specific inner recover is KEPT
-// (rather than folded away): a panicking Sink fires strictly after res has
-// already been computed and appended, so isolating it there preserves the
-// existing (documented, tested) posture that a Sink panic never changes the
-// window's own Result — only the top-level recover's fallback path (any
-// EARLIER tail panic) produces a failed Result.
+// finishWatch closes observation before history capture and admission release.
 func (r *Runner) finishWatch(tctx context.Context, w *watch) (res Result) {
+	var clinicalErr error
 	defer func() {
 		if p := recover(); p != nil {
-			res = r.fail(w.runID, watchLane, watchUC, "", fmt.Errorf("finishWatch panicked: %v", p))
+			clinicalErr = fmt.Errorf("finishWatch panicked: %v", p)
 		}
-
-		if r.cfg.Relay != nil {
-			r.cfg.Relay.ClearStamp()
-		}
-
+		res = w.observation.end("external activity window closed", clinicalErr, false)
 		r.watchMu.Lock()
 		r.watch = nil
 		r.watchMu.Unlock()
-
-		r.appendResult(res)
-		if r.cfg.History != nil {
-			// Isolated with its own recover (kept — see the func doc above):
-			// a panicking Sink must never propagate out of here either, since
-			// that would skip mu.Unlock below and wedge the runner into
-			// permanent ErrRunInFlight forever, same as runLocked's own Sink
-			// guard.
-			func() {
-				defer func() {
-					_ = recover()
-				}()
-				r.cfg.History.RunCompleted(res)
-			}()
-		}
-		r.inFlight.Store(false)
-		r.mu.Unlock()
+		r.completeLocked(res)
 	}()
-
-	detail := "external activity window closed"
-	if drainErr := r.drainRelay(tctx); drainErr != nil {
-		detail += fmt.Sprintf(" (observer drain incomplete: %v — some external activity may be missing from this window's timeline)", drainErr)
-	}
-
-	watchErr := r.auditPostFetchAndEmit(tctx, w.runID, watchLane, watchUC, w.mergeAudit, w.preHW, nil)
-
-	if watchErr != nil {
-		res = r.fail(w.runID, watchLane, watchUC, "", watchErr)
-	} else {
-		r.cfg.Bus.Emit(event.Event{Type: event.TypeRunFinished, RunID: w.runID, Lane: watchLane, UC: watchUC, Detail: detail})
-		res = Result{RunID: w.runID, Lane: watchLane, UC: watchUC, Branch: "", State: StatePassed, Detail: detail}
-	}
-	return res
+	w.observation.drain(tctx)
+	clinicalErr = r.auditPostFetchAndEmit(tctx, w.runID, watchLane, watchUC, w.mergeAudit, w.preHW, nil)
+	return
 }
 
-// runLocked executes one row with the sequential lock ALREADY HELD and
-// guarantees — via defer, on every path including a panicking row — that the
-// Result is recorded and the lock released, so a bad row can never wedge the
-// runner into permanent ErrRunInFlight.
-//
-// A row panic is CONVERTED to a failed run (never re-panicked): re-panicking
-// from Start's goroutine would crash the whole daemon, and a panicking row
-// is a row bug the runner exists to report legibly while staying available.
-// (The recovery targets row panics; a misconfigured Runner — e.g. nil Bus —
-// still crashes, since the failure emit itself panics.)
+// runLocked holds admission through preparation, terminal publication and history.
 func (r *Runner) runLocked(ctx context.Context, runID, lane, uc, branch string, row rowFunc) (res Result) {
+	w := r.beginObservation(ctx, relay.Stamp{RunID: runID, Lane: lane, UC: uc}, branch)
+	var detail string
+	var clinicalErr error
+	mergeAudit := r.cfg.AuditURL != ""
+	preHW := 0
+	auditReady := false
 	defer func() {
+		panicked := false
 		if p := recover(); p != nil {
-			res = r.fail(runID, lane, uc, branch, fmt.Errorf("row panicked: %v", p))
+			clinicalErr = fmt.Errorf("row panicked: %v", p)
+			panicked = true
 		}
-		r.appendResult(res)
-		if r.cfg.History != nil {
-			// Synchronous and lock-held by design: the next run cannot
-			// start until this run's record is durably written, and the
-			// drain point (a) below has already put the whole story in the ring.
-			//
-			// Isolated with its own recover, symmetric with the row-panic posture
-			// above: a panicking Sink (e.g. a misconfigured runhistory.Recorder)
-			// must never propagate out of this defer — that would skip mu.Unlock
-			// below and wedge the runner into permanent ErrRunInFlight forever.
-			// History capture is best-effort relative to run
-			// availability — the runner exists to stay available.
-			func() {
-				defer func() {
-					if p := recover(); p != nil {
-						// Swallowed by design: res is already final and appended;
-						// the only failure mode of losing this recover is wedging
-						// mu, which is strictly worse than a missed history record.
-					}
-				}()
-				r.cfg.History.RunCompleted(res)
+		w.drain(ctx)
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					clinicalErr = errors.Join(clinicalErr, fmt.Errorf("audit panicked: %v", p))
+				}
 			}()
-		}
-		r.inFlight.Store(false)
-		r.mu.Unlock()
+			if auditReady {
+				clinicalErr = r.auditPostFetchAndEmit(ctx, runID, lane, uc, mergeAudit, preHW, clinicalErr)
+			}
+		}()
+		// An observed fully completed response (including refusal) is safe. A
+		// panic without transport completion evidence cannot prove dispatch ended.
+		uncertain := panicked && r.cfg.Dispatch == nil
+		res = w.end(detail, clinicalErr, uncertain)
+		r.completeLocked(res)
 	}()
-	return r.execute(ctx, runID, lane, uc, branch, row)
+	if mergeAudit {
+		preHW, clinicalErr = r.auditPreFetch(ctx)
+		if clinicalErr != nil {
+			return
+		}
+	} else {
+		r.cfg.Bus.Emit(event.Event{Type: event.TypeAuditUnavailable, RunID: runID, Lane: lane, UC: uc, Detail: auditUnavailableDetail})
+	}
+	auditReady = true
+	detail, clinicalErr = row(r, branch)
+	return
 }
 
-// Results returns every completed run's Result, oldest first.
+// Results returns finalized run and watch outcomes, oldest first. Each entry
+// is visible only after its history capture attempt and admission release.
+// Observing an entry does not reserve admission: another caller may start a
+// new run or watch before the reader does.
 func (r *Runner) Results() []Result {
 	r.resMu.Lock()
 	defer r.resMu.Unlock()
@@ -528,86 +465,30 @@ func (r *Runner) Results() []Result {
 	return out
 }
 
-func (r *Runner) appendResult(res Result) {
-	r.resMu.Lock()
-	r.results = append(r.results, res)
-	r.resMu.Unlock()
-}
-
-// execute runs one row under the sequential lock (already held by the
-// caller): relay stamp → run.started → audit pre-fetch (or
-// audit.unavailable) → the row itself → audit post-fetch + per-record audit
-// events → run.finished/run.failed → relay unstamp. Every exit path returns
-// a Result and has already emitted its terminal bus event.
-func (r *Runner) execute(ctx context.Context, runID, lane, uc, branch string, row rowFunc) Result {
-	if r.cfg.Relay != nil {
-		r.cfg.Relay.SetStamp(relay.Stamp{RunID: runID, Lane: lane, UC: uc})
-		// Drain-then-clear on EVERY exit path: a pre-fetch
-		// short-circuit or a panicking row must still wait for in-flight frames
-		// before unstamping — otherwise the tail relays unstamped, the exact bug
-		// the barrier exists to kill. Fast no-op when point (a) already caught up.
-		defer func() {
-			_ = r.drainRelay(ctx)
-			r.cfg.Relay.ClearStamp()
+// completeLocked finishes a run or watch while mu is held. History may read
+// Results, so capture runs outside resMu. Keeping resMu held until mu is
+// released makes result visibility the finalization boundary and preserves
+// result order even when the next run starts immediately.
+func (r *Runner) completeLocked(res Result) {
+	if r.cfg.History != nil {
+		func() {
+			// A sink panic must not change the outcome or strand admission.
+			defer func() { _ = recover() }()
+			r.cfg.History.RunCompleted(res)
 		}()
 	}
-	r.cfg.Bus.Emit(event.Event{Type: event.TypeRunStarted, RunID: runID, Lane: lane, UC: uc, Branch: branch})
-
-	// The audit merge is load-bearing when configured: both the
-	// pre- and post-fetch must succeed, or the RUN fails regardless of the
-	// row's own outcome. A pre-fetch failure short-circuits before the row
-	// ever runs; a post-fetch failure is only knowable after the row has run
-	// (below), but is still terminal for the same reason.
-	mergeAudit := r.cfg.AuditURL != ""
-	var preHW int
-	if mergeAudit {
-		var err error
-		preHW, err = r.auditPreFetch(ctx)
-		if err != nil {
-			return r.fail(runID, lane, uc, branch, err)
-		}
-	} else {
-		r.cfg.Bus.Emit(event.Event{
-			Type: event.TypeAuditUnavailable, RunID: runID, Lane: lane, UC: uc,
-			Detail: auditUnavailableDetail,
-		})
-	}
-
-	detail, rowErr := row(r, branch)
-
-	// Drain BEFORE the audit post-fetch and the terminal
-	// emit, so on the bus every tail observer frame precedes the audit events
-	// and run.finished/run.failed — the history Recorder finalizes at the
-	// terminal event and must find the whole story already in the ring. A
-	// timeout never fails the run (the stream is diagnostic, never
-	// load-bearing) but is surfaced honestly in the Detail.
-	if drainErr := r.drainRelay(ctx); drainErr != nil {
-		note := fmt.Errorf("observer drain incomplete: %w — some flow steps may be missing from this run's timeline", drainErr)
-		if rowErr != nil {
-			rowErr = errors.Join(rowErr, note)
-		} else {
-			detail = strings.TrimSpace(detail + " (" + note.Error() + ")")
-		}
-	}
-
-	// If the row ALSO failed, auditPostFetchAndEmit surfaces both causes
-	// (errors.Join) — discarding rowErr would swap the (usually more
-	// interesting) row failure for the audit read failure.
-	rowErr = r.auditPostFetchAndEmit(ctx, runID, lane, uc, mergeAudit, preHW, rowErr)
-
-	if rowErr != nil {
-		return r.fail(runID, lane, uc, branch, rowErr)
-	}
-	r.cfg.Bus.Emit(event.Event{Type: event.TypeRunFinished, RunID: runID, Lane: lane, UC: uc, Detail: detail})
-	return Result{RunID: runID, Lane: lane, UC: uc, Branch: branch, State: StatePassed, Detail: detail}
+	r.resMu.Lock()
+	r.results = append(r.results, res)
+	r.inFlight.Store(false)
+	r.mu.Unlock()
+	r.resMu.Unlock()
 }
 
 // auditPreFetch performs the load-bearing audit-merge pre-fetch: fetch the
 // Audit Plane's current content and return its high-water mark, or a
 // wrapped error on failure. Callers must have already checked
-// Config.AuditURL != ""; shared by execute (regular rows) and StartWatch
-// so pre-fetch failure means the same thing in both: the
-// merge bracket cannot open, and the run/watch never starts.
+// Config.AuditURL != "". Regular rows report pre-fetch failure inside their
+// already-started window; StartWatch refuses before publishing any lifecycle.
 func (r *Runner) auditPreFetch(ctx context.Context) (int, error) {
 	pre, err := auditread.Fetch(ctx, r.cfg.HTTP, r.cfg.AuditURL)
 	if err != nil {
@@ -619,7 +500,7 @@ func (r *Runner) auditPreFetch(ctx context.Context) (int, error) {
 // auditPostFetchAndEmit performs the audit-merge post-fetch (skipped
 // entirely when !mergeAudit, e.g. an unconfigured Audit Plane) and emits one
 // TypeAudit event per record newer than preHW — the second half of the
-// audit bracket, shared by execute and finishWatch so a run
+// audit bracket, shared by runLocked and finishWatch so a run
 // and a watch merge audit events identically. priorErr (the row/window's own
 // outcome so far, possibly nil) is folded into the returned error via
 // errors.Join on a post-fetch failure, so a post-fetch failure never
@@ -641,30 +522,6 @@ func (r *Runner) auditPostFetchAndEmit(ctx context.Context, runID, lane, uc stri
 		r.cfg.Bus.Emit(event.Event{Type: event.TypeAudit, RunID: runID, Lane: lane, UC: uc, Audit: b})
 	}
 	return priorErr
-}
-
-// drainRelay bounds Relay.Drain with drainTimeout under the run's ctx; nil
-// Relay (unit tests) is a no-op.
-//
-// The drain barrier is conditioned on ctx surviving to this point (an
-// accepted design tradeoff): a caller-cancelled synchronous
-// Run skips the barrier by design (drainTimeout bounds a live ctx, not a
-// dead one), while async Start runs execute under the Runner-lifetime
-// baseCtx and are unaffected by caller cancellation.
-func (r *Runner) drainRelay(ctx context.Context) error {
-	if r.cfg.Relay == nil {
-		return nil
-	}
-	dctx, cancel := context.WithTimeout(ctx, drainTimeout)
-	defer cancel()
-	return r.cfg.Relay.Drain(dctx)
-}
-
-// fail emits run.failed with err's message and returns the failed Result.
-func (r *Runner) fail(runID, lane, uc, branch string, err error) Result {
-	detail := err.Error()
-	r.cfg.Bus.Emit(event.Event{Type: event.TypeRunFailed, RunID: runID, Lane: lane, UC: uc, Detail: detail})
-	return Result{RunID: runID, Lane: lane, UC: uc, Branch: branch, State: StateFailed, Detail: detail}
 }
 
 // validate is Run/Start's shared pre-flight: the lane must be AVAILABLE on

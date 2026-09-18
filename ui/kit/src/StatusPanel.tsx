@@ -1,10 +1,8 @@
 // StatusPanel.tsx — connectivity/system-status as first-class UI state.
 // Renders SSE liveness, identity, child health, verify probes, the
 // patient-app launcher, and the reset/restart affordances, laid out as the
-// full-width diagnostics card grid SystemsPage mounts. Markup
-// is grouped into cards; every handler and pinned string below is
-// unchanged from the pre-restyle version — only the surrounding structure
-// and class names moved.
+// full-width diagnostics card grid SystemsPage mounts. Java child restarts
+// respect runner admission; whole-Kit recovery remains available during a run.
 import { useState } from 'react';
 import type { JSX } from 'react';
 import type { BootstrapResponse, Probe, StatusResponse } from './types';
@@ -17,6 +15,9 @@ export interface StatusPanelProps {
   boot: BootstrapResponse;
   status?: StatusResponse;
   sseState: SSEState;
+  // Only Java child restarts wait for runner finalization. Whole-Kit
+  // recovery intentionally remains available while a run is pending.
+  admissionPending?: boolean;
   // Fired once postReset() resolves with restartRequired:true, so App can
   // hoist "restart required" into phase-router-level state — this panel
   // unmounts on the next bootstrap poll flip (signin-required), and the
@@ -67,7 +68,7 @@ const RESTARTABLE_CHILDREN = new Set(['validator', 'data-server', 'br-provider']
 
 type ChildRestartState = { kind: 'idle' } | { kind: 'pending' } | { kind: 'error'; message: string };
 
-function ChildRestartControl({ name }: { name: string }): JSX.Element {
+function ChildRestartControl({ name, admissionPending }: { name: string; admissionPending: boolean }): JSX.Element {
   const [state, setState] = useState<ChildRestartState>({ kind: 'idle' });
 
   const handleClick = async () => {
@@ -94,7 +95,7 @@ function ChildRestartControl({ name }: { name: string }): JSX.Element {
       <button
         type="button"
         className="btn ghost"
-        disabled={state.kind === 'pending'}
+        disabled={admissionPending || state.kind === 'pending'}
         onClick={() => {
           void handleClick();
         }}
@@ -110,7 +111,7 @@ function ChildRestartControl({ name }: { name: string }): JSX.Element {
   );
 }
 
-export function StatusPanel({ boot, status, sseState, onResetComplete, onVerified }: StatusPanelProps): JSX.Element {
+export function StatusPanel({ boot, status, sseState, admissionPending = false, onResetComplete, onVerified }: StatusPanelProps): JSX.Element {
   const [reset, setReset] = useState<ResetState>({ kind: 'idle' });
   const [recheck, setRecheck] = useState<RecheckState>({ kind: 'idle' });
   const [bundleError, setBundleError] = useState<string | undefined>(undefined);
@@ -202,7 +203,7 @@ export function StatusPanel({ boot, status, sseState, onResetComplete, onVerifie
                   {canRestart() && <RestartButton />}
                 </div>
               )}
-              {RESTARTABLE_CHILDREN.has(c.name) && <ChildRestartControl name={c.name} />}
+              {RESTARTABLE_CHILDREN.has(c.name) && <ChildRestartControl name={c.name} admissionPending={admissionPending} />}
             </li>
           ))}
         </ul>

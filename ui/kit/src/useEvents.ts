@@ -11,6 +11,9 @@ export interface EventsView {
   all: KitEvent[];
   byRun(runId: string): KitEvent[];
   activeRunId?: string;
+  // Admission waits for this run's finalized result, independently of the
+  // outcome-driven inspector identity and the capped event ring.
+  latestStarted?: KitEvent;
   sseState: SSEState;
 }
 
@@ -20,14 +23,16 @@ const TERMINAL_TYPES = new Set(['run.finished', 'run.failed']);
 export function useEvents(token: string | undefined): EventsView {
   const [all, setAll] = useState<KitEvent[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined);
+  const [latestStarted, setLatestStarted] = useState<KitEvent | undefined>(undefined);
   const [sseState, setSseState] = useState<SSEState>('connecting');
 
   useEffect(() => {
-    if (token === undefined) return;
-
     setAll([]);
     setActiveRunId(undefined);
+    setLatestStarted(undefined);
     setSseState('connecting');
+
+    if (token === undefined) return;
 
     const es = new EventSource(eventsUrl(token));
 
@@ -43,6 +48,7 @@ export function useEvents(token: string | undefined): EventsView {
 
       if (parsed.type === 'run.started') {
         setActiveRunId(parsed.runId);
+        setLatestStarted(parsed);
       } else if (TERMINAL_TYPES.has(parsed.type)) {
         setActiveRunId((prev) => (prev === parsed.runId ? undefined : prev));
       }
@@ -57,6 +63,7 @@ export function useEvents(token: string | undefined): EventsView {
     all,
     byRun: (runId: string) => all.filter((e) => e.runId === runId),
     activeRunId,
+    latestStarted,
     sseState,
   };
 }

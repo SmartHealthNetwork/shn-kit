@@ -218,16 +218,24 @@ func main() {
 	// pdRlyPtr is the provider-data gateway child's own relay (its own observer
 	// hub, its own seq epoch) — nil on a Kit without the Java trio.
 	var pdRlyPtr atomic.Pointer[relay.Relay]
+	var gatewayProfile, providerDataProfile atomic.Uint32
+	var sourceMu sync.Mutex // profile publication and initial relay registration are one boundary
 	sup := supervisor.New(func(n supervisor.Notice) {
 		bus.Emit(event.Event{Type: event.TypeChild, Child: n.Child, Detail: n.State + ": " + n.Detail})
-		if n.Child == gatewayChild && n.State == supervisor.StateRestarting {
+		sourceMu.Lock()
+		defer sourceMu.Unlock()
+		if n.Child == gatewayChild && (n.State == supervisor.StateRestarting || n.State == supervisor.StateStarting) {
+			profile := inspectGatewayProfile(*gatewayBin)
+			gatewayProfile.Store(uint32(profile))
 			if r := rlyPtr.Load(); r != nil {
-				r.ResetCursor() // fresh child = fresh observer seq epoch
+				r.ResetSource(profile)
 			}
 		}
-		if n.Child == providerDataChild && n.State == supervisor.StateRestarting {
+		if n.Child == providerDataChild && (n.State == supervisor.StateRestarting || n.State == supervisor.StateStarting) {
+			profile := inspectGatewayProfile(*gatewayBin)
+			providerDataProfile.Store(uint32(profile))
 			if r := pdRlyPtr.Load(); r != nil {
-				r.ResetCursor() // same rule, the provider-data child's own epoch
+				r.ResetSource(profile)
 			}
 		}
 	})
@@ -241,7 +249,7 @@ func main() {
 	// event, or log line.
 	var gwEnvPtr atomic.Pointer[[]string]
 
-	bridgingDemo := newBridgingDemo(sup.RestartWithEnv, bus, &rlyPtr, &gwEnvPtr)
+	bridgingDemo := newBridgingDemo(sup.RestartWithEnv, bus, &rlyPtr, &gwEnvPtr, *gatewayBin)
 
 	// tokens is the selected TokenStore: newTokenStore wraps the
 	// file-backed store in a keychain-backed one (falling back to the SAME
@@ -587,7 +595,10 @@ func main() {
 		d.SetBYO(kitd.BYORuntime{Applied: byoCfg, Browser: browser, GatewayURL: stack.GatewayURL, LoadError: errString(byoLoadErr)})
 
 		rly := relay.New(stack.ObserverURL, stack.ObserverHealthURL, bus, log.Printf)
+		sourceMu.Lock()
+		rly.SetGatewayProfile(relay.GatewayProfile(gatewayProfile.Load()))
 		rlyPtr.Store(rly)
+		sourceMu.Unlock()
 		go rly.Run(ctx)
 
 		// The provider-data gateway child (trio only) has its own observer hub:
@@ -596,9 +607,15 @@ func main() {
 		// child ran it, and the drain barrier waits for both.
 		var stamper relay.Stamper = rly
 		var pdDriver *scenariodriver.Driver
+		dispatch := &runner.DispatchObserver{}
+		stack.Driver.HTTP = dispatch.Client(stack.Driver.HTTP, stack.BRProviderURL)
+		stack.ProviderDataDriver.HTTP = dispatch.Client(stack.ProviderDataDriver.HTTP, stack.BRProviderURL)
 		if stack.ProviderDataURL != "" {
 			pdRly := relay.New(stack.ProviderDataObserverURL, stack.ProviderDataObserverHealthURL, bus, log.Printf)
+			sourceMu.Lock()
+			pdRly.SetGatewayProfile(relay.GatewayProfile(providerDataProfile.Load()))
 			pdRlyPtr.Store(pdRly)
+			sourceMu.Unlock()
 			go pdRly.Run(ctx)
 			stamper = relay.NewMulti(rly, pdRly)
 			pdDriver = scenariodriver.New(stack.ProviderDataDriver)
@@ -617,6 +634,7 @@ func main() {
 
 		d.SetRunner(runner.New(runner.Config{
 			Driver:                 driver,
+			Dispatch:               dispatch,
 			ProviderDataDriver:     pdDriver,
 			Bus:                    bus,
 			Relay:                  stamper,
@@ -818,7 +836,7 @@ type envRestarter func(ctx context.Context, name string, env []string, preSpawn 
 // reopen kitd's
 // generic per-child restart seam, which still refuses the gateway outright.
 //
-// The relay's ResetCursor rides RestartWithEnv's preSpawn hook, NEVER a call
+// The relay's identity refresh and cursor reset ride RestartWithEnv's preSpawn hook, NEVER a call
 // after the restart returns: the new child serves a fresh observer seq epoch,
 // and a cursor reset landing after it is already up can strand a relay
 // connection redialed inside the restart window as stale-gen forever
@@ -846,7 +864,7 @@ type envRestarter func(ctx context.Context, name string, env []string, preSpawn 
 // error-joined so the operator sees both. Either way the toggle still reports
 // failure and kitd's recorded demoMode stays put — which after a successful
 // revert is once again the truth.
-func newBridgingDemo(restart envRestarter, bus *event.Bus, rlyPtr *atomic.Pointer[relay.Relay], gwEnvPtr *atomic.Pointer[[]string]) func(context.Context, bool) error {
+func newBridgingDemo(restart envRestarter, bus *event.Bus, rlyPtr *atomic.Pointer[relay.Relay], gwEnvPtr *atomic.Pointer[[]string], gatewayBinary string) func(context.Context, bool) error {
 	var mu sync.Mutex
 	// prev is the env the last SUCCESSFUL toggle registered — the revert
 	// target. nil until a toggle succeeds; the recorded demoMode is then still
@@ -873,7 +891,7 @@ func newBridgingDemo(restart envRestarter, bus *event.Bus, rlyPtr *atomic.Pointe
 		}
 		var preSpawn func()
 		if r := rlyPtr.Load(); r != nil {
-			preSpawn = r.ResetCursor
+			preSpawn = func() { resetGatewaySource(r, gatewayBinary) }
 		}
 		if err := restart(ctx, gatewayChild, env, preSpawn); err != nil {
 			revertEnv := prev
@@ -979,4 +997,18 @@ func openBrowser(u string) error {
 		name = "xdg-open"
 	}
 	return exec.Command(name, append(args, u)...).Start()
+}
+
+// resetGatewaySource runs after owned child exit and before respawn.
+// Inspection failure never blocks clinical boot.
+func resetGatewaySource(r *relay.Relay, path string) {
+	r.ResetSource(inspectGatewayProfile(path))
+}
+
+func inspectGatewayProfile(path string) relay.GatewayProfile {
+	profile, err := relay.InspectGatewayBinary(path)
+	if err != nil {
+		log.Printf("kit: observer executable identity unavailable: %v", err)
+	}
+	return profile
 }

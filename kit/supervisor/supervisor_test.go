@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1394,5 +1395,276 @@ func TestAllocatePorts(t *testing.T) {
 			t.Fatalf("port %d not bindable: %v", p, err)
 		}
 		l.Close()
+	}
+}
+
+// ---- ChildSpec.Ready: the post-URL readiness hook ------------------------------
+
+// readySpec is stubSpec plus a Ready hook that records each invocation.
+func readySpec(t *testing.T, name string, restartMax int, hook func(ctx context.Context, progress func(string)) error) (ChildSpec, string) {
+	t.Helper()
+	spec, addr := stubSpec(t, name, true, restartMax)
+	spec.Ready = hook
+	return spec, addr
+}
+
+// Ready runs only once every ReadyURL answers 2xx, its progress lands in the
+// child's Status detail while it runs, and a nil return makes the child
+// ready with the detail cleared.
+func TestSupervisor_ReadyHookRunsAfterURLsAndGatesReady(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	var healthAtHook int
+	var detailDuringHook string
+	var spec ChildSpec
+	var addr string
+	spec, addr = readySpec(t, "ready1", 0, func(ctx context.Context, progress func(string)) error {
+		resp, err := http.Get("http://" + addr + "/health")
+		if err == nil {
+			healthAtHook = resp.StatusCode
+			resp.Body.Close()
+		}
+		progress("warming 1/2: row-a")
+		if st, ok := statusOf(s.Status(), "ready1"); ok {
+			detailDuringHook = st.State + "|" + st.Detail
+		}
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.StopAll()
+
+	if healthAtHook != http.StatusOK {
+		t.Fatalf("Ready ran before /health answered 2xx (saw %d)", healthAtHook)
+	}
+	if detailDuringHook != "starting|warming 1/2: row-a" {
+		t.Fatalf("Status during the hook = %q, want state starting with the progress text as detail", detailDuringHook)
+	}
+	st, _ := statusOf(s.Status(), "ready1")
+	if st.State != StateReady || st.Detail != "" {
+		t.Fatalf("after Ready returned nil: state=%q detail=%q, want ready with an empty detail", st.State, st.Detail)
+	}
+	states := statesOf(nc.snapshot(), "ready1")
+	if len(states) != 2 || states[0] != "starting" || states[1] != "ready" {
+		t.Fatalf("expected notices [starting ready], got %v", states)
+	}
+}
+
+// A Ready error is a readiness failure: Start returns it, the child ends
+// failed with that reason, and the process is killed — exactly the metadata
+// timeout path, with the hook's reason instead of a bare timeout.
+func TestSupervisor_ReadyHookFailureKillsAndFails(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	spec, addr := readySpec(t, "readyfail1", 0, func(context.Context, func(string)) error {
+		return fmt.Errorf("row 3/34 init-x: not an OperationOutcome")
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := s.Start(ctx, spec)
+	if err == nil {
+		t.Fatal("expected Start to fail when Ready fails")
+	}
+	if !strings.Contains(err.Error(), "readyfail1") || !strings.Contains(err.Error(), "not an OperationOutcome") {
+		t.Fatalf("error %q should name the child and the hook's reason", err)
+	}
+	st, ok := statusOf(s.Status(), "readyfail1")
+	if !ok || st.State != StateFailed || !strings.Contains(st.Detail, "not an OperationOutcome") {
+		t.Fatalf("status = %+v, want failed with the hook's reason as detail", st)
+	}
+	if !waitFor(3*time.Second, func() bool { return !isAlive(st.PID) }) {
+		t.Fatalf("process %d still alive after Ready failure", st.PID)
+	}
+	if resp, err := http.Get("http://" + addr + "/health"); err == nil {
+		resp.Body.Close()
+		t.Fatal("stub still answering /health after the Ready failure killed it")
+	}
+	if states := statesOf(nc.snapshot(), "readyfail1"); len(states) != 2 || states[1] != "failed" {
+		t.Fatalf("expected notices [starting failed], got %v", states)
+	}
+}
+
+// Ready runs inside the same ReadyTimeout budget as the URL probe: a hook that
+// never finishes is cancelled at that deadline and the child fails then.
+func TestSupervisor_ReadyHookBoundedByReadyTimeout(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	spec, _ := readySpec(t, "readyhang1", 0, func(ctx context.Context, _ func(string)) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	spec.ReadyTimeout = 2 * time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	started := time.Now()
+	err := s.Start(ctx, spec)
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("expected Start to fail when Ready outlives ReadyTimeout")
+	}
+	if elapsed > 6*time.Second {
+		t.Fatalf("Start took %s, want the 2s ReadyTimeout to cancel the hook", elapsed)
+	}
+	if !strings.Contains(err.Error(), "readyhang1") || !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		t.Fatalf("error %q should name the child and the deadline", err)
+	}
+	st, _ := statusOf(s.Status(), "readyhang1")
+	if st.State != StateFailed {
+		t.Fatalf("state = %q, want failed", st.State)
+	}
+}
+
+// Ready is keyed to the process incarnation: every spawn — the first Start,
+// a crash bounce, a deliberate Restart — re-runs it against the new process.
+func TestSupervisor_ReadyHookRerunsPerSpawn(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	var mu sync.Mutex
+	var pids []string
+	var spec ChildSpec
+	var addr string
+	spec, addr = readySpec(t, "rerun1", 2, func(context.Context, func(string)) error {
+		// Each call must reach a live process on the child's address (a
+		// hook run against a dead or not-yet-listening process would fail
+		// here), so the count below is of hook runs against live spawns.
+		resp, err := http.Get("http://" + addr + "/env")
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		mu.Lock()
+		pids = append(pids, fmt.Sprint(len(pids)))
+		mu.Unlock()
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := s.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.StopAll()
+	calls := func() int { mu.Lock(); defer mu.Unlock(); return len(pids) }
+	if calls() != 1 {
+		t.Fatalf("Ready ran %d times after Start, want 1", calls())
+	}
+
+	postExit(addr)
+	if !waitFor(10*time.Second, func() bool {
+		return containsInOrder(statesOf(nc.snapshot(), "rerun1"), []string{"exited", "restarting", "ready"})
+	}) {
+		t.Fatalf("crash bounce did not reach ready: %v", statesOf(nc.snapshot(), "rerun1"))
+	}
+	if calls() != 2 {
+		t.Fatalf("Ready ran %d times after the crash bounce, want 2 (re-warmed the new process)", calls())
+	}
+
+	if err := s.Restart(ctx, "rerun1"); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if calls() != 3 {
+		t.Fatalf("Ready ran %d times after Restart, want 3", calls())
+	}
+}
+
+// The crash-bounce respawn also shows the hook's progress: a child being
+// re-warmed after a crash reports the row in flight, not only "restart n/N".
+func TestSupervisor_ReadyHookProgressVisibleOnCrashBounce(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	var mu sync.Mutex
+	var details []string
+	var spec ChildSpec
+	var addr string
+	spec, addr = readySpec(t, "bounceprog1", 2, func(_ context.Context, progress func(string)) error {
+		progress("warming 2/34: init-dtr-questionnaireresponse")
+		if st, ok := statusOf(s.Status(), "bounceprog1"); ok {
+			mu.Lock()
+			details = append(details, st.State+"|"+st.Detail)
+			mu.Unlock()
+		}
+		return nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := s.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.StopAll()
+	postExit(addr)
+	if !waitFor(10*time.Second, func() bool {
+		return containsInOrder(statesOf(nc.snapshot(), "bounceprog1"), []string{"exited", "restarting", "ready"})
+	}) {
+		t.Fatalf("crash bounce did not reach ready: %v", statesOf(nc.snapshot(), "bounceprog1"))
+	}
+	mu.Lock()
+	got := append([]string(nil), details...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("hook observed %d status snapshots, want 2 (first start + bounce): %v", len(got), got)
+	}
+	if got[0] != "starting|warming 2/34: init-dtr-questionnaireresponse" {
+		t.Errorf("first-start snapshot = %q, want the warm-up row as detail", got[0])
+	}
+	if got[1] != "restarting|warming 2/34: init-dtr-questionnaireresponse" {
+		t.Errorf("crash-bounce snapshot = %q, want state restarting with the warm-up row as detail", got[1])
+	}
+}
+
+// A Stop that lands while the hook is running wins: the child ends stopped
+// (not failed), the hook is not run again, and Start reports the stop.
+func TestSupervisor_StopDuringReadyHook(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	running := make(chan struct{})
+	var calls int32
+	var spec ChildSpec
+	var addr string
+	spec, addr = readySpec(t, "stophook1", 3, func(ctx context.Context, _ func(string)) error {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			close(running)
+		}
+		// Behave like Warm: keep talking to the child until the process is
+		// gone (Stop has signalled it), then report the failed request.
+		for {
+			resp, err := http.Get("http://" + addr + "/health")
+			if err != nil {
+				return fmt.Errorf("request failed")
+			}
+			resp.Body.Close()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	startErr := make(chan error, 1)
+	go func() { startErr <- s.Start(ctx, spec) }()
+	<-running
+	stopDone := make(chan struct{})
+	go func() { _ = s.Stop("stophook1"); close(stopDone) }()
+	err := <-startErr
+	<-stopDone
+	if err == nil || !strings.Contains(err.Error(), "stopped during startup") {
+		t.Fatalf("Start = %v, want a stopped-during-startup error", err)
+	}
+	st, _ := statusOf(s.Status(), "stophook1")
+	if st.State != StateStopped {
+		t.Fatalf("state = %q (detail %q), want stopped: a Stop during the hook must not read as a readiness failure", st.State, st.Detail)
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("hook ran %d times, want 1 (no respawn after Stop)", calls)
+	}
+	if states := statesOf(nc.snapshot(), "stophook1"); countState(states, "failed") != 0 || countState(states, "restarting") != 0 {
+		t.Fatalf("notices %v carry failed/restarting after a deliberate Stop", states)
 	}
 }

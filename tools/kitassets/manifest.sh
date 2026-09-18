@@ -88,6 +88,7 @@ IGS_SIZE_NOTE="ships ${#KITASSETS_LINES[@]} contract lines' IG tgz sets: line 2.
 
 # Image/runtime pins come from pins.env (shared with build.sh — one source);
 # the IG sets mirror the two offline-bake Dockerfiles (via igpins.gen.sh).
+HAPI_BACKPORT_JSON="$(PYTHONDONTWRITEBYTECODE=1 python3 "$REPO/tools/kitassets/backport/runtime.py" packaged "$DIST/hapi" "$REPO/tools/kitassets/build.sh")"
 cat > "$DIST/versions.json" <<EOF
 {
   "kit": "$KIT_VERSION",
@@ -97,6 +98,7 @@ cat > "$DIST/versions.json" <<EOF
   },
   "brProvider": "$BRP_COMMIT",
   "hapiImage": "$HAPI_DIGEST",
+  "hapiBackport": $HAPI_BACKPORT_JSON,
   "temurin": "$TEMURIN_RELEASE",
   "igsValidator": [
     $IGS_VALIDATOR_JSON

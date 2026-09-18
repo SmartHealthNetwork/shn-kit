@@ -1,10 +1,12 @@
 {
   "name": "shn-kit-desktop",
   "private": true,
-  "version": "0.18.0",
+  "version": "0.19.0",
   "main": "dist/main.js",
   "scripts": {
+    "postinstall": "node scripts/apply-signing-backport.cjs",
     "test": "vitest run",
+    "test:signing-keychain": "node scripts/test-signing-keychain.cjs",
     "build": "tsc -b",
     "dev": "npm run build && electron dist/main.js",
     "pack": "npm run build && electron-builder --dir"

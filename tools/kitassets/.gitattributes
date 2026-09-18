@@ -1,0 +1,3 @@
+# Content-addressed backport and native-stripping inputs require exact blob bytes.
+/backport/** -text
+/build.sh -text

@@ -12,8 +12,14 @@ are thin Electron wiring — every testable rule lives in the electron-free `con
 From the repo root:
 
 ```sh
-# 1. Build the gateway binary from the pinned shn-gateway module (the kit depends on it).
-(cd kit && go build -o /tmp/shn-gateway github.com/SmartHealthNetwork/shn-gateway/cmd/gateway)
+# 1. Install the exact Kit dependency pin, retaining its published build identity.
+# This native macOS/Linux recipe writes the same gateway path used below.
+GWVER="$(awk '/SmartHealthNetwork\/shn-gateway v/{print $2; exit}' kit/go.mod)"
+GWBIN="$(mktemp -d)"
+GOWORK=off GOBIN="$GWBIN" go install "github.com/SmartHealthNetwork/shn-gateway/cmd/gateway@$GWVER"
+cp "$GWBIN/gateway" /tmp/shn-gateway
+rm -rf "$GWBIN"
+go version -m /tmp/shn-gateway
 
 # 2. Build the real shnkitd binary.
 cd kit && go build -o /tmp/shnkitd ./cmd/shnkitd && cd ..
@@ -36,6 +42,14 @@ cp dev.config.example.json dev.config.json
 npm install
 npm run dev
 ```
+
+Versioned installation preserves the executable's module version and checksum,
+which the daemon uses to recognize the published synchronous observer profile.
+Older binaries built from a module-cache directory can report `(devel)` without a
+checksum; replace those binaries using the recipe above. They remain clinically
+usable, but the daemon explicitly leaves their observer events unscoped. Windows
+packaging uses the same pinned install with a private drive-qualified GOPATH and
+copies `gateway.exe`; the workflow also checks the completed executable identity.
 
 `npm run dev` runs `tsc -b` then launches Electron against `dist/main.js`. The window
 loads `{shnkitd's api}/ui/` once the daemon reports its session (`session.json` in the

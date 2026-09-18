@@ -23,6 +23,7 @@ KITASSETS_VALIDATOR_IGS_20=(
   "cdex hl7.fhir.us.davinci-cdex 2.1.0"
   "hrex hl7.fhir.us.davinci-hrex 1.1.0"
   "shnig shn.fhir.carry 1.0.0"
+  "validationsupport shn.fhir.validation-support 1.2.0"
 )
 
 KITASSETS_DATA_IGS_20=(
@@ -42,6 +43,7 @@ KITASSETS_VALIDATOR_IGS_21=(
   "cdex hl7.fhir.us.davinci-cdex 2.1.0"
   "hrex hl7.fhir.us.davinci-hrex 1.1.0"
   "shnig shn.fhir.carry 1.0.0"
+  "validationsupport shn.fhir.validation-support 1.2.0"
 )
 
 KITASSETS_DATA_IGS_21=(
@@ -62,6 +64,7 @@ KITASSETS_VALIDATOR_IGS_22=(
   "hrex hl7.fhir.us.davinci-hrex 1.2.0"
   "extensions hl7.fhir.uv.extensions.r4 5.3.0-ballot-tc1"
   "shnig shn.fhir.carry 1.0.0"
+  "validationsupport shn.fhir.validation-support 1.2.0"
 )
 
 KITASSETS_DATA_IGS_22=(

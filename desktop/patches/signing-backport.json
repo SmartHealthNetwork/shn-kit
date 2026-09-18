@@ -1,0 +1,36 @@
+[
+  {
+    "module": "app-builder-lib",
+    "version": "26.15.3",
+    "file": "out/codeSign/macCodeSign.js",
+    "replacements": [
+      {
+        "before": "return await importCerts(keychainFile, certPaths, cscPasswords);",
+        "after": "return await importCerts(keychainFile, certPaths, cscPasswords, keychainPassword);"
+      },
+      {
+        "before": "async function importCerts(keychainFile, paths, keyPasswords) {",
+        "after": "async function importCerts(keychainFile, paths, keyPasswords, keychainPassword) {"
+      },
+      {
+        "before": "[\"set-key-partition-list\", \"-S\", \"apple-tool:,apple:\", \"-s\", \"-k\", password, keychainFile]",
+        "after": "[\"set-key-partition-list\", \"-S\", \"apple-tool:,apple:\", \"-s\", \"-k\", keychainPassword, keychainFile]"
+      }
+    ],
+    "originalSha256": "9f7d789b326147b6da29e1218d6e3f76b0314c68cf5d0f1efa59338a3c86e71a",
+    "patchedSha256": "5b6551607c61c75cd1eadb2165b05513ff6d6b2965d129b5db9192b7e99e6fd1"
+  },
+  {
+    "module": "builder-util",
+    "version": "26.15.3",
+    "file": "out/util.js",
+    "replacements": [
+      {
+        "before": "function removePassword(input) {",
+        "after": "function removePassword(input) {\n    // Partition-list -k authenticates the keychain; import -k is a diagnostic path.\n    input = input.replace(/((?:^|[ \\t])set-key-partition-list(?=[ \\t])[^\\r\\n]*?[ \\t]-k[ \\t]+)(?:([\"'])(.*?)\\2|([^\\s]+))/g, (_match, prefix, quote, quotedVal, unquotedVal) => {\n        const value = quotedVal !== undefined ? quotedVal : unquotedVal;\n        return `${prefix}${quote || \"\"}${(0, builder_util_runtime_1.hashSensitiveValue)(value)}${quote || \"\"}`;\n    });"
+      }
+    ],
+    "originalSha256": "83ef1efb33f18337c52d70f5413182da064e7b2e5a3fe3f3a5dbb9b0e4018e76",
+    "patchedSha256": "153db315b8097313e8c790c3779f64adeb39c635806ea681ef1ece5af16b2b00"
+  }
+]

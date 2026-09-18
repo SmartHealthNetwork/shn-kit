@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/SmartHealthNetwork/shn-kit/event"
@@ -29,6 +30,8 @@ import (
 
 // reconnectDelay is how long Run waits between a dropped/ended connection
 // and the next reconnect attempt.
+var relayOrder atomic.Uint64
+
 const reconnectDelay = 500 * time.Millisecond
 
 // drainPoll is Drain's re-check cadence while waiting for the stream to
@@ -54,18 +57,32 @@ type Relay struct {
 	logf      func(string, ...any)
 	hc        *http.Client
 
-	mu      sync.Mutex
-	stamp   Stamp
-	lastSeq uint64
-	gen     uint64
+	mu          sync.Mutex
+	stamp       Stamp
+	lastSeq     uint64
+	gen         uint64
+	order       uint64
+	profile     GatewayProfile
+	incarnation string
+	connected   bool
+	prepared    bool
+	preparedGen uint64
+	windowOpen  bool
+	windowErr   error
+	uncertain   bool
+	coverageErr error
+
+	// drainTick, when set, replaces Drain's poll ticker (tests order the
+	// tick against the deadline deterministically). Nil uses drainPoll.
+	drainTick func() (<-chan time.Time, func())
 }
 
 // New constructs a Relay that streams eventsURL (a gateway's
-// {OBSERVER_ADDR}/events endpoint) and re-emits frames onto bus. healthURL is
-// the observer hub's GET /health — the relay drain barrier's counter,
-// consulted only by Drain.
+// {OBSERVER_ADDR}/events endpoint) and re-emits frames onto bus. healthURL identifies
+// the observer listener; Drain derives its sibling POST /barrier endpoint.
 func New(eventsURL, healthURL string, bus *event.Bus, logf func(string, ...any)) *Relay {
 	return &Relay{
+		order:     relayOrder.Add(1),
 		url:       eventsURL,
 		healthURL: healthURL,
 		bus:       bus,
@@ -121,60 +138,7 @@ func (r *Relay) LastSeq() uint64 {
 func (r *Relay) ResetCursor() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.lastSeq = 0
-	r.gen++
-}
-
-// Drain blocks until every observer event the gateway has emitted SO FAR has
-// been relayed onto the bus: it reads the hub's GET /health {"events":N}
-// once, then waits for LastSeq() >= N. Sound because each seam's
-// emission is sequenced before its triggering HTTP response completes, so a
-// caller that has seen its last response returns knows its events all have
-// seq <= N. ctx bounds the wait; the error names both counters for
-// diagnosability.
-//
-// Two assumptions this soundness rests on:
-//
-// (a) Delivery on the current connection is treated as in-order and
-// gap-checked — a hub-side drop is healed by the gap-triggered reconnect
-// (stream's connPrev check), and only an undetectable drop of the FINAL
-// frames of a connection (no later frame ever arrives to reveal the gap)
-// degrades Drain to its honest timeout rather than a false "caught up".
-//
-// (b) The ingress happens-before holds because net/http finalizes responses
-// after the outer ServeHTTP handler returns — with no handler-set
-// Content-Length, bodies are chunked and the TERMINATING chunk only lands
-// after ServeHTTP returns, so the ordering (emit-before-response-completes)
-// holds even when large bodies flush early. It would break only if an
-// engine ingress handler ever set Content-Length and flushed before
-// returning (none does today; grep `WriteHeader\|Content-Length` under
-// gateway/engine before trusting a new handler on this assumption).
-func (r *Relay) Drain(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.healthURL, nil)
-	if err != nil {
-		return fmt.Errorf("kit/relay: drain: build health request %s: %w", r.healthURL, err)
-	}
-	resp, err := r.hc.Do(req)
-	if err != nil {
-		return fmt.Errorf("kit/relay: drain: fetch %s: %w", r.healthURL, err)
-	}
-	defer resp.Body.Close()
-	var h struct {
-		Events uint64 `json:"events"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
-		return fmt.Errorf("kit/relay: drain: decode %s: %w", r.healthURL, err)
-	}
-	for {
-		if r.LastSeq() >= h.Events {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("kit/relay: drain: relayed seq %d has not reached the gateway's emitted count %d: %w", r.LastSeq(), h.Events, ctx.Err())
-		case <-time.After(drainPoll):
-		}
-	}
+	r.resetLocked()
 }
 
 // Run is a blocking reconnect loop: stream one connection to the observer
@@ -227,6 +191,20 @@ func (r *Relay) stream(ctx context.Context) error {
 		return fmt.Errorf("kit/relay: GET %s: status %d", r.url, resp.StatusCode)
 	}
 
+	incarnation := resp.Header.Get("X-SHN-Observer-Incarnation")
+	r.mu.Lock()
+	if connGen == r.gen {
+		if r.connected && r.incarnation != incarnation {
+			r.resetLocked()
+			// Reconnect without the predecessor's resume cursor before accepting bytes.
+			r.mu.Unlock()
+			return fmt.Errorf("kit/relay: observer incarnation changed")
+		}
+		r.incarnation = incarnation
+		r.connected = true
+	}
+	r.mu.Unlock()
+
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // observer payloads are full FHIR bundles
 
@@ -234,9 +212,8 @@ func (r *Relay) stream(ctx context.Context) error {
 	var parsedID uint64
 	// connPrev is THIS CONNECTION's last emitted seq (0 = none yet). It is
 	// deliberately connection-local, not r.lastSeq: the first frame of a
-	// fresh connection legitimately starts wherever Last-Event-ID / hub-ring
-	// eviction dictates, so connPrev==0 exempts it from
-	// the gap check below.
+	// fresh connection may start after an eviction. Such bytes are retained,
+	// but a missing first range prevents a successful completion proof.
 	var connPrev uint64
 	for sc.Scan() {
 		line := sc.Text()
@@ -249,47 +226,30 @@ func (r *Relay) stream(ctx context.Context) error {
 			if data == "" {
 				continue
 			}
-			if id != "" {
-				// Unparseable ids keep the previous parsedID (our hub's ids
-				// are always its seqs; this is a defensive fallback only).
-				if v, perr := strconv.ParseUint(id, 10, 64); perr == nil {
-					parsedID = v
+			parsedID, err = strconv.ParseUint(id, 10, 64)
+			validID := err == nil && parsedID != 0
+			r.mu.Lock()
+			current := r.gen == connGen && r.incarnation == incarnation
+			if current && validID && connPrev != 0 && parsedID > connPrev+1 {
+				// Reconnect from the last contiguous publication to backfill.
+				r.mu.Unlock()
+				return fmt.Errorf("kit/relay: gap detected on %s: id %d after %d", r.url, parsedID, connPrev)
+			}
+			if current && (!validID || (connPrev == 0 && parsedID != lastSeq+1)) {
+				r.coverageErr = fmt.Errorf("kit/relay: missing replay coverage or invalid observer id %q after %d", id, lastSeq)
+				r.prepared = false
+				if r.windowOpen {
+					r.windowErr = r.coverageErr
 				}
 			}
-			if connPrev != 0 && parsedID > connPrev+1 {
-				// Gap on this connection: do NOT emit this
-				// frame. Drop the connection without advancing r.lastSeq past
-				// connPrev, so the reconnect's Last-Event-ID asks the hub's
-				// ring to back-fill everything from connPrev+1 forward.
-				return fmt.Errorf("kit/relay: gap detected on %s: connection delivered id %d after %d", r.url, parsedID, connPrev)
+			s := Stamp{}
+			if current {
+				s = r.stamp
 			}
-			r.mu.Lock()
-			s := r.stamp
-			r.mu.Unlock()
-			// Observer carries the raw data payload byte-for-byte — never
-			// decode-and-re-marshal (package doc: byte-faithful relay).
-			r.bus.Emit(event.Event{
-				Type:     event.TypeObserver,
-				RunID:    s.RunID,
-				Lane:     s.Lane,
-				UC:       s.UC,
-				Observer: json.RawMessage(data),
-			})
-			// Set under mu AFTER bus.Emit, exactly as above: this ordering is
-			// what makes LastSeq() >= N imply "already on the bus" (Drain's
-			// barrier depends on it — keep this comment with any future
-			// refactor of this line).
-			//
-			// Fenced by gen: the cursor
-			// belongs to the current epoch; a stale connection may still
-			// emit, but must never advance (or regress) the new epoch's
-			// accounting. connGen was captured at connection start under
-			// this same mu; if ResetCursor has since bumped r.gen, this
-			// connection is talking about a dead epoch and the write is
-			// skipped — the dead child's socket EOFs on its own, so there's
-			// no need to also abort the connection here.
-			r.mu.Lock()
-			if r.gen == connGen {
+			// Raw bytes are never decoded/re-marshaled by the relay.
+			// Publication and cursor advancement share the lifecycle mutex.
+			r.bus.Emit(event.Event{Type: event.TypeObserver, RunID: s.RunID, Lane: s.Lane, UC: s.UC, Observer: json.RawMessage(data)})
+			if current && validID {
 				r.lastSeq = parsedID
 			}
 			r.mu.Unlock()

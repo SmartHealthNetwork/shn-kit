@@ -492,15 +492,14 @@ export default function App() {
     }
   };
 
-  // In-flight reconciliation (SSE is lossy): a run is genuinely in flight
-  // only while events.activeRunId is set AND results has no terminal entry
-  // for that runId yet — a dropped terminal SSE frame must not disable the
-  // Run buttons forever. The reconciled activeRunId (rather than the raw
-  // SSE signal) is what's handed to UCCards, so its own in-flight fallback
-  // can't get stuck either.
+  // Outcome events finish the inspector's story before history capture
+  // releases admission. Only the matching finalized result clears this
+  // pending start, even if its terminal frame is dropped or the ring evicts
+  // its events. A replay of an already finalized run cannot re-block it.
+  const pendingStarted = events.latestStarted;
   const inFlight =
-    events.activeRunId !== undefined && !results.some((r) => r.runId === events.activeRunId);
-  const reconciledEvents = { ...events, activeRunId: inFlight ? events.activeRunId : undefined };
+    pendingStarted !== undefined && !results.some((r) => r.runId === pendingStarted.runId);
+  const reconciledEvents = { ...events, activeRunId: inFlight ? pendingStarted?.runId : undefined };
 
   const latestByRow = (queryLane: Lane, uc: string, branch: string): RunResult | undefined => {
     let found: RunResult | undefined;
@@ -510,14 +509,7 @@ export default function App() {
     return found;
   };
 
-  // A watch session is a run on the bus shaped exactly like any other
-  // (uc "external") — this reads the SAME raw activeRunId's run.started
-  // frame `inFlight` above already keys off, so the two never disagree
-  // about which run (if any) currently holds the lock.
-  const activeRunStarted = events.all.find(
-    (e) => e.type === 'run.started' && e.runId === events.activeRunId,
-  );
-  const watching = activeRunStarted?.uc === 'external';
+  const watching = inFlight && pendingStarted?.uc === 'external';
 
   const disabledReason = computeDisabledReason(status, runsLive, inFlight, watching);
 
@@ -841,6 +833,7 @@ export default function App() {
               <SystemsPage
                 boot={boot}
                 status={status}
+                admissionPending={inFlight}
                 sseState={events.sseState}
                 onResetComplete={() => setResetPending(true)}
                 onVerified={handleVerified}

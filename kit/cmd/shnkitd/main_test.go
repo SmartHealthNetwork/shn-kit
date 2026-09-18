@@ -10,8 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -183,14 +184,14 @@ func demoFixture(t *testing.T, rec *demoRestartRecorder, base []string, rly *rel
 	if base != nil {
 		gwEnvPtr.Store(&base)
 	}
-	return newBridgingDemo(rec.restart, bus, &rlyPtr, &gwEnvPtr), bus
+	return newBridgingDemo(rec.restart, bus, &rlyPtr, &gwEnvPtr, "/missing-test-child"), bus
 }
 
 // TestNewBridgingDemo_EnvAndHook pins the toggle's whole contract in one
 // pass: enabling appends exactly the FIXED "2.0" knob (no picker) plus the
 // edge-capture flag to a CLONE of the baseline, disabling restarts with the
 // bare baseline (neither knob present), the gateway child is the target, the
-// relay's ResetCursor is what rides the preSpawn hook, and each successful
+// relay's identity and cursor refresh ride the preSpawn hook, and each successful
 // toggle emits its child-typed bus event.
 func TestNewBridgingDemo_EnvAndHook(t *testing.T) {
 	// SPARE CAPACITY IS LOAD-BEARING (verified by mutation): an
@@ -225,13 +226,19 @@ func TestNewBridgingDemo_EnvAndHook(t *testing.T) {
 		t.Fatalf("the baseline itself was mutated: %v", base)
 	}
 
-	// preSpawn IS relay.ResetCursor — the reset must ride the hook, never a
+	// The source reset must ride the preSpawn hook, never a
 	// call after the restart returns (the stale-gen wedge).
 	if rec.preSpawn[0] == nil {
 		t.Fatal("preSpawn was nil with a relay published — the cursor reset would never happen")
 	}
-	if got, want := reflect.ValueOf(rec.preSpawn[0]).Pointer(), reflect.ValueOf(rly.ResetCursor).Pointer(); got != want {
-		t.Fatalf("preSpawn is not relay.ResetCursor (got %v, want %v)", got, want)
+	// ResetSource invalidates an installed prior stamp only inside the hook.
+	rly.SetStamp(relay.Stamp{RunID: "prior"})
+	rly.Begin(relay.Stamp{}, func(error) {})
+	rec.preSpawn[0]()
+	var boundaryErr error
+	rly.End(false, func(err error) { boundaryErr = err })
+	if boundaryErr == nil {
+		t.Fatal("preSpawn did not invalidate the old source window")
 	}
 	if rec.hookRan != 1 {
 		t.Fatalf("hook ran %d times, want 1", rec.hookRan)
@@ -431,5 +438,54 @@ func TestGatewayChildMatchesBuildStack(t *testing.T) {
 	}
 	if stack.Children[0].Name != gatewayChild {
 		t.Fatalf("BuildStack's gateway child is %q, but main mirrors it as %q", stack.Children[0].Name, gatewayChild)
+	}
+}
+
+// Each respawn, including rollback, must discard its predecessor's trusted
+// executable profile before the replacement may start.
+func TestBridgingRespawnRefreshesChangedExecutableOnRevert(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/barrier" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, `{"events":0}`)
+	}))
+	defer srv.Close()
+	bus := event.NewBus(time.Now)
+	rly := relay.New(srv.URL+"/events", srv.URL+"/health", bus, t.Logf)
+	var ptr atomic.Pointer[relay.Relay]
+	ptr.Store(rly)
+	base := []string{"ROLE=provider"}
+	var envPtr atomic.Pointer[[]string]
+	envPtr.Store(&base)
+	var phases []string
+	calls := 0
+	restart := func(_ context.Context, _ string, _ []string, preSpawn func()) error {
+		calls++
+		rly.SetGatewayProfile(relay.GatewayLegacySync0431)
+		phases = append(phases, "stopped")
+		if preSpawn == nil {
+			t.Fatal("missing before-spawn hook")
+		}
+		preSpawn()
+		phases = append(phases, "identity-and-cursor")
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		if err := rly.Drain(ctx); err == nil || !strings.Contains(err.Error(), "status 404") {
+			t.Fatalf("changed executable retained predecessor profile: %v", err)
+		}
+		phases = append(phases, "spawn")
+		if calls == 1 {
+			return errors.New("replacement readiness failed")
+		}
+		return nil
+	}
+	toggle := newBridgingDemo(restart, bus, &ptr, &envPtr, filepath.Join(t.TempDir(), "changed-or-missing-gateway"))
+	if err := toggle(context.Background(), true); err == nil {
+		t.Fatal("expected failed primary respawn")
+	}
+	if got := strings.Join(phases, ","); got != "stopped,identity-and-cursor,spawn,stopped,identity-and-cursor,spawn" {
+		t.Fatal(got)
 	}
 }

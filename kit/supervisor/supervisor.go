@@ -34,6 +34,19 @@ type ChildSpec struct {
 	ReadyURLs    []string      // ALL must answer 2xx before the child counts as ready
 	ReadyTimeout time.Duration // spawn→ready deadline; exceeded ⇒ kill + error
 	RestartMax   int           // bounded restarts after unexpected exit
+
+	// Ready, when non-nil, is the second half of readiness: it runs only
+	// after every ReadyURL has answered 2xx, and the child counts as ready
+	// only once it returns nil. It runs once per spawned process — the
+	// first Start, every crash bounce and every deliberate Restart re-run
+	// it against the new process — inside the same ReadyTimeout budget as
+	// the URL probe: ctx is cancelled at that deadline (or when the
+	// caller's ctx ends), and a non-nil return fails readiness with that
+	// error as the child's detail, killing the process exactly as a URL
+	// probe timeout does. progress publishes a short human line into the
+	// child's Status detail for the rest of the startup window (cleared on
+	// ready); it is never a Notice.
+	Ready func(ctx context.Context, progress func(string)) error
 }
 
 // Notice.State / ChildStatus.State values. Every child whose spawn was at
@@ -187,7 +200,7 @@ func (s *Supervisor) spawnAndWatch(ctx context.Context, c *child, gen int) error
 		return err
 	}
 
-	if err := s.waitReady(ctx, c); err != nil {
+	if err := s.waitReady(ctx, c, gen); err != nil {
 		s.killProcess(cmd)
 		s.mu.Lock()
 		stale := c.generation != gen
@@ -299,13 +312,19 @@ func (s *Supervisor) spawn(c *child) (*exec.Cmd, chan struct{}, error) {
 
 // waitReady polls spec.ReadyURLs every 100ms (1s per-request timeout via
 // s.hc) until all answer 2xx in a single pass, spec.ReadyTimeout elapses,
-// or ctx is done.
-func (s *Supervisor) waitReady(ctx context.Context, c *child) error {
+// or ctx is done — then, when spec.Ready is set, runs it under what is left
+// of that same deadline (see ChildSpec.Ready). gen fences the progress
+// callback: a hook still running for a superseded generation must not write
+// its detail over the fresh generation's.
+func (s *Supervisor) waitReady(ctx context.Context, c *child, gen int) error {
 	deadline := time.Now().Add(c.spec.ReadyTimeout)
+	s.mu.Lock()
+	ready := c.spec.Ready
+	s.mu.Unlock()
 	for {
-		failing, ready := notReadyURL(s.hc, c.spec.ReadyURLs)
-		if ready {
-			return nil
+		failing, ok := notReadyURL(s.hc, c.spec.ReadyURLs)
+		if ok {
+			break
 		}
 		if !time.Now().Before(deadline) {
 			return fmt.Errorf("supervisor: %s not ready within %s (%s)",
@@ -317,6 +336,25 @@ func (s *Supervisor) waitReady(ctx context.Context, c *child) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+	if ready == nil {
+		return nil
+	}
+	hookCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	// The crash bounce arrives here in StateRestarting (monitor sets it before
+	// the backoff and spawn never resets it), so both pre-ready states show
+	// the hook's progress; a terminal or ready state never does.
+	progress := func(detail string) {
+		s.mu.Lock()
+		if c.generation == gen && (c.state == StateStarting || c.state == StateRestarting) {
+			c.detail = detail
+		}
+		s.mu.Unlock()
+	}
+	if err := ready(hookCtx, progress); err != nil {
+		return fmt.Errorf("supervisor: %s not ready: %w", c.spec.Name, err)
+	}
+	return nil
 }
 
 // notReadyURL probes urls in order, returning the first that does not

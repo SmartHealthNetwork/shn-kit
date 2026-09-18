@@ -128,6 +128,7 @@ func TestRelay_RelaysAndStamps(t *testing.T) {
 	busSrv := httptest.NewServer(bus.Handler())
 
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 	r.SetStamp(Stamp{RunID: "r1", Lane: "conformant", UC: "UC-02"})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -167,6 +168,7 @@ func TestRelay_UnstampedPassthrough(t *testing.T) {
 	busSrv := httptest.NewServer(bus.Handler())
 
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
@@ -227,6 +229,7 @@ func TestRelay_ReconnectsWithLastEventID(t *testing.T) {
 	busSrv := httptest.NewServer(bus.Handler())
 
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
@@ -311,6 +314,7 @@ func TestRelay_DrainFastPath(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -360,6 +364,7 @@ func TestRelay_DrainBlocksUntilTailFrameLands(t *testing.T) {
 	defer busSrv.Close()
 
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go r.Run(ctx)
@@ -425,6 +430,7 @@ func TestRelay_DrainTimeout(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go r.Run(ctx)
@@ -460,6 +466,7 @@ func TestRelay_DrainHealthFetchFailure(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	r := New("http://127.0.0.1:1/events", closedURL, bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 
 	err = r.Drain(context.Background())
 	if err == nil {
@@ -485,6 +492,7 @@ func TestRelay_DrainHealthDecodeFailure(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	r := New("http://127.0.0.1:1/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 
 	err := r.Drain(context.Background())
 	if err == nil {
@@ -569,6 +577,7 @@ func TestRelay_ResetCursorFreshEpoch(t *testing.T) {
 
 	bus := event.NewBus(fixedClock)
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go r.Run(ctx)
@@ -692,12 +701,14 @@ func TestRelay_StaleConnectionEmitsWithoutAdvancingCursor(t *testing.T) {
 	defer busSrv.Close()
 
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go r.Run(ctx)
 
 	waitForLastSeq(t, r, 3)
 
+	r.SetStamp(Stamp{RunID: "old"})
 	r.ResetCursor()
 	if got := r.LastSeq(); got != 0 {
 		t.Fatalf("LastSeq() immediately after ResetCursor = %d, want 0", got)
@@ -717,6 +728,9 @@ func TestRelay_StaleConnectionEmitsWithoutAdvancingCursor(t *testing.T) {
 	events := readSSE(t, busSrv.URL+"/events", 5)
 	wantSeqs := []string{`"seq":3`, `"seq":4`, `"seq":5`, `"seq":1,"epoch":2`, `"seq":2,"epoch":2`}
 	for i, want := range wantSeqs {
+		if i > 0 && events[i].RunID != "" {
+			t.Errorf("stale frame stamped after reset: %+v", events[i])
+		}
 		if !strings.Contains(string(events[i].Observer), want) {
 			t.Errorf("event %d Observer = %s, want to contain %s", i, events[i].Observer, want)
 		}
@@ -771,6 +785,7 @@ func TestRelay_GapDetectionReconnects(t *testing.T) {
 	defer busSrv.Close()
 
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go r.Run(ctx)
@@ -823,6 +838,7 @@ func TestRelay_FirstFrameGapExempt(t *testing.T) {
 	defer busSrv.Close()
 
 	r := New(srv.URL+"/events", srv.URL+"/health", bus, testLogf(t))
+	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go r.Run(ctx)
