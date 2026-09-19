@@ -27,6 +27,7 @@ import (
 
 	"github.com/SmartHealthNetwork/shn-kit/bootstrap"
 	"github.com/SmartHealthNetwork/shn-kit/byo"
+	"github.com/SmartHealthNetwork/shn-kit/conformance"
 	"github.com/SmartHealthNetwork/shn-kit/event"
 	"github.com/SmartHealthNetwork/shn-kit/runhistory"
 	"github.com/SmartHealthNetwork/shn-kit/runner"
@@ -93,6 +94,26 @@ type Config struct {
 	// (kitd.Stack.GatewayEnv), which must never come within reach of a
 	// handler — the closure keeps it entirely inside main.
 	BridgingDemo func(ctx context.Context, enabled bool) error
+
+	// ConformanceLevel is the seam POST /api/conformance-level dispatches an
+	// operator's live enforcement-level change through: main wires a closure
+	// that restarts the gateway child with the requested
+	// CONFORMANCE_ENFORCEMENT swapped into its env (accepting exactly "",
+	// "strict", "none" — "" clears back to the published default), the same
+	// PURPOSE-BUILT env-only gateway restart BridgingDemo above uses, and
+	// persists the choice so it survives a full Kit relaunch. nil ⇒ the
+	// whole feature is absent: the route 404s and GET /api/status omits its
+	// "conformanceLevel" key entirely — the same nil-Config-field posture as
+	// BridgingDemo/Boot/History/BYO. This is the ONLY route a packaged,
+	// installed Kit can use to change the level: kit.config.json lives
+	// inside the signed, read-only app bundle once packaged, so the
+	// config-file/CLI-flag path (main's --conformance-enforcement) is
+	// reachable only from a dev checkout or a shell-launched Kit.
+	//
+	// Kept as a plain closure, same reasoning as BridgingDemo: the gateway
+	// env it swaps carries secrets-adjacent paths and must never come
+	// within reach of a handler.
+	ConformanceLevel func(ctx context.Context, level string) error
 
 	// TokenStorage optionally reports which bootstrap.TokenStore backend is
 	// actually in effect for this Kit: "keychain", or
@@ -205,6 +226,16 @@ type Daemon struct {
 	// updateSet is for update.Info. Whether the block is served at all keys
 	// off Config.BridgingDemo != nil instead.
 	bridgingDemo bool
+
+	// conformanceLevel is the last SUCCESSFULLY applied enforcement level (a
+	// failed toggle leaves it untouched — status must never claim a level
+	// the gateway isn't running). "" is a genuine value ("the published
+	// default is in effect"), not "unset" — main seeds it from the boot-time
+	// resolved level (CLI flag / persisted conformance.json) before the
+	// first toggle, the same daemon-first seeding StackInfo/BYO get.
+	// Whether the "conformanceLevel" key is served at all keys off
+	// Config.ConformanceLevel != nil instead, mirroring bridgingDemo.
+	conformanceLevel string
 
 	// update/updateSet back GET /api/status's "update" field.
 	// Unlike StackInfo/PatientAppURL, update.Info's own zero
@@ -388,6 +419,29 @@ func (d *Daemon) getBridging() bool {
 	return d.bridgingDemo
 }
 
+// SetConformanceLevel records the enforcement level now in effect, so it
+// appears in the next GET /api/status. Called once at boot (main's boot
+// goroutine, seeding the CLI-flag/persisted-file-resolved initial value —
+// the SAME daemon-first pattern SetStackInfo/SetBYO use) and again by the
+// toggle handler, but ONLY after Config.ConformanceLevel has returned
+// successfully (an errored toggle leaves the last known-good level
+// standing).
+func (d *Daemon) SetConformanceLevel(level string) {
+	d.mu.Lock()
+	d.conformanceLevel = level
+	d.mu.Unlock()
+}
+
+// getConformanceLevel returns the recorded level ("" before the first
+// SetConformanceLevel call, or whenever the published default is in
+// effect — the two are indistinguishable by design, since "" IS the
+// published-default value).
+func (d *Daemon) getConformanceLevel() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.conformanceLevel
+}
+
 // SetUpdate publishes the launch-time update-check result
 // so it appears in the next GET /api/status as "update". Safe
 // to call any time after Serve begins running, mirroring SetStackInfo/
@@ -512,6 +566,7 @@ func (d *Daemon) handler() http.Handler {
 	gated.HandleFunc("GET /api/byo/seed-bundle/{lane}", d.handleBYOSeedBundleGet)
 	gated.HandleFunc("POST /api/children/{name}/restart", d.handleChildRestart)
 	gated.HandleFunc("POST /api/bridging/demo", d.handleBridgingDemo)
+	gated.HandleFunc("POST /api/conformance-level", d.handleConformanceLevelPost)
 	gated.HandleFunc("POST /api/bridging/exhibit", d.handleBridgingExhibit)
 	gated.HandleFunc("GET /api/bridging/capture/{correlationId}", d.handleBridgingCapture)
 	gated.HandleFunc("GET /api/about", d.handleAbout)
@@ -614,6 +669,15 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		}
 		resp["bridging"] = bs
 	}
+	// "conformanceLevel" is served iff the level-control seam is configured
+	// at all — see Config.ConformanceLevel: absent key = this Kit build has
+	// no live level control (a partner running an older Kit, or a build
+	// where main wired nothing), present with "" = it has one and the
+	// published default is currently in effect (never conflated with
+	// "absent"/"not looking").
+	if d.cfg.ConformanceLevel != nil {
+		resp["conformanceLevel"] = d.getConformanceLevel()
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -712,6 +776,77 @@ func (d *Daemon) handleBridgingDemo(w http.ResponseWriter, r *http.Request) {
 	}
 	d.SetBridgingDemo(req.Enabled)
 	writeJSON(w, http.StatusOK, bridgingStatus{DemoMode: req.Enabled})
+}
+
+// conformanceLevelRequest is POST /api/conformance-level's body:
+// {"level":"strict"|"none"|""}. "" clears back to the published default —
+// always sent explicitly, never inferred from an absent key (mirrors
+// demoRequest's own "missing means the safe/off direction" posture, except
+// here the JSON zero value for a string IS already "" — decode leaves a
+// missing key and an explicit "" indistinguishable, which is the honest
+// behavior: both mean "use the published default").
+type conformanceLevelRequest struct {
+	Level string `json:"level"`
+}
+
+// conformanceLevelStatus is POST /api/conformance-level's 200 body, the
+// same shape GET /api/status's "conformanceLevel" key carries.
+type conformanceLevelStatus struct {
+	Level string `json:"level"`
+}
+
+// handleConformanceLevelPost serves POST /api/conformance-level: changes
+// the gateway child's live CONFORMANCE_ENFORCEMENT by restarting it with
+// the requested level — the packaged-app-reachable equivalent of
+// --conformance-enforcement/kit.config.json's conformanceEnforcement (see
+// Config.ConformanceLevel's own doc for why this route exists at all).
+// Status/error-code contract mirrors handleBridgingDemo exactly:
+//
+//   - 404 when Config.ConformanceLevel is nil (feature absent).
+//   - 503 before SetRunner has ever been called (no gateway child to
+//     restart yet).
+//   - 400 on an undecodable body, OR a level that isn't "", "strict", or
+//     "none" — checked here too (not just inside the closure) so a typo
+//     never restarts a working gateway child only to have it refused.
+//   - 409 while a run or watch is in flight — restarting the gateway under
+//     a live run would tear out the transport it is using.
+//   - 500 when the change itself fails (the restart never came back
+//     ready). The recorded level is NOT advanced in that case — see
+//     Config.ConformanceLevel's toggle-reverts contract.
+//   - 200 {"level": <level>} on success.
+func (d *Daemon) handleConformanceLevelPost(w http.ResponseWriter, r *http.Request) {
+	if d.cfg.ConformanceLevel == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "conformance level control not configured"})
+		return
+	}
+	rn := d.getRunner()
+	if rn == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "stack not started"})
+		return
+	}
+	var req conformanceLevelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("decode request body: %v", err)})
+		return
+	}
+	if err := conformance.ValidateLevel(req.Level); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if rn.InFlight() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "a run or watch is in flight"})
+		return
+	}
+	// d.baseCtx, NEVER r.Context() — same reasoning as handleBridgingDemo:
+	// the change drives a full stop→respawn of the gateway child, which
+	// outlives this request's own deadline the moment a client disconnects
+	// mid-restart.
+	if err := d.cfg.ConformanceLevel(d.baseCtx, req.Level); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	d.SetConformanceLevel(req.Level)
+	writeJSON(w, http.StatusOK, conformanceLevelStatus{Level: req.Level})
 }
 
 // runRequest is POST /api/runs's body: {"lane","uc","branch","member"}.

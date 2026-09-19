@@ -45,7 +45,7 @@ var ehrRows = map[string]rowFunc{
 // response into out (out may be nil to discard the body). A non-200 status is
 // an error carrying an excerpt of the body.
 func ehrScenario(rn *Runner, path string, body any, out any) error {
-	return postScenario(rn.cfg.ProviderDataDriver, path, body, out)
+	return postScenario(rn, rn.cfg.ProviderDataDriver, path, body, out)
 }
 
 // ehrScenarioMain POSTs to the MAIN child's /scenario/* base (Config.Driver) —
@@ -53,12 +53,18 @@ func ehrScenario(rn *Runner, path string, body any, out any) error {
 // lane's eligibility row (rows_conformant.go) and the bridge-refuse bridging
 // demo below.
 func ehrScenarioMain(rn *Runner, path string, body any, out any) error {
-	return postScenario(rn.cfg.Driver, path, body, out)
+	return postScenario(rn, rn.cfg.Driver, path, body, out)
 }
 
 // postScenario is ehrScenario/ehrScenarioMain's shared body — the child to
 // talk to is the only thing that differs.
-func postScenario(drv *scenariodriver.Driver, path string, body any, out any) error {
+//
+// It also reads the PAYER'S DETERMINATION out of the same answer, through the
+// one decode below, and reports it onto the run's Result. Reading it here rather
+// than in each row is deliberate: a row reports what its gateway actually
+// answered, never what the row expected, and there is one reading of that for
+// every scenario rather than one per row.
+func postScenario(rn *Runner, drv *scenariodriver.Driver, path string, body any, out any) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("runner: marshal %s request: %w", path, err)
@@ -70,12 +76,49 @@ func postScenario(drv *scenariodriver.Driver, path string, body any, out any) er
 	if res.Status != 200 {
 		return fmt.Errorf("runner: POST %s: status %d: %s", path, res.Status, excerpt(res.Body))
 	}
+	rn.reportDecision(scenarioDecisionOf(res.Body))
 	if out != nil {
 		if err := json.Unmarshal(res.Body, out); err != nil {
 			return fmt.Errorf("runner: decode %s response: %w", path, err)
 		}
 	}
 	return nil
+}
+
+// scenarioDecision is the payer-determination half of every /scenario/*
+// answer: which of the three the payer gave, its own words for a denial, and —
+// when it has not decided yet — the capability the decision can be asked for
+// later with. A local decode struct, not a cross-import (the kit's publish
+// boundary forbids importing the private substrate module).
+//
+// ContinuationDurable is a pointer for the same reason it is one on the wire:
+// absent means there is no continuation to be durable about, and
+// present-and-false is the gateway disclosing that what it minted does not
+// survive a restart.
+type scenarioDecision struct {
+	Decision            string `json:"decision"`
+	Rationale           string `json:"rationale"`
+	Continuation        string `json:"continuation"`
+	ContinuationDurable *bool  `json:"continuationDurable"`
+}
+
+// scenarioDecisionOf reads the determination a scenario answer states. An answer
+// that states none (an eligibility or coverage-requirements scenario) yields the
+// zero value, which reports nothing; a body that will not decode at all is left
+// to the caller's own decode to report.
+func scenarioDecisionOf(body []byte) PayerDecision {
+	var d scenarioDecision
+	if json.Unmarshal(body, &d) != nil {
+		return PayerDecision{}
+	}
+	out := PayerDecision{Decision: d.Decision, Rationale: d.Rationale, Continuation: d.Continuation}
+	// Durability is a fact ABOUT a continuation: with nothing continued there is
+	// nothing to be durable, and stating "false" there would answer a question
+	// nobody asked.
+	if out.Continuation != "" {
+		out.ContinuationDurable = d.ContinuationDurable
+	}
+	return out
 }
 
 // pdVerdict is the CRD→DTR→PAS response shape the Plain-EHR rows read.

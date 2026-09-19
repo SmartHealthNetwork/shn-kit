@@ -125,7 +125,8 @@ resources/
 ```
 
 **Packaged `kit.config.json` carries only the non-path knobs** — `discoveryUrl`,
-`accountsUrl` (or `secretsDir`), `releasesUrl`, `additionalValidatorLines`, and
+`accountsUrl` (or `secretsDir`), `releasesUrl`, `additionalValidatorLines`,
+`conformanceEnforcement`, and
 `javaAssets` as a *relative*
 marker rather than an absolute path. Every packaged **path** (`gatewayBin`,
 `kitdBin`, `uiDir`, `manifest`, and the resolved `javaAssets` directory) is instead
@@ -153,6 +154,15 @@ prewarmed H2 exists for any line but 2.0 — so `shnkitd` starts them in the
 background *after* the core four children are ready and runs have gone live
 (`kitd.Stack.DeferredChildren`). Launch time is unchanged; each lane's first
 index takes 10-15 minutes and then persists in the state dir forever.
+
+`conformanceEnforcement` seeds `--conformance-enforcement` at boot, but a
+packaged, INSTALLED Kit cannot edit `kit.config.json` (it sits inside the
+signed, read-only app bundle) — the Status page's "Conformance enforcement"
+control (`kit/README.md`'s "Conformance enforcement level" section) is the
+one path an installed app's operator actually has: it changes the level live,
+via a gateway-child restart, and persists the choice to
+`{state-dir}/conformance.json` so it survives the next launch too, without
+touching this file.
 
 **Installer shapes:** mac ships one **universal `.dmg`** (Go binaries
 lipo-merged; both per-arch JREs ride along since the JRE itself cannot be

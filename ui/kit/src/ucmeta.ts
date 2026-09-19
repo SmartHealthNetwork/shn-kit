@@ -105,13 +105,13 @@ export const UC_METAS: UCMeta[] = [
     title: 'Pend, then approve',
     description: {
       overview:
-        "The first request is held for missing evidence — an operative report. Once the report is attached and resubmitted, it's approved.",
+        'The first request is held for missing evidence — an operative report. The report is attached and the request resubmitted; the insurer approves it once it has decided.',
       technical:
-        'The first PAS submit pends on missing evidence (an operative report); an amended re-submit carrying the operative report is approved.',
+        'The first PAS submit pends on missing evidence (an operative report); an amended re-submit carries the operative report, and the payer states its determination on its own schedule.',
     },
     provenance: {
       conformant:
-        'The reference payer holds the first request; the amended re-submit is re-evaluated and resolved.',
+        'The reference payer holds the first request and answers the amended re-submit by holding it again; it decides on its own schedule, so this run ends with the request still held.',
       ehr: 'A home-health therapy order read from the chart; the adaptive questionnaire is driven group by group — the diagnosis, functional limitations and treatment goals all trace to the chart — and approved in one submission.',
     },
   },
@@ -141,9 +141,9 @@ export const UC_METAS: UCMeta[] = [
     title: 'Clinician attestation',
     description: {
       overview:
-        "A request is held for an answer only a clinician can attest to. Once the clinician's attestation is added, it's approved.",
+        "A request is held for an answer only a clinician can attest to. The clinician's attestation is added and the request resubmitted; the insurer approves it once it has decided.",
       technical:
-        "A pended item that only a clinician's attested answer can satisfy; the attested amended re-submit is approved.",
+        "A pended item that only a clinician's attested answer can satisfy; the attested amended re-submit carries it, and the payer states its determination on its own schedule.",
     },
     provenance: {
       conformant:

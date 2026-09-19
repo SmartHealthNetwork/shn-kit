@@ -251,6 +251,13 @@ const NARRATION: Record<string, NarrationEntry> = {
     done: 'The Smart Gateway submitted the amended prior-authorization request through the Hub; the payer’s updated decision came back in the sealed response.',
     failed: 'The Smart Gateway’s amended prior-authorization submission to the hosted payer through the Hub did not complete.',
   },
+  // not fixture-verified: no captured run exercises the inquiry leg.
+  'pas-inquire': {
+    request:
+      'The Smart Gateway asked the hosted payer, through the Hub, for the decision on a prior authorization the payer had pended.',
+    done: 'The Smart Gateway’s inquiry reached the hosted payer through the Hub; the payer’s answer came back in the sealed response.',
+    failed: 'The Smart Gateway’s prior-authorization inquiry to the hosted payer through the Hub did not complete.',
+  },
   // not fixture-verified: no captured run exercises a federated-query leg.
   'federated-query-submit': {
     request: 'The Smart Gateway asked the named holder, through the Hub, for the specific documents the request scoped.',
@@ -288,6 +295,12 @@ const NARRATION: Record<string, NarrationEntry> = {
     done: 'The Smart Gateway answered the inbound Claim/$submit request with the decision it received back from routing the request onward.',
     failed: 'The Smart Gateway’s inbound Claim/$submit request did not receive a successful response.',
   },
+  // not fixture-verified: no captured run exercises the inquiry ingress route.
+  'pas-inquire-ingress': {
+    request: 'A PAS Claim/$inquire request arrived at the Smart Gateway’s ingress; the request is being routed onward.',
+    done: 'The Smart Gateway answered the inbound Claim/$inquire request with the answer it received back from routing the request onward.',
+    failed: 'The Smart Gateway’s inbound Claim/$inquire request did not receive a successful response.',
+  },
   // Fixture-verified: both fixtures carry validate.result frames (detail
   // "valid"). This is always the Kit's stand-in validator's verdict in v1
   // (SHN_FAKE_VALIDATOR=1) — StepDetail carries that posture label; this
@@ -296,6 +309,24 @@ const NARRATION: Record<string, NarrationEntry> = {
     request: 'The Smart Gateway is validating this resource.',
     done: 'The Smart Gateway validated this resource against its FHIR profile.',
     failed: 'The Smart Gateway found this resource did not validate against its FHIR profile.',
+  },
+  // conformance.observed: a governed check ($validate or the CDS Hooks
+  // response rules) found a defect and recorded a finding — additive to
+  // validate.result, never a replacement for it. `decision` is "relayed"
+  // (the network's published default: every check still runs and every
+  // invalid verdict is still recorded, but nothing about a peer's own
+  // conformance defect is refused) or "refused" (this leg's check was
+  // governed strict, or fell in one of the two classes that refuse at every
+  // level — a bridged payload's target-line check, an unreadable CDS Hooks
+  // answer). This entry is never reached through narrationFor/narrationKey
+  // (which would key on frame.legType, e.g. "crd-order-select", and collide
+  // with that LEG's own exchange narration above) — makeConformanceStep
+  // fetches it directly, the same discipline as leg.refused/
+  // leg.transform-refused below.
+  'conformance.observed': {
+    request: 'The Smart Gateway is checking this message’s conformance.', // never reached — makeConformanceStep never leaves this step open; kept for shape parity.
+    done: 'The Smart Gateway found a conformance issue with this message and relayed it as sent, recording the finding.',
+    failed: 'The Smart Gateway found a conformance issue with this message and refused it.',
   },
   // leg.refused: version-matched routing found no shared contract line and
   // refused before anything was sent — a dedicated key (fetched directly by
@@ -394,7 +425,7 @@ function narrationFor(step: Step): string {
 // Step pairing
 // ---------------------------------------------------------------------------
 
-export type StepKind = 'ingress' | 'leg' | 'validate' | 'sor';
+export type StepKind = 'ingress' | 'leg' | 'validate' | 'sor' | 'conformance';
 export type StepStatus = 'open' | 'ok' | 'failed';
 
 export interface Step {
@@ -417,6 +448,15 @@ export interface Step {
   transform?: ObserverFrame; // joined leg.transformed frame (correlationId ONLY)
   downgrade?: string; // leg.downgrade Detail (stale-feed downgrade)
   refusal?: RouteFrame; // leg.refused's Route, or a transform-refusal leg.failed's Route
+  // conformance.observed fields (gateway/engine/finding.go's ConformanceFinding,
+  // parsed from the frame's Detail JSON string — metadata only, never a
+  // validator diagnostic). findingKind is the CheckKind the finding named
+  // ("fhir-ingress"/"fhir-egress"/"fhir-bridged"/"cds-envelope") — renamed
+  // from the finding's own `kind` field to avoid colliding with Step.kind.
+  findingKind?: string;
+  decision?: string; // "relayed" | "refused"
+  rule?: string;
+  path?: string;
 }
 
 export interface AuditAnchor {
@@ -535,6 +575,90 @@ function makeValidateStep(frame: ObserverFrame): Step {
   };
   step.narration = narrationFor(step);
   return step;
+}
+
+interface FindingDetail {
+  kind?: string;
+  decision?: string;
+  rule?: string;
+  path?: string;
+}
+
+// parseFindingDetail reads a conformance.observed frame's Detail — a JSON
+// string (gateway/engine/finding.go's ConformanceFinding, marshalled by
+// emitFinding). Metadata only: this reads exactly kind/decision/rule/path,
+// never `issues` (a redacted count/size/hash summary, not a validator
+// diagnostic — but still not something this inspector surfaces; see the
+// finding-context comment above). Shape-checked, never throws: a malformed
+// or absent Detail yields undefined fields rather than taking the story
+// down — the same never-throw posture as parseObserver/parseRoute/parseAudit.
+function parseFindingDetail(detail: string | undefined): FindingDetail | undefined {
+  if (detail === undefined) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(detail);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed)) return undefined;
+  return {
+    kind: asString(parsed.kind),
+    decision: asString(parsed.decision),
+    rule: asString(parsed.rule),
+    path: asString(parsed.path),
+  };
+}
+
+// conformanceUnknownDecisionNarration is the honest third branch: the parsed
+// decision is neither "relayed" nor "refused" (absent, unparseable Detail,
+// or some future decision string this UI doesn't recognize yet). The done/
+// failed branches below each assert a specific fact ("...relayed it as
+// sent..." / "...refused it.") — asserting either one here would be the
+// exact absence-reads-as-fact shape this branch keeps catching (the facts
+// pane three lines below already renders an honest '—' for the same
+// undefined `decision`; the narration must not contradict it by claiming a
+// decision was read when none was). Pinned exactly; do not paraphrase.
+export const conformanceUnknownDecisionNarration =
+  'The Smart Gateway recorded a conformance finding for this message; its decision could not be read.';
+
+// makeConformanceStep builds a conformance.observed frame's single-frame
+// step — the same shape as makeValidateStep/makeSorStep (one observer frame,
+// no pairing), additive beside a validate.result step for the same check.
+// Narration is fetched directly from NARRATION['conformance.observed']
+// (never through narrationFor/narrationKey — see that entry's own comment):
+// the frame's own legType is real here (unlike validate.result's, which
+// carries none) and routing through the generic key lookup would collide
+// with that legType's ordinary LEG exchange narration.
+function makeConformanceStep(frame: ObserverFrame): Step {
+  const finding = parseFindingDetail(frame.detail);
+  // The gateway's own Decision.String() is total over exactly
+  // {"relayed","refused"} (gateway/engine/conformance.go) — those are the
+  // only two values this reads FOR. Anything else (absent, malformed
+  // Detail, or a future decision string) is "unknown", never guessed:
+  // status still defaults to the non-blocking case (never assumed
+  // refused), but the narration says so honestly instead of asserting
+  // "relayed" as a fact it never actually observed.
+  const decisionKnown = finding?.decision === 'relayed' || finding?.decision === 'refused';
+  const status: StepStatus = finding?.decision === 'refused' ? 'failed' : 'ok';
+  const entry = NARRATION['conformance.observed'];
+  const narration = !decisionKnown
+    ? conformanceUnknownDecisionNarration
+    : status === 'ok'
+      ? entry.done
+      : entry.failed;
+  return {
+    id: String(frame.seq),
+    kind: 'conformance',
+    legType: frame.legType ?? 'unknown',
+    status,
+    request: frame,
+    correlationId: frame.correlationId,
+    findingKind: finding?.kind,
+    decision: finding?.decision,
+    rule: finding?.rule,
+    path: finding?.path,
+    narration,
+  };
 }
 
 function makeSorStep(frame: ObserverFrame): Step {
@@ -741,6 +865,10 @@ export function buildRunStory(runId: string, events: KitEvent[]): RunStory {
         steps.push(makeValidateStep(frame));
         break;
       }
+      case 'conformance.observed': {
+        steps.push(makeConformanceStep(frame));
+        break;
+      }
       case 'sor.read': {
         steps.push(makeSorStep(frame));
         break;
@@ -754,6 +882,36 @@ export function buildRunStory(runId: string, events: KitEvent[]): RunStory {
   }
 
   return { runId, steps, audit, auditNote, startedAt, terminal };
+}
+
+// conformanceTimelineNote is the timeline's own three-way empty-state
+// discipline, mirroring ui/cloud's ConformanceCard (the same review lesson,
+// applied here): an operator must never read an ABSENT conformance.observed
+// step as "this run was clean" — the choke point emits a finding only for an
+// invalid verdict, so silence is ambiguous between "genuinely nothing wrong"
+// and "nothing was examined yet" unless something else proves a check ran.
+// undefined means SAY NOTHING (the honest default) in every case where that
+// proof is missing:
+//   - the run has no terminal outcome yet — a still-running run is never
+//     "clean", it just hasn't finished being checked;
+//   - the run is terminal but produced no step that evidences a governed
+//     check having run at all (no validate/leg/ingress step) — the run may
+//     have failed before anything reached a check, and this function invents
+//     no claim about work that never happened.
+// Only once the run is terminal AND at least one such step exists does an
+// explicit "no findings" sentence become honest to say — and even then it
+// says only what zero findings in this run's own steps actually proves, not
+// "checked clean" (a governed check that never ran — e.g. an unavailable
+// validator — also produces zero findings; see finding.go's emitFinding,
+// called only on an invalid verdict).
+export function conformanceTimelineNote(story: RunStory): string | undefined {
+  if (story.terminal === undefined) return undefined;
+  if (story.steps.some((s) => s.kind === 'conformance')) return undefined;
+  const hasCheckEvidence = story.steps.some(
+    (s) => s.kind === 'validate' || s.kind === 'leg' || s.kind === 'ingress',
+  );
+  if (!hasCheckEvidence) return undefined;
+  return 'No conformance findings recorded in this run.';
 }
 
 // ---------------------------------------------------------------------------

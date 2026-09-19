@@ -46,6 +46,13 @@ export function buildArgs(cfg: KitConfig, stateDir: string): string[] {
   if (cfg.additionalValidatorLines) args.push('--additional-validator-lines', cfg.additionalValidatorLines);
   if (cfg.bridgeDemoHolder) args.push('--bridge-demo-holder', cfg.bridgeDemoHolder);
   if (cfg.bridgeDemoRefuseHolder) args.push('--bridge-demo-refuse-holder', cfg.bridgeDemoRefuseHolder);
+  // Operator control over the packaged gateway child's conformance
+  // enforcement level (KitConfig's own doc comment has the full rule).
+  // Omitted whenever unset, same as every optional row above — the ONE
+  // reason this stays honest as the published default moves is that no
+  // layer between here and the gateway's own env loader ever fills in a
+  // value the operator didn't choose.
+  if (cfg.conformanceEnforcement) args.push('--conformance-enforcement', cfg.conformanceEnforcement);
   args.push('--ui-dir', cfg.uiDir);
   args.push('--api-addr', cfg.apiAddr ?? '127.0.0.1:0');
   args.push('--state-dir', stateDir);

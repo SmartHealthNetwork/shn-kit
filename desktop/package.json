@@ -1,7 +1,7 @@
 {
   "name": "shn-kit-desktop",
   "private": true,
-  "version": "0.19.0",
+  "version": "0.20.0",
   "main": "dist/main.js",
   "scripts": {
     "postinstall": "node scripts/apply-signing-backport.cjs",

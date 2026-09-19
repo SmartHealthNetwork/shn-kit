@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -24,7 +25,7 @@ import (
 //
 //	E0250 hospital bed          covered, no prior authorization      (uc02)
 //	L8000 breast prosthesis     prior authorization, approved        (uc03, uc07)
-//	E0424 stationary oxygen     conditional; held, then resolved     (uc04, uc05, uc06)
+//	E0424 stationary oxygen     conditional; held, and held again    (uc04, uc05, uc06)
 //	J3490 unclassified drug     not covered; formally denied         (uc08)
 //
 // Every approval is fenced on the reference payer's own AUTH-NNNN authorization
@@ -188,6 +189,64 @@ func buildOrderServiceRequest(system, code, display, dxCode, patientRef string) 
 	return b, nil
 }
 
+// conformantRequestingProvider is the participant record the Kit's own rows name
+// as the requesting provider — the party a prior-authorization request comes
+// from. A payer matches a later inquiry on the member id PLUS the ordering or
+// rendering provider identifier, so the request carries this record as a
+// resolvable entry that Claim.provider references; without it the payer stores
+// an authorization no conformant inquiry can find again.
+func conformantRequestingProvider() []byte {
+	return []byte(`{"resourceType":"Organization","id":"kit-requesting-provider",` +
+		`"identifier":[{"system":"http://hl7.org/fhir/sid/us-npi","value":"1417947384"}],` +
+		`"name":"Kit Reference Provider"}`)
+}
+
+// conformantMemberCoverage is the participant record the Kit's own rows name as
+// the coverage a prior-authorization request is made under. The payer locates the
+// policy from the Coverage the request names and matches a later inquiry against
+// the coverage it stored, so the request carries a record with its own id and its
+// own member identifier — one the Kit's inquiry can name again — rather than one
+// the builder minted for every member alike.
+//
+// Its payor names conformantPayerOrganization's record, the SAME payer record
+// every bundle this file builds carries as an entry. That is not a detail: the
+// payer resolves a message's whole reference graph and refuses one that names a
+// resource the message does not carry — HTTP 422 "PAS response graph: unresolved
+// source reference". The SUBMIT builder repoints the payor onto the payer
+// Organization entry itself (sdk's repointPayorToEntry), so a payor naming
+// anything else was invisible there; the INQUIRY builder sends the requester's
+// records as they stand and rewrites nothing, so the same record named a payer
+// organization no inquiry bundle carried, and the real payer refused every
+// inquiry the rows built from it. One record, named the same way by the
+// submission and by the inquiry about it.
+func conformantMemberCoverage(member string) []byte {
+	return []byte(`{"resourceType":"Coverage","id":"kit-cov-` + strings.ToLower(member) + `","status":"active",` +
+		`"identifier":[{"type":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/v2-0203","code":"MB"}]},` +
+		`"system":"urn:shn:coverage","value":"` + member + `"}],` +
+		`"beneficiary":{"reference":"Patient/` + member + `"},` +
+		`"relationship":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/subscriber-relationship","code":"self"}]},` +
+		`"payor":[{"reference":"Organization/` + conformantPayerOrganizationID + `"}]}`)
+}
+
+// conformantPayerOrganizationID is the id of the payer record above — stated once
+// so the Coverage's payor and the Organization entry can never drift apart.
+const conformantPayerOrganizationID = "org-cms-payer"
+
+// conformantPayerOrganization is the participant record the Kit's own rows name
+// as the payer a request is made under.
+//
+// The payer scopes an inquiry's search by the insurer and never re-homes an
+// Organization carrying a plan identifier rather than an NPI, so whatever a
+// submission names is what an inquiry has to name. The Kit therefore carries its
+// own record for the payer -- the one its member's Coverage names as payor --
+// rather than one the builder mints, for the same reason it carries its own
+// requesting provider and its own coverage.
+func conformantPayerOrganization(payer shnsdk.PayerIdentifier) []byte {
+	return []byte(`{"resourceType":"Organization","id":"` + conformantPayerOrganizationID + `",` +
+		`"identifier":[{"system":"` + payer.System + `","value":"` + payer.Value + `"}],` +
+		`"name":"Kit Reference Payer"}`)
+}
+
 // conformantSubmitBundle assembles the PAS $submit Claim Bundle the hosted Da Vinci
 // reference payer answers, in the TWO-STEP shape the live gate proved
 // (test/tworilive/ingress_resolve_test.go — R1):
@@ -210,16 +269,20 @@ func buildOrderServiceRequest(system, code, display, dxCode, patientRef string) 
 // (the amended re-submit builder does not; see conformantAmendBundle).
 func conformantSubmitBundle(member string, payer shnsdk.PayerIdentifier, srJSON, qrJSON []byte, corr string, now time.Time) ([]byte, error) {
 	b, err := shnsdk.BuildConformantClaimBundle(shnsdk.ConformantClaimInputs{
-		QR:            qrJSON,
-		SR:            srJSON,
-		PatientRef:    "Patient/" + member,
-		CoverageRef:   "Coverage/" + member,
-		Corr:          corr,
-		Created:       now,
-		PayerOrgEntry: true,
-		AbsoluteRefs:  true,
-		Payer:         payer,
-		MemberID:      member,
+		QR:             qrJSON,
+		Provider:       conformantRequestingProvider(),
+		Coverage:       conformantMemberCoverage(member),
+		Insurer:        conformantPayerOrganization(payer),
+		SR:             srJSON,
+		PatientRef:     "Patient/" + member,
+		CoverageRef:    "Coverage/" + member,
+		Corr:           corr,
+		Created:        now,
+		PayerOrgEntry:  true,
+		AbsoluteRefs:   true,
+		Payer:          payer,
+		MemberID:       member,
+		MemberIDSystem: shnsdk.MemberSystem,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runner: build conformant PAS submit bundle: %w", err)
@@ -231,7 +294,8 @@ func conformantSubmitBundle(member string, payer shnsdk.PayerIdentifier, srJSON,
 	return routable, nil
 }
 
-// conformantAmendBundle builds the amended re-POST that resolves a held request
+// conformantAmendBundle builds the amended re-POST that carries new evidence about a
+// held request to the payer — never the thing that resolves it; the payer decides
 // (Claim.related[prior] + Provenance + optional DiagnosticReport, FR-32) in the same
 // two-step shape conformantSubmitBundle documents. qrJSON is REQUIRED here — the sdk's
 // update builder rejects a nil QR — so a row with no populated answer set passes the
@@ -241,10 +305,14 @@ func conformantSubmitBundle(member string, payer shnsdk.PayerIdentifier, srJSON,
 func conformantAmendBundle(member string, qrJSON, srJSON, drJSON, provJSON []byte, corr, originalCorr string, now time.Time) ([]byte, error) {
 	b, err := shnsdk.BuildConformantClaimUpdateBundle(shnsdk.ConformantClaimUpdateInputs{
 		QR:               qrJSON,
+		Provider:         conformantRequestingProvider(),
+		Coverage:         conformantMemberCoverage(member),
+		Insurer:          conformantPayerOrganization(shnsdk.CMSPayerIdentity),
 		SR:               srJSON,
 		PatientRef:       "Patient/" + member,
 		CoverageRef:      "Coverage/" + member,
 		MemberID:         member,
+		MemberIDSystem:   shnsdk.MemberSystem,
 		Provenance:       provJSON,
 		DiagnosticReport: drJSON,
 		Corr:             corr,
@@ -320,8 +388,15 @@ func requireAuthRef(uc string, out scenariodriver.PASOutcome) error {
 	if !out.Approved || out.PreAuthRef == "" {
 		return fmt.Errorf("runner: conformant/%s: not approved: %s", uc, excerpt(out.Body))
 	}
-	if !strings.HasPrefix(out.PreAuthRef, "AUTH-") {
-		return fmt.Errorf("runner: conformant/%s: authorization %q is not the reference payer's AUTH-NNNN — this run did not reach the reference payer", uc, out.PreAuthRef)
+	return requireAuthRefValue(uc, out.PreAuthRef)
+}
+
+// requireAuthRefValue is the anti-fallback fence on an authorization number this
+// row learned any way at all — from the answer to a $submit, or from the payer's
+// answer to the follow-up inquiry.
+func requireAuthRefValue(uc, preAuthRef string) error {
+	if !strings.HasPrefix(preAuthRef, "AUTH-") {
+		return fmt.Errorf("runner: conformant/%s: authorization %q is not the reference payer's AUTH-NNNN — this run did not reach the reference payer", uc, preAuthRef)
 	}
 	return nil
 }
@@ -411,8 +486,8 @@ const brProviderOriginatedPrefix = "originated by the provider system (br-provid
 var conformantBRPScenario = map[string]string{
 	"uc02": "noPA",    // E0250 hospital bed — covered, no prior authorization
 	"uc03": "approve", // L8000 — prior authorization, approved
-	"uc04": "pend",    // E0424 home oxygen — conditional; the request is held, then resolved
-	"uc06": "pend",    // E0424 — the held request is resolved by the attested re-submit
+	"uc04": "pend",    // E0424 home oxygen — conditional; the request is held, and the decision is asked for
+	"uc06": "pend",    // E0424 — the held request is amended by the attested re-submit, then asked about
 	"uc08": "deny",    // J3490 — not covered; the submitted request is formally denied
 }
 
@@ -708,12 +783,186 @@ func conformantUC03BridgeDemo(rn *Runner) (string, error) {
 	return fmt.Sprintf("CRD card + DTR package + PAS submit approved across a contract-version boundary, auth %s", out.PreAuthRef), nil
 }
 
-// conformantHeldThenResolved is the shared body of the two rows that submit an E0424
-// request the reference payer HOLDS, then resolve it with an amended re-submit: uc04
-// carries the operative report the clinician wrote, uc05 the facility evidence a
-// federated query retrieved. The evidence is the only difference, so it is the only
-// parameter (dr/prov), alongside the scenario key the CRD prong routes on.
-func conformantHeldThenResolved(rn *Runner, uc, member string, evidence func(ref string, now time.Time) (drJSON, provJSON []byte, err error)) (viaBFF bool, authRef string, err error) {
+// conformantStillHeld is the row detail for a request the payer is still holding
+// after it was asked.
+//
+// It states the payer's state and nothing more. There is no authorization number in
+// it because the payer has not given one, and it claims no decision because none was
+// made: a row that ended here reached exactly this and says exactly this.
+const conformantStillHeld = "still held by the payer; the payer has decided nothing yet and the continuation is recorded"
+
+// The schedule a held row asks on: the first inquiry after conformantFirstInquiry,
+// each later one after twice the previous delay capped at conformantInquiryBackoff,
+// at most shnsdk.MaxPriorAuthInquiries inquiries and none falling due after
+// shnsdk.MaxPriorAuthWait. It is the schedule the SDK client follows when a caller
+// asks it to wait (2, 4, 5, 5, 5, 5 seconds; the last falls due at 26 s), so what
+// this row does is what the shipped client does.
+const (
+	conformantFirstInquiry   = 2 * time.Second
+	conformantInquiryBackoff = 5 * time.Second
+)
+
+// conformantContinuation records what a requester keeps when a payer goes on holding
+// its request, then ASKS — Claim/$inquire through the gateway's inquiry leg, on the
+// bounded schedule above — until the payer states a decision or the bound is reached.
+// It returns the row's ending: the payer's decision as the payer stated it when asked,
+// or the hold, still standing, with the continuation recorded.
+//
+// WHY A ROW ENDS HERE. A payer decides when it decides — often hours or days later.
+// The payer's answer to a $submit is its answer to THAT operation; a decision made
+// later reaches the requester only because the requester learns it, and the manual
+// way to learn it is an inquiry (Claim/$inquire). So a still-held ending is a real
+// outcome, not a soft failure: it is what a partner integrating against a live payer
+// sees most of the time, and a row that could only end "approved" taught the opposite.
+//
+// The continuation is built from the bytes actually sent and the answer actually
+// received (shnsdk.NewPriorAuthContinuation), plus the requester's own records —
+// never from a second reading of what the row meant to send. Every inquiry is its own
+// exchange with its own identifier, and the payer's answer is read by the INQUIRY
+// reader (shnsdk.InquiryDecision), never the submit one: an inquiry answer's envelope
+// is the line's (a response Bundle at 2.0.1/2.1.0, a Parameters carrying Bundles at
+// 2.2.1), and its contents are every authorization the payer holds for the parties
+// the inquiry named, so this row's has to be SELECTED — by the continuation's own
+// facts. An answer that is still a hold updates the continuation with what the payer
+// said, exactly as the shipped client does.
+//
+// WHAT THE WAIT IS, AND WHAT IT IS NOT. Prior Authorization's mechanism for learning
+// a later decision is subscription; inquiry is the permitted manual status check.
+// This network offers no notification path yet, so the row stands a BOUNDED wait in:
+// a handful of inquiries, none after the bound, made by this requester because it
+// chose to wait — never a poll a gateway runs on a participant's behalf. Reaching the
+// bound is a real outcome: the payer has not decided, and the row says so.
+func conformantContinuation(rn *Runner, uc, member string, payer shnsdk.PayerIdentifier, submitted, answered []byte) (string, error) {
+	cont, err := shnsdk.NewPriorAuthContinuation("2.0", string(payer.Value), member, submitted, answered)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/%s: continuation: %w", uc, err)
+	}
+	// The request lines, carrying the numbers the payer gave them, are how the
+	// requester will pick ITS authorization out of an answer that carries every
+	// authorization the payer holds for the parties named. A continuation without
+	// them is a record that could never be matched back.
+	if len(cont.Items) == 0 {
+		return "", fmt.Errorf("runner: conformant/%s: the payer's answer leaves no request line to ask about later: %s", uc, excerpt(answered))
+	}
+	patient, err := conformantBundlePatient(submitted)
+	if err != nil {
+		return "", fmt.Errorf("runner: conformant/%s: %w", uc, err)
+	}
+	start := rn.now()
+	deadline := start.Add(shnsdk.MaxPriorAuthWait)
+	delay := conformantFirstInquiry
+	inquiries := 0
+	for inquiries < shnsdk.MaxPriorAuthInquiries && !rn.now().Add(delay).After(deadline) {
+		if err := rn.wait(delay); err != nil {
+			return "", fmt.Errorf("runner: conformant/%s: wait before inquiry: %w", uc, err)
+		}
+		inquiries++
+		now := rn.now()
+		inquiry, err := shnsdk.BuildPASInquiryBundle("2.0", cont.InquiryInputs(
+			"kit-inquiry", shnsdk.PASIdentifier{System: shnsdk.PASInquiryIdentifierSystem, Value: randCorr("kit-" + uc + "-inquire")},
+			shnsdk.PASInquiryRecords{
+				Patient:  patient,
+				Coverage: conformantMemberCoverage(member),
+				Provider: conformantRequestingProvider(),
+				Insurer:  conformantPayerOrganization(payer),
+			}, now))
+		if err != nil {
+			return "", fmt.Errorf("runner: conformant/%s: build inquiry: %w", uc, err)
+		}
+		routable, err := scenariodriver.AddRoutablePayorFor(inquiry.Body, payer)
+		if err != nil {
+			return "", fmt.Errorf("runner: conformant/%s: make the inquiry routable: %w", uc, err)
+		}
+		if !bytes.Contains(routable, []byte(`"`+payer.Value+`"`)) {
+			return "", fmt.Errorf("runner: conformant/%s: the prepared inquiry does not name the payer it is sent to", uc)
+		}
+		res, err := rn.cfg.Driver.InquirePAS(routable)
+		if err != nil {
+			return "", fmt.Errorf("runner: conformant/%s: inquire: %w", uc, err)
+		}
+		if res.Status != http.StatusOK {
+			return "", conformantIngressErr(uc+": inquire", res.Status, res.Body)
+		}
+		decision, err := shnsdk.InquiryDecision(res.Body, cont)
+		if err != nil {
+			// The reader's own words carry the reason — no decision about this
+			// request, more than one, or an answer it could not read — so the
+			// wrapper names none of them.
+			return "", fmt.Errorf("runner: conformant/%s: the payer's inquiry answer does not state this request's decision (%w): %s", uc, err, excerpt(res.Body))
+		}
+		asked := conformantAsked(inquiries, rn.now().Sub(start))
+		switch decision.Outcome {
+		case "pended":
+			if err := cont.Record(res.Body); err != nil {
+				return "", fmt.Errorf("runner: conformant/%s: record the payer's answer: %w", uc, err)
+			}
+			delay = min(2*delay, conformantInquiryBackoff)
+		case "approved":
+			if err := requireAuthRefValue(uc, decision.PreAuthRef); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("approved when asked, auth %s (%s)", decision.PreAuthRef, asked), nil
+		default:
+			// A decision that is not the approval this scenario is about, in the
+			// payer's own words where it gave any.
+			words := ""
+			if decision.Denial != nil && decision.Denial.Rationale != "" {
+				words = ": " + decision.Denial.Rationale
+			}
+			return "", fmt.Errorf("runner: conformant/%s: the payer did not approve when asked: it answered %q%s (%s)", uc, decision.Outcome, words, asked)
+		}
+	}
+	return fmt.Sprintf("%s (%s)", conformantStillHeld, conformantAsked(inquiries, rn.now().Sub(start))), nil
+}
+
+// conformantAsked states how the asking went: how many inquiries, over how long.
+func conformantAsked(inquiries int, elapsed time.Duration) string {
+	noun := "inquiries"
+	if inquiries == 1 {
+		noun = "inquiry"
+	}
+	return fmt.Sprintf("%d %s over %s", inquiries, noun, elapsed.Round(100*time.Millisecond))
+}
+
+// conformantBundlePatient returns the Patient entry a request carried — the
+// requester's own record of the member, which the inquiry embeds unchanged.
+func conformantBundlePatient(bundle []byte) ([]byte, error) {
+	var b struct {
+		Entry []struct {
+			Resource json.RawMessage `json:"resource"`
+		} `json:"entry"`
+	}
+	if err := json.Unmarshal(bundle, &b); err != nil {
+		return nil, fmt.Errorf("read the submitted bundle: %w", err)
+	}
+	for _, e := range b.Entry {
+		var head struct {
+			ResourceType string `json:"resourceType"`
+		}
+		if json.Unmarshal(e.Resource, &head) == nil && head.ResourceType == "Patient" {
+			return e.Resource, nil
+		}
+	}
+	return nil, fmt.Errorf("the submitted bundle carries no Patient entry")
+}
+
+// conformantHeldStillHeld is the shared body of the two rows that submit an E0424
+// request the reference payer HOLDS and amend it with attested evidence: uc04 carries
+// the operative report the clinician wrote, uc05 the facility evidence a federated
+// query retrieved. The evidence is the only difference, so it is the only parameter
+// (dr/prov), alongside the scenario key the CRD prong routes on.
+//
+// WHAT THE AMENDMENT DOES. It carries evidence. It does not decide, and neither does
+// this gateway: a payer holding a request answers the amendment with its own answer,
+// which for this reference payer is a fresh "still held", and decides on its own
+// schedule. So the row relays that answer, records the continuation against it and
+// ASKS for the decision on a bounded schedule (conformantContinuation); it ends on
+// the payer's own answer to the asking — the decision, or the hold still standing.
+//
+// A still-held ending is a real outcome, not a soft failure. It is what a partner
+// integrating against a live payer will see most of the time, and a row that could
+// only end "approved" taught the opposite.
+func conformantHeldStillHeld(rn *Runner, uc, member string, evidence func(ref string, now time.Time) (drJSON, provJSON []byte, err error)) (viaBFF bool, detail string, err error) {
 	ref := "Patient/" + member
 	now := rn.now()
 	submitCorr := randCorr("kit-" + uc + "-submit")
@@ -770,16 +1019,37 @@ func conformantHeldThenResolved(rn *Runner, uc, member string, evidence func(ref
 	if amendOut.Status != http.StatusOK {
 		return viaBFF, "", conformantIngressErr(uc+": amend", amendOut.Status, amendOut.Body)
 	}
-	if err := requireAuthRef(uc, amendOut); err != nil {
+	// The payer's answer to the amendment reaches the requester as the payer wrote
+	// it. A payer that decides right there says so; this reference payer re-pends and
+	// decides on its own timer.
+	if !amendOut.Pended {
+		if err := requireAuthRef(uc, amendOut); err != nil {
+			return viaBFF, "", err
+		}
+		return viaBFF, fmt.Sprintf("decided on the payer's answer to the amended re-submit, auth %s", amendOut.PreAuthRef), nil
+	}
+	// The state a partner most needs to recognise: the payer has not decided, nothing
+	// has gone wrong, and the requester keeps the continuation and asks with it. Real
+	// payers stay here for hours or days; the reference payer decides on its timer.
+	detail, err = conformantContinuation(rn, uc, member, shnsdk.CMSPayerIdentity, amendBundle, amendOut.Body)
+	if err != nil {
 		return viaBFF, "", err
 	}
-	return viaBFF, amendOut.PreAuthRef, nil
+	return viaBFF, "held again on the amendment, then " + detail, nil
 }
 
-// conformantUC04 — E0424: the reference payer holds the request, and the amended
-// re-submit carrying the operative report resolves it.
+// conformantUC04 — E0424: the reference payer HOLDS the request; the amended
+// re-submit carries the operative report the clinician wrote, and the payer goes on
+// holding it.
+//
+// The amendment carries evidence; it does not resolve anything. This row used to say
+// the authorization was "resolved on the amended re-submit carrying the operative
+// report", which reads as though the report changed the payer's mind on that
+// exchange. Measured against the reference payer, no gateway in between: it answers
+// the amendment "still held" and decides on its own schedule, whatever the amendment
+// carried.
 func conformantUC04(rn *Runner, branch string) (string, error) {
-	viaBFF, authRef, err := conformantHeldThenResolved(rn, "uc04", "MBR-COVERED", func(ref string, now time.Time) ([]byte, []byte, error) {
+	viaBFF, detail, err := conformantHeldStillHeld(rn, "uc04", "MBR-COVERED", func(ref string, now time.Time) ([]byte, []byte, error) {
 		drJSON, err := shnsdk.BuildDiagnosticReport("dr-kit-uc04", ref, "E0424", "Operative report — home oxygen assessment")
 		if err != nil {
 			return nil, nil, fmt.Errorf("build operative DiagnosticReport: %w", err)
@@ -793,15 +1063,16 @@ func conformantUC04(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return originated(viaBFF, fmt.Sprintf("held by the reference payer, then resolved on the amended re-submit carrying the operative report, auth %s", authRef)), nil
+	return originated(viaBFF, "held by the reference payer; the amended re-submit carried the operative report, and "+detail), nil
 }
 
-// conformantUC05 — the same held E0424 request, resolved by evidence a FEDERATED query
-// retrieved from the facility (CXL-D11: the CDex middle bracketed by SHN gateways,
-// not real external CDex actors).
+// conformantUC05 — the same held E0424 request, amended with evidence a FEDERATED
+// query retrieved from the facility (CXL-D11: the CDex middle bracketed by SHN
+// gateways, not real external CDex actors). As in uc04, the federated evidence is
+// what the amendment CARRIES; the payer decides on its own schedule.
 func conformantUC05(rn *Runner, branch string) (string, error) {
 	const member = "MBR-COVERED"
-	viaBFF, authRef, err := conformantHeldThenResolved(rn, "uc05", member, func(ref string, now time.Time) ([]byte, []byte, error) {
+	viaBFF, detail, err := conformantHeldStillHeld(rn, "uc05", member, func(ref string, now time.Time) ([]byte, []byte, error) {
 		drJSON, provJSON, err := scenariodriver.FacilityCDexEvidence(member, now)
 		if err != nil {
 			return nil, nil, fmt.Errorf("facility CDex evidence: %w", err)
@@ -811,14 +1082,16 @@ func conformantUC05(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return originated(viaBFF, fmt.Sprintf("held by the reference payer, then resolved on the amended re-submit carrying the federated facility evidence, auth %s", authRef)), nil
+	return originated(viaBFF, "held by the reference payer; the amended re-submit carried the federated facility evidence, and "+detail), nil
 }
 
 // conformantUC06 — the questionnaire row: the E0424 coverage check answers CONDITIONAL
 // and advertises no questionnaire, so the reference payer's HomeOxygen package is
 // fetched BY CANONICAL, filled (by br-provider's real populate under the Java trio,
-// by a minimal attestation without it), submitted — held — and then resolved by the
-// clinician-attested re-submit whose Provenance attests those very answers.
+// by a minimal attestation without it), submitted — held — amended by the
+// clinician-attested re-submit whose Provenance attests those very answers, and held
+// again. The attestation is what the amendment carries; the payer decides on its own
+// schedule.
 func conformantUC06(rn *Runner, branch string) (string, error) {
 	const member = "MBR-UC06"
 	ref := "Patient/" + member
@@ -888,10 +1161,21 @@ func conformantUC06(rn *Runner, branch string) (string, error) {
 	if amendOut.Status != http.StatusOK {
 		return "", conformantIngressErr("uc06: amend", amendOut.Status, amendOut.Body)
 	}
-	if err := requireAuthRef("uc06", amendOut); err != nil {
+	if !amendOut.Pended {
+		if err := requireAuthRef("uc06", amendOut); err != nil {
+			return "", err
+		}
+		return originated(viaBFF, fmt.Sprintf("questionnaire fetched and filled by the provider system; held, then decided on the payer's answer to the clinician-attested re-submit, auth %s", amendOut.PreAuthRef)), nil
+	}
+	// The payer answered the amendment "still held" and decides on its own schedule.
+	// The row records the continuation, asks with it, and reports the payer's own
+	// answer to the asking — nothing more.
+	detail, err := conformantContinuation(rn, "uc06", member, shnsdk.CMSPayerIdentity, amendBundle, amendOut.Body)
+	if err != nil {
 		return "", err
 	}
-	return originated(viaBFF, fmt.Sprintf("questionnaire fetched and filled by the provider system; held, then resolved on the clinician-attested re-submit, auth %s", amendOut.PreAuthRef)), nil
+	const prefix = "questionnaire fetched and filled by the provider system; held, then held again on the clinician-attested re-submit, then "
+	return originated(viaBFF, prefix+detail), nil
 }
 
 // conformantUC07 — the patient surface: an L8000 request the reference payer approves,

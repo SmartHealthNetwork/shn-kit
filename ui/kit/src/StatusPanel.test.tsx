@@ -31,6 +31,7 @@ vi.mock('./api', () => ({
   postReset: vi.fn(),
   postVerify: vi.fn(),
   postChildRestart: vi.fn(),
+  postConformanceLevel: vi.fn(),
   getAbout: vi.fn(() => new Promise(() => {})),
   supportBundleUrl: vi.fn(() => '/api/support-bundle'),
   ApiError,
@@ -471,5 +472,106 @@ describe('StatusPanel — About mount', () => {
   it('mounts the About section', () => {
     render(<StatusPanel boot={boot()} sseState="open" />);
     expect(screen.getByRole('heading', { name: /^about$/i })).toBeDefined();
+  });
+});
+
+// The whole section collapses when status.conformanceLevel is absent (this
+// Kit build has no live level control at all) — never rendered as though the
+// published default were simply "off" (StatusResponse.conformanceLevel's own
+// key-presence contract). Present, the three tabs are a mutually-exclusive
+// selection (ModeSwitch's own role="tablist"/role="tab" idiom), the current
+// level is marked aria-selected, and a click posts + reflects the response.
+describe('StatusPanel — conformance enforcement level', () => {
+  it('renders nothing when status.conformanceLevel is absent (no live control on this Kit build)', () => {
+    const status: StatusResponse = { children: [] };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" />);
+    expect(screen.queryByRole('tablist', { name: /conformance/i })).toBeNull();
+  });
+
+  it('renders the three levels with the current one marked selected, and posts on a click', async () => {
+    vi.mocked(api.postConformanceLevel).mockResolvedValue({ level: 'strict' });
+    const status: StatusResponse = { children: [], conformanceLevel: '' };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" />);
+
+    const tablist = screen.getByRole('tablist', { name: /conformance/i });
+    const tabs = within(tablist).getAllByRole('tab');
+    expect(tabs).toHaveLength(3);
+    const defaultTab = within(tablist).getByRole('tab', { name: /published default/i });
+    expect(defaultTab.getAttribute('aria-selected')).toBe('true');
+    // aria-current is what the stylesheet's selected-tab rule actually
+    // keys on (shell.css's `.seg button[aria-current='true']`, and this
+    // control's own light-card equivalent) — aria-selected alone is
+    // correct ARIA but invisible without it.
+    expect(defaultTab.getAttribute('aria-current')).toBe('true');
+
+    const strictTab = within(tablist).getByRole('tab', { name: /^strict$/i });
+    expect(strictTab.getAttribute('aria-selected')).toBe('false');
+    expect(strictTab.getAttribute('aria-current')).toBeNull();
+    await userEvent.click(strictTab);
+
+    expect(api.postConformanceLevel).toHaveBeenCalledWith('strict');
+    await waitFor(() => expect(strictTab.getAttribute('aria-selected')).toBe('true'));
+    expect(strictTab.getAttribute('aria-current')).toBe('true');
+    expect(defaultTab.getAttribute('aria-selected')).toBe('false');
+    expect(defaultTab.getAttribute('aria-current')).toBeNull();
+  });
+
+  it('renders the light-card segmented-control class, never the dark-bar .seg TopBar carries', () => {
+    const status: StatusResponse = { children: [], conformanceLevel: 'strict' };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" />);
+    const tablist = screen.getByRole('tablist', { name: /conformance/i });
+    expect(tablist.className).not.toMatch(/(?:^|\s)seg(?:\s|$)/);
+    expect(tablist.className).toMatch(/conformance-level-switch/);
+  });
+
+  it('clicking the already-selected level is a no-op (no request)', async () => {
+    const status: StatusResponse = { children: [], conformanceLevel: 'none' };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" />);
+    const noneTab = screen.getByRole('tab', { name: /^none$/i });
+    expect(noneTab.getAttribute('aria-selected')).toBe('true');
+    await userEvent.click(noneTab);
+    expect(api.postConformanceLevel).not.toHaveBeenCalled();
+  });
+
+  it('disables all three tabs while a change is pending, re-enabling once it resolves', async () => {
+    let resolvePromise: ((v: { level: string }) => void) | undefined;
+    vi.mocked(api.postConformanceLevel).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePromise = resolve;
+      }),
+    );
+    const status: StatusResponse = { children: [], conformanceLevel: '' };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" />);
+
+    const strictTab = screen.getByRole('tab', { name: /^strict$/i });
+    await userEvent.click(strictTab);
+    for (const tab of screen.getAllByRole('tab')) expect(tab).toBeDisabled();
+
+    resolvePromise?.({ level: 'strict' });
+    await waitFor(() => {
+      for (const tab of screen.getAllByRole('tab')) expect(tab).not.toBeDisabled();
+    });
+  });
+
+  it('409 (a run or watch is in flight) renders "finish or stop the current run first" inline and never flips the selection', async () => {
+    vi.mocked(api.postConformanceLevel).mockRejectedValue(new ApiError('a run or watch is in flight', 409));
+    const status: StatusResponse = { children: [], conformanceLevel: '' };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" />);
+
+    await userEvent.click(screen.getByRole('tab', { name: /^strict$/i }));
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/finish or stop the current run first/i));
+    expect(screen.getByRole('tab', { name: /published default/i }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /^strict$/i }).getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('a non-409 error renders the raw server message inline', async () => {
+    vi.mocked(api.postConformanceLevel).mockRejectedValue(new ApiError('kit/conformance: level must be "", "strict", or "none"', 400));
+    const status: StatusResponse = { children: [], conformanceLevel: '' };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" />);
+
+    await userEvent.click(screen.getByRole('tab', { name: /^none$/i }));
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/level must be/i));
   });
 });

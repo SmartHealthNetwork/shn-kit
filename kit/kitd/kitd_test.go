@@ -3600,6 +3600,305 @@ func TestBridgingDemo_BadBodyAndClosureFailure(t *testing.T) {
 	}
 }
 
+// fakeLevel is Config.ConformanceLevel's test double: records every level it
+// was called with and answers callErr (nil ⇒ success) — never restarts a
+// real child.
+type fakeLevel struct {
+	mu      sync.Mutex
+	calls   []string
+	callErr error
+}
+
+func (f *fakeLevel) change(_ context.Context, level string) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, level)
+	err := f.callErr
+	f.mu.Unlock()
+	return err
+}
+
+func (f *fakeLevel) snapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.calls...)
+}
+
+// statusConformanceLevel GETs /api/status and returns the raw
+// "conformanceLevel" value — "" with ok=false when the key is absent
+// entirely (key-presence contract for an unconfigured level seam), "" with
+// ok=true when the key is present and the published default is in effect.
+func statusConformanceLevel(t *testing.T, apiBase, token string) (string, bool) {
+	t.Helper()
+	status, body := doJSON(t, http.MethodGet, apiBase+"/api/status", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/status = %d (body=%s)", status, body)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	v, ok := resp["conformanceLevel"]
+	if !ok {
+		return "", false
+	}
+	s, isString := v.(string)
+	if !isString {
+		t.Fatalf("status \"conformanceLevel\" = %v, want a string", v)
+	}
+	return s, true
+}
+
+// TestConformanceLevel_Change proves the happy path: the closure is called
+// with the requested level and GET /api/status's conformanceLevel follows
+// it — including the initial "" BEFORE any change (the key is present as
+// soon as the seam is configured, not only once a level is chosen).
+func TestConformanceLevel_Change(t *testing.T) {
+	const token = "conformance-level-token"
+	bus := event.NewBus(fixedClock)
+	lvl := &fakeLevel{}
+	cfg := Config{
+		APIAddr:          "127.0.0.1:0",
+		StateDir:         t.TempDir(),
+		Token:            token,
+		Bus:              bus,
+		Sup:              supervisor.New(nil),
+		Runner:           runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		ConformanceLevel: lvl.change,
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	if s, ok := statusConformanceLevel(t, apiBase, token); !ok || s != "" {
+		t.Fatalf("pre-change status conformanceLevel = %q (present=%v), want present and \"\"", s, ok)
+	}
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": "strict"})
+	if status != http.StatusOK {
+		t.Fatalf("POST /api/conformance-level level=strict = %d, want 200 (body=%s)", status, body)
+	}
+	var resp struct {
+		Level string `json:"level"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || resp.Level != "strict" {
+		t.Fatalf("response = %s, want {\"level\":\"strict\"} (err=%v)", body, err)
+	}
+	if got := lvl.snapshot(); len(got) != 1 || got[0] != "strict" {
+		t.Fatalf("closure calls = %v, want exactly one call with \"strict\"", got)
+	}
+	if s, _ := statusConformanceLevel(t, apiBase, token); s != "strict" {
+		t.Fatalf("post-change status conformanceLevel = %q, want \"strict\"", s)
+	}
+
+	// Clearing back to "" is a real, distinct call — not a no-op.
+	status, body = doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": ""})
+	if status != http.StatusOK {
+		t.Fatalf("POST /api/conformance-level level=\"\" = %d, want 200 (body=%s)", status, body)
+	}
+	if got := lvl.snapshot(); len(got) != 2 || got[1] != "" {
+		t.Fatalf("closure calls = %v, want a second call with \"\"", got)
+	}
+	if s, _ := statusConformanceLevel(t, apiBase, token); s != "" {
+		t.Fatalf("post-clear status conformanceLevel = %q, want \"\"", s)
+	}
+}
+
+// TestConformanceLevel_TokenGated pins the 401 row explicitly, and proves
+// the gate precedes the nil-seam 404 — an unauthenticated caller can't even
+// probe whether this Kit has live level control.
+func TestConformanceLevel_TokenGated(t *testing.T) {
+	const token = "conformance-level-gate-token"
+	bus := event.NewBus(fixedClock)
+	lvl := &fakeLevel{}
+	cfg := Config{
+		APIAddr:          "127.0.0.1:0",
+		StateDir:         t.TempDir(),
+		Token:            token,
+		Bus:              bus,
+		Sup:              supervisor.New(nil),
+		Runner:           runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		ConformanceLevel: lvl.change,
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	status, _ := doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", "", map[string]string{"level": "strict"})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("POST /api/conformance-level without token = %d, want 401", status)
+	}
+	if got := lvl.snapshot(); len(got) != 0 {
+		t.Fatalf("closure called %v by an unauthenticated request, want 0 calls", got)
+	}
+}
+
+// TestConformanceLevel_NotConfigured404 proves the nil-seam contract: the
+// route 404s AND GET /api/status omits the "conformanceLevel" key entirely.
+func TestConformanceLevel_NotConfigured404(t *testing.T) {
+	const token = "conformance-level-absent-token"
+	bus := event.NewBus(fixedClock)
+	cfg := Config{
+		APIAddr:  "127.0.0.1:0",
+		StateDir: t.TempDir(),
+		Token:    token,
+		Bus:      bus,
+		Sup:      supervisor.New(nil),
+		Runner:   runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		// ConformanceLevel intentionally nil.
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": "strict"})
+	if status != http.StatusNotFound {
+		t.Fatalf("POST /api/conformance-level with no seam = %d, want 404 (body=%s)", status, body)
+	}
+	if s, ok := statusConformanceLevel(t, apiBase, token); ok {
+		t.Fatalf("status carried a conformanceLevel key (%q) with no seam configured", s)
+	}
+}
+
+// TestConformanceLevel_PreBoot503 proves the daemon-first gate: the seam is
+// configured but the stack has not started, so the change answers 503 and
+// the closure is never reached.
+func TestConformanceLevel_PreBoot503(t *testing.T) {
+	const token = "conformance-level-preboot-token"
+	bus := event.NewBus(fixedClock)
+	lvl := &fakeLevel{}
+	cfg := Config{
+		APIAddr:          "127.0.0.1:0",
+		StateDir:         t.TempDir(),
+		Token:            token,
+		Bus:              bus,
+		Sup:              supervisor.New(nil),
+		ConformanceLevel: lvl.change,
+		// Runner intentionally nil: the stack has not started.
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": "strict"})
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("POST /api/conformance-level pre-boot = %d, want 503 (body=%s)", status, body)
+	}
+	if got := lvl.snapshot(); len(got) != 0 {
+		t.Fatalf("closure called %v times pre-boot, want 0", got)
+	}
+}
+
+// TestConformanceLevel_InFlight409 proves a run in flight blocks the change.
+func TestConformanceLevel_InFlight409(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /scenario/uc01", func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"covered":true,"reason":"active coverage"}`))
+	})
+	gwSrv := httptest.NewServer(mux)
+	defer gwSrv.Close()
+
+	const token = "conformance-level-inflight-token"
+	bus := event.NewBus(fixedClock)
+	rn := runner.New(runner.Config{
+		Driver:             scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: gwSrv.URL}),
+		Bus:                bus,
+	})
+	lvl := &fakeLevel{}
+	cfg := Config{
+		APIAddr:          "127.0.0.1:0",
+		StateDir:         t.TempDir(),
+		Token:            token,
+		Bus:              bus,
+		Sup:              supervisor.New(nil),
+		Runner:           rn,
+		ConformanceLevel: lvl.change,
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/runs", token,
+		map[string]string{"lane": "ehr", "uc": "uc01", "branch": "covered"})
+	if status != http.StatusAccepted {
+		t.Fatalf("POST /api/runs = %d, want 202 (body=%s)", status, body)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fake gateway never received the /scenario/uc01 request")
+	}
+
+	status, body = doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": "strict"})
+	if status != http.StatusConflict {
+		t.Fatalf("POST /api/conformance-level while a run is in flight = %d, want 409 (body=%s)", status, body)
+	}
+	if got := lvl.snapshot(); len(got) != 0 {
+		t.Fatalf("closure called %v while a run is in flight, want 0 calls", got)
+	}
+	if s, _ := statusConformanceLevel(t, apiBase, token); s != "" {
+		t.Fatalf("status flipped (%q) on a refused change", s)
+	}
+
+	close(release)
+	waitRunnerIdle(t, rn)
+}
+
+// TestConformanceLevel_BadBodyAndInvalidLevelAndClosureFailure covers three
+// error paths, none of which reach the closure or advance the recorded
+// level: a malformed body, a body naming an unrecognized level (checked at
+// the handler, before restarting anything), and a closure failure (the
+// restart itself failing).
+func TestConformanceLevel_BadBodyAndInvalidLevelAndClosureFailure(t *testing.T) {
+	const token = "conformance-level-errors-token"
+	bus := event.NewBus(fixedClock)
+	lvl := &fakeLevel{callErr: fmt.Errorf("supervisor: gateway not ready within 30s")}
+	cfg := Config{
+		APIAddr:          "127.0.0.1:0",
+		StateDir:         t.TempDir(),
+		Token:            token,
+		Bus:              bus,
+		Sup:              supervisor.New(nil),
+		Runner:           runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		ConformanceLevel: lvl.change,
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	req, err := http.NewRequest(http.MethodPost, apiBase+"/api/conformance-level", strings.NewReader("{not json"))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST malformed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("POST /api/conformance-level with a malformed body = %d, want 400", resp.StatusCode)
+	}
+	if got := lvl.snapshot(); len(got) != 0 {
+		t.Fatalf("closure called %v on a malformed body, want 0 calls", got)
+	}
+
+	status, body := doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": "middle"})
+	if status != http.StatusBadRequest {
+		t.Fatalf("POST /api/conformance-level level=middle = %d, want 400 (body=%s)", status, body)
+	}
+	if got := lvl.snapshot(); len(got) != 0 {
+		t.Fatalf("closure called %v on an invalid level, want 0 calls", got)
+	}
+
+	status, body = doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": "strict"})
+	if status != http.StatusInternalServerError {
+		t.Fatalf("POST /api/conformance-level with a failing closure = %d, want 500 (body=%s)", status, body)
+	}
+	var errBody struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &errBody); err != nil || !strings.Contains(errBody.Error, "not ready") {
+		t.Fatalf("500 body = %s, want the closure's own error text (err=%v)", body, err)
+	}
+	if s, _ := statusConformanceLevel(t, apiBase, token); s != "" {
+		t.Fatalf("status = %q after a FAILED change, want still \"\"", s)
+	}
+}
+
 // TestStatus_ProviderDataURL: GET /api/status carries "providerDataUrl" under the
 // same key-presence contract as brProviderUrl — absent until a provider-data
 // gateway child exists (no Java trio ⇒ no lane), present with its base once

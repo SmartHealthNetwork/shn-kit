@@ -326,8 +326,8 @@ function DaVinciSection({ davinci, ingress, onSaved, onRestart }: DaVinciSection
 
       <p className="byo-orders-note">
         The hosted Da Vinci reference payer answers these orders: E0250 hospital bed (no prior
-        authorization), L8000 (approved), E0424 home oxygen (held, then resolved on an amended
-        re-submit), J3490 (not covered).
+        authorization), L8000 (approved), E0424 home oxygen (held, and held again on an amended
+        re-submit — it decides on its own schedule), J3490 (not covered).
       </p>
 
       <SeedYourServerBlock lane="conformant" postBase="<your-fhir-base>" />

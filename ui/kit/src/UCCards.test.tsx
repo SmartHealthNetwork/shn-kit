@@ -3,6 +3,12 @@ import { render, screen, within, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { UCCards } from './UCCards';
 import { BANNED_VOCAB, LANE_LABELS } from './ucmeta';
+import {
+  PA_CONTINUATION_CAPTION,
+  PA_CONTINUATION_NOT_DURABLE,
+  PA_DECISION_LABELS,
+  PA_DECISION_OUTCOMES,
+} from './pameta';
 import type { EventsView } from './useEvents';
 import type { KitEvent, RunResult } from './types';
 
@@ -402,7 +408,7 @@ describe('UCCards', () => {
   // internal deferral IDs (CXL-D11 / D-2RI-1 / D-2RI-6 were scrubbed).
   const PROVENANCE = [
     "Eligibility isn't a Da Vinci prior-auth operation, so this lane runs the same coverage check as the plain-EHR lane.",
-    'The reference payer holds the first request; the amended re-submit is re-evaluated and resolved.',
+    'The reference payer holds the first request and answers the amended re-submit by holding it again; it decides on its own schedule, so this run ends with the request still held.',
     "On this lane the federated (CDex) evidence is carried on the amended re-submit; the consent-denied branch isn't exercised here.",
     "The DTR questionnaire package is fetched through the real Da Vinci flow and filled by the provider system; the manual clinician-facing DTR app isn't part of this run.",
     "Also reads the approval back from the patient's Smart Health account, where that surface is reachable.",
@@ -616,5 +622,79 @@ describe('UCCards on the ehr (Plain EHR) lane', () => {
       />,
     );
     expect(screen.queryByText(EHR_PROVENANCE_UC04)).toBeNull();
+  });
+});
+
+// The payer's own DECISION on a finished run — a different fact from the
+// scenario's pass/fail chip (a run can pass with the request still undecided).
+// This is the RENDERED half of pameta.ts's double-assert idiom; pameta.test.ts
+// pins the same strings literally.
+describe('UCCards — the payer decision row', () => {
+  function withDecision(extra: Partial<RunResult>) {
+    return (lane: string, uc: string): RunResult | undefined =>
+      lane === 'ehr' && uc === 'uc03'
+        ? { runId: 'run-pa', lane: 'ehr', uc: 'uc03', branch: '', state: 'passed', detail: 'ran', ...extra }
+        : undefined;
+  }
+
+  function renderWith(extra: Partial<RunResult>) {
+    return render(
+      <UCCards
+        lane="ehr"
+        events={events()}
+        latestByRow={withDecision(extra)}
+        onSelectRun={vi.fn()}
+      />,
+    );
+  }
+
+  it('a pended decision renders the pended outcome and its continuation', () => {
+    renderWith({ decision: 'pended', continuation: 'cont-abc123', continuationDurable: true });
+
+    const uc03 = within(screen.getByTestId('card-uc03'));
+    expect(uc03.getByText(PA_DECISION_LABELS.pended)).toBeDefined();
+    expect(uc03.getByText(PA_DECISION_OUTCOMES.pended)).toBeDefined();
+    expect(uc03.getByText('cont-abc123')).toBeDefined();
+    expect(uc03.getByText(PA_CONTINUATION_CAPTION, { exact: false })).toBeDefined();
+    // durable:true discloses nothing — there is nothing to disclose.
+    expect(uc03.queryByText(PA_CONTINUATION_NOT_DURABLE)).toBeNull();
+  });
+
+  it("a denied decision renders the denial outcome and the payer's own rationale", () => {
+    renderWith({ decision: 'denied', rationale: 'Conservative therapy is not documented.' });
+
+    const uc03 = within(screen.getByTestId('card-uc03'));
+    expect(uc03.getByText(PA_DECISION_LABELS.denied)).toBeDefined();
+    expect(uc03.getByText(PA_DECISION_OUTCOMES.denied)).toBeDefined();
+    expect(uc03.getByText(/Payer rationale: Conservative therapy is not documented\./)).toBeDefined();
+  });
+
+  it('continuationDurable:false renders the in-memory-only disclosure; an absent one never reads as false', () => {
+    const { unmount } = renderWith({ decision: 'pended', continuation: 'cont-abc123', continuationDurable: false });
+    expect(within(screen.getByTestId('card-uc03')).getByText(PA_CONTINUATION_NOT_DURABLE)).toBeDefined();
+    unmount();
+
+    // The same pended decision, with no durability fact stated at all.
+    renderWith({ decision: 'pended', continuation: 'cont-abc123' });
+    const uc03 = within(screen.getByTestId('card-uc03'));
+    expect(uc03.getByText(PA_DECISION_OUTCOMES.pended)).toBeDefined();
+    expect(uc03.queryByText(PA_CONTINUATION_NOT_DURABLE)).toBeNull();
+  });
+
+  it('a result stating no decision renders the row exactly as before — no decision block at all', () => {
+    renderWith({});
+
+    expect(within(screen.getByTestId('card-uc03')).getByText('Passed')).toBeDefined();
+    expect(screen.queryByTestId('pa-decision-uc03')).toBeNull();
+    for (const outcome of Object.values(PA_DECISION_OUTCOMES)) {
+      expect(screen.queryByText(outcome)).toBeNull();
+    }
+  });
+
+  it('the decision row carries no internal vocabulary', () => {
+    renderWith({ decision: 'pended', continuation: 'cont-abc123', continuationDurable: false });
+
+    const block = screen.getByTestId('pa-decision-uc03');
+    expect(block.textContent ?? '').not.toMatch(BANNED_VOCAB);
   });
 });

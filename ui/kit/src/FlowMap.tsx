@@ -139,6 +139,12 @@ export function edgeForStep(step: Step, lane: Lane): EdgeKey | undefined {
   if (step.kind === 'sor') return lane !== 'conformant' ? 'src' : undefined;
   if (step.kind === 'ingress') return 'src';
   if (step.kind === 'validate') return 'val';
+  // conformance.observed is a local policy judgment, never a network hop —
+  // no edge, in either lane. Falling through to the 'leg' default below
+  // would pulse a false remote-node animation for a check that never left
+  // the gateway; selecting one instead gets the same edge-less
+  // gateway-flash treatment the conformant-lane sor case already has.
+  if (step.kind === 'conformance') return undefined;
   return 'leg';
 }
 
@@ -162,6 +168,9 @@ function edgeFor(step: Step, lane: Lane): { from: string; to: string } {
   if (step.kind === 'sor') return lane !== 'conformant' ? { from: 'gateway', to: 'provider' } : { from: 'gateway', to: 'gateway' };
   if (step.kind === 'ingress') return { from: 'provider', to: 'gateway' };
   if (step.kind === 'validate') return { from: 'gateway', to: 'validator' };
+  // Same reasoning as edgeForStep above — a local judgment, not a hop to
+  // 'remote'; the generic leg fallback would mislabel this data attribute.
+  if (step.kind === 'conformance') return { from: 'gateway', to: 'gateway' };
   return { from: 'gateway', to: 'remote' };
 }
 
@@ -579,6 +588,7 @@ export function FlowMap({
                     <span className="cp">{step.counterpart ?? 'the hosted counterparty'}</span>
                   )}
                   {step.kind === 'sor' && <span className="cp">{step.sorOp ?? 'read'}</span>}
+                  {step.kind === 'conformance' && <span className="cp">{step.decision ?? 'recorded'}</span>}
                   {step.route && routeChipText(step.route) !== undefined && (
                     <span className="provenance-tag step-route-tag">{routeChipText(step.route)}</span>
                   )}

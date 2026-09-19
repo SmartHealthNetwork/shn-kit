@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { buildRunStory, buildDemoStory, isDemoRun, laneLabel, normaliseLane, parseObserver } from './inspect';
+import {
+  buildRunStory,
+  buildDemoStory,
+  conformanceTimelineNote,
+  conformanceUnknownDecisionNarration,
+  isDemoRun,
+  laneLabel,
+  normaliseLane,
+  parseObserver,
+} from './inspect';
 import type { KitEvent } from './types';
 import ehrUc03 from './fixtures/run-ehr-uc03.json';
 import conformantUc03 from './fixtures/run-conformant-uc03.json';
@@ -323,6 +332,152 @@ describe('sor.read steps', () => {
     const story = buildRunStory('run-s', [sorEvent(13, 'FutureNewRead', 'found')]);
     expect(story.steps[0].narration).toBe('The gateway read FutureNewRead from its data source.');
     expect(story.steps[0].narration).not.toMatch(/hosted counterparty/);
+  });
+});
+
+// conformance.observed rides beside validate.result (gateway/engine/finding.go's
+// emitFinding, additive to the ordinary $validate observer frame) — one event
+// per governed check that found a defect. Detail is a JSON string (the
+// marshalled ConformanceFinding), metadata only: kind/decision/rule/path, plus
+// a redacted issue-count summary this UI never reads. No `payload` field is
+// ever set on the wire event for this kind — parseFindingDetail below reads
+// ONLY Detail, never Payload.
+describe('conformance.observed steps', () => {
+  function findingDetail(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      kind: 'fhir-ingress',
+      direction: 'validate',
+      legType: 'crd-order-select',
+      correlationId: 'c-1',
+      seam: 'provider-ingress',
+      whose: 'peer',
+      line: '2.0',
+      level: 'none',
+      decision: 'relayed',
+      rule: 'Coverage.status',
+      path: 'Coverage.status',
+      payloadSha256: 'abcd',
+      issues: ['count=1, bytes=42, sha256=abcd'],
+      ...overrides,
+    });
+  }
+
+  const conformanceEvent = (seq: number, detailOverrides: Record<string, unknown> = {}): KitEvent =>
+    evt({
+      seq,
+      runId: 'run-c',
+      type: 'observer',
+      observer: observerFrame({
+        seq,
+        kind: 'conformance.observed',
+        direction: 'validate',
+        legType: 'crd-order-select',
+        correlationId: 'c-1',
+        detail: findingDetail(detailOverrides),
+      }),
+    });
+
+  it('a conformance.observed frame becomes its own step, carrying kind/decision/rule/path parsed from Detail', () => {
+    const story = buildRunStory('run-c', [conformanceEvent(1)]);
+    expect(story.steps).toHaveLength(1);
+    const step = story.steps[0];
+    expect(step.kind).toBe('conformance');
+    expect(step.findingKind).toBe('fhir-ingress');
+    expect(step.decision).toBe('relayed');
+    expect(step.rule).toBe('Coverage.status');
+    expect(step.path).toBe('Coverage.status');
+    expect(step.legType).toBe('crd-order-select');
+    expect(step.status).toBe('ok');
+  });
+
+  it('a "refused" decision is a failed step; a "relayed" decision is ok', () => {
+    const relayed = buildRunStory('run-c', [conformanceEvent(1, { decision: 'relayed' })]);
+    expect(relayed.steps[0].status).toBe('ok');
+    const refused = buildRunStory('run-c', [conformanceEvent(2, { decision: 'refused' })]);
+    expect(refused.steps[0].status).toBe('failed');
+  });
+
+  it('renders nothing from a payload — the event carries none, and the step never fabricates one', () => {
+    const story = buildRunStory('run-c', [conformanceEvent(1)]);
+    expect(story.steps[0].request?.payload).toBeUndefined();
+  });
+
+  it('a malformed/non-JSON Detail never throws and leaves the finding fields undefined, never assumed refused', () => {
+    const events: KitEvent[] = [
+      evt({
+        seq: 1,
+        runId: 'run-c',
+        type: 'observer',
+        observer: observerFrame({ seq: 1, kind: 'conformance.observed', legType: 'crd-order-select', detail: 'not-json' }),
+      }),
+    ];
+    expect(() => buildRunStory('run-c', events)).not.toThrow();
+    const step = buildRunStory('run-c', events).steps[0];
+    expect(step.kind).toBe('conformance');
+    expect(step.findingKind).toBeUndefined();
+    expect(step.decision).toBeUndefined();
+    expect(step.rule).toBeUndefined();
+    expect(step.path).toBeUndefined();
+    expect(step.status).toBe('ok');
+    // The narration must not assert "relayed it as sent" as a fact when the
+    // decision was never actually read — see the dedicated unknown-decision
+    // test below for the full contrast against the facts pane's '—'.
+    expect(step.narration).toBe(conformanceUnknownDecisionNarration);
+  });
+
+  // Regression: with an absent/malformed decision, the step used to fall
+  // back to the "…and relayed it as sent, recording the finding" copy (the
+  // same branch a genuine decision:"relayed" finding gets), while
+  // ConformanceFacts three lines below honestly rendered an em dash for the
+  // same undefined `decision` field — the pane contradicted itself. A third
+  // narration branch, reached whenever the parsed decision is neither
+  // "relayed" nor "refused" (undefined, malformed JSON, or some future
+  // decision string this UI doesn't recognize yet), must say only what was
+  // actually observed.
+  it('an unrecognized decision (present but neither "relayed" nor "refused") also gets the honest unknown-decision narration, never the "relayed" claim', () => {
+    const story = buildRunStory('run-c', [conformanceEvent(1, { decision: 'some-future-decision' })]);
+    expect(story.steps[0].decision).toBe('some-future-decision');
+    expect(story.steps[0].narration).toBe(conformanceUnknownDecisionNarration);
+    expect(story.steps[0].narration).not.toMatch(/relayed it as sent/);
+  });
+
+  it('a genuine "relayed" decision still gets the ordinary done narration (the unknown-decision branch does not swallow known decisions)', () => {
+    const story = buildRunStory('run-c', [conformanceEvent(1, { decision: 'relayed' })]);
+    expect(story.steps[0].narration).toMatch(/relayed it as sent/);
+    expect(story.steps[0].narration).not.toBe(conformanceUnknownDecisionNarration);
+  });
+
+  it('a genuine "refused" decision still gets the ordinary failed narration', () => {
+    const story = buildRunStory('run-c', [conformanceEvent(1, { decision: 'refused' })]);
+    expect(story.steps[0].narration).toMatch(/refused it\.$/);
+    expect(story.steps[0].narration).not.toBe(conformanceUnknownDecisionNarration);
+  });
+
+  it('renders beside a validate.result step in the same run — both present, distinguishable by kind', () => {
+    const events: KitEvent[] = [
+      evt({
+        seq: 1,
+        runId: 'run-c',
+        type: 'observer',
+        observer: observerFrame({ seq: 1, kind: 'validate.result', detail: 'valid' }),
+      }),
+      conformanceEvent(2),
+    ];
+    const story = buildRunStory('run-c', events);
+    expect(story.steps).toHaveLength(2);
+    expect(story.steps.filter((s) => s.kind === 'validate')).toHaveLength(1);
+    expect(story.steps.filter((s) => s.kind === 'conformance')).toHaveLength(1);
+  });
+
+  // The narration must never fall through to the LEG copy keyed on the same
+  // legType (crd-order-select) — that would misrepresent a finding as an
+  // exchange with the hosted counterparty. Regression pin for the
+  // narrationKey collision the generic lookup would hit if this step routed
+  // through narrationFor instead of its own dedicated entry.
+  it('narration is finding-specific, never the crd-order-select LEG exchange copy', () => {
+    const story = buildRunStory('run-c', [conformanceEvent(1)]);
+    expect(story.steps[0].narration).not.toBe('');
+    expect(story.steps[0].narration).not.toMatch(/order-select context/);
   });
 });
 
@@ -832,5 +987,70 @@ describe('lane normalisation — the one read-side rule', () => {
     expect(normaliseLane('ehr')).toBe('ehr');
     expect(normaliseLane('conformant')).toBe('conformant');
     expect(normaliseLane(undefined)).toBe('conformant');
+  });
+});
+
+// conformanceTimelineNote is the timeline's own three-way empty-state rule,
+// mirrored from ui/cloud's ConformanceCard (the same discipline that PR's fix
+// rounds spelled out): an absent conformance.observed step must never read as
+// "this run was clean" unless there is positive evidence checks actually ran
+// AND the run is done. undefined means "say nothing" — the honest default —
+// in every case where that evidence is missing.
+describe('conformanceTimelineNote — the timeline’s three-way empty-state discipline', () => {
+  it('says nothing while the run has no terminal yet — never claims a still-running run is clean', () => {
+    const story = buildRunStory('run-c', [
+      evt({ seq: 1, runId: 'run-c', type: 'run.started' }),
+      evt({
+        seq: 2,
+        runId: 'run-c',
+        type: 'observer',
+        observer: observerFrame({ seq: 2, kind: 'validate.result', detail: 'valid' }),
+      }),
+    ]);
+    expect(story.terminal).toBeUndefined();
+    expect(conformanceTimelineNote(story)).toBeUndefined();
+  });
+
+  it('says nothing once terminal if the run evidences no check having run at all', () => {
+    const story = buildRunStory('run-c', [
+      evt({ seq: 1, runId: 'run-c', type: 'run.started' }),
+      evt({ seq: 2, runId: 'run-c', type: 'run.finished' }),
+    ]);
+    expect(story.terminal).toBeDefined();
+    expect(story.steps).toEqual([]);
+    expect(conformanceTimelineNote(story)).toBeUndefined();
+  });
+
+  it('says nothing when a finding exists — the finding step itself is the evidence, no separate claim needed', () => {
+    const story = buildRunStory('run-c', [
+      evt({ seq: 1, runId: 'run-c', type: 'run.started' }),
+      evt({
+        seq: 2,
+        runId: 'run-c',
+        type: 'observer',
+        observer: observerFrame({
+          seq: 2,
+          kind: 'conformance.observed',
+          legType: 'crd-order-select',
+          detail: JSON.stringify({ kind: 'fhir-ingress', decision: 'relayed' }),
+        }),
+      }),
+      evt({ seq: 3, runId: 'run-c', type: 'run.finished' }),
+    ]);
+    expect(conformanceTimelineNote(story)).toBeUndefined();
+  });
+
+  it('states "no findings" ONLY once the run is terminal AND at least one check-bearing step ran', () => {
+    const story = buildRunStory('run-c', [
+      evt({ seq: 1, runId: 'run-c', type: 'run.started' }),
+      evt({
+        seq: 2,
+        runId: 'run-c',
+        type: 'observer',
+        observer: observerFrame({ seq: 2, kind: 'validate.result', detail: 'valid' }),
+      }),
+      evt({ seq: 3, runId: 'run-c', type: 'run.finished' }),
+    ]);
+    expect(conformanceTimelineNote(story)).toBe('No conformance findings recorded in this run.');
   });
 });

@@ -1,7 +1,7 @@
-github.com/SmartHealthNetwork/shn-gateway v0.44.0 h1:Mn4El5H2YvaJCv+i/PfjZldGUXKf+P8YB7+6Oemd1ks=
-github.com/SmartHealthNetwork/shn-gateway v0.44.0/go.mod h1:nxBVbDlcOazh/RSpF2lQheM6pLWumJ92szpt4Lrk8ec=
-github.com/SmartHealthNetwork/shn-sdk v0.50.1 h1:dR+szx2NylR7XgJbqbVuPKj1tP1kgppLgmuGdq7JzeY=
-github.com/SmartHealthNetwork/shn-sdk v0.50.1/go.mod h1:suZ+KufGlRdgm7L7jfPDYnvFF44Uz/dGbGoBtt3BHxM=
+github.com/SmartHealthNetwork/shn-gateway v0.46.0 h1:9rRpOJwmhnINHMyCVDFXhOMNtvnots5sCwG/AnF9yIo=
+github.com/SmartHealthNetwork/shn-gateway v0.46.0/go.mod h1:AS0L9ZqsSbch2sTCM87Yl/N1j+S+CrF6UCUMVWT/jjQ=
+github.com/SmartHealthNetwork/shn-sdk v0.51.1 h1:Obm+kXqA0w6v8dFI6BC58kTFkvEmy4tHjmaKwF4rWOE=
+github.com/SmartHealthNetwork/shn-sdk v0.51.1/go.mod h1:suZ+KufGlRdgm7L7jfPDYnvFF44Uz/dGbGoBtt3BHxM=
 github.com/danieljoos/wincred v1.2.3 h1:v7dZC2x32Ut3nEfRH+vhoZGvN72+dQ/snVXo/vMFLdQ=
 github.com/danieljoos/wincred v1.2.3/go.mod h1:6qqX0WNrS4RzPZ1tnroDzq9kY3fu1KwE7MRLQK4X0bs=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=

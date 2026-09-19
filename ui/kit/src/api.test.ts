@@ -225,6 +225,77 @@ describe('postBridgingDemo', () => {
   });
 });
 
+describe('postConformanceLevel', () => {
+  it('POSTs /api/conformance-level with an EXPLICIT body {level:"strict"}', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    const stub = makeFetch(true, 200, { level: 'strict' });
+    vi.stubGlobal('fetch', stub);
+
+    const { postConformanceLevel } = await freshApi();
+    const result = await postConformanceLevel('strict');
+
+    const [url, init] = stub.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/conformance-level');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ level: 'strict' });
+    expect(result.level).toBe('strict');
+  });
+
+  it('POSTs {level:""} explicitly to clear back to the published default', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    const stub = makeFetch(true, 200, { level: '' });
+    vi.stubGlobal('fetch', stub);
+
+    const { postConformanceLevel } = await freshApi();
+    await postConformanceLevel('');
+
+    const [, init] = stub.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe('{"level":""}');
+  });
+
+  it('404 (feature not configured) -> ApiError(404)', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    vi.stubGlobal('fetch', makeFetch(false, 404, { error: 'conformance level control not configured' }));
+
+    const { postConformanceLevel, ApiError } = await freshApi();
+    try {
+      await postConformanceLevel('strict');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as InstanceType<typeof ApiError>).status).toBe(404);
+    }
+  });
+
+  it('409 (a run or watch is in flight) -> ApiError(409)', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    vi.stubGlobal('fetch', makeFetch(false, 409, { error: 'a run or watch is in flight' }));
+
+    const { postConformanceLevel, ApiError } = await freshApi();
+    try {
+      await postConformanceLevel('strict');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as InstanceType<typeof ApiError>).status).toBe(409);
+    }
+  });
+
+  it('400 (an unrecognized level) -> ApiError(400)', async () => {
+    sessionStorage.setItem('kitToken', 't-1');
+    vi.stubGlobal('fetch', makeFetch(false, 400, { error: 'kit/conformance: level must be "", "strict", or "none", got "middle"' }));
+
+    const { postConformanceLevel, ApiError } = await freshApi();
+    try {
+      await postConformanceLevel('middle');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as InstanceType<typeof ApiError>).status).toBe(400);
+    }
+  });
+});
+
 describe('postBridgingExhibit', () => {
   it('POSTs /api/bridging/exhibit with body {kind:"carry"}; 200 -> the carry response shape', async () => {
     sessionStorage.setItem('kitToken', 't-1');

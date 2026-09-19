@@ -80,6 +80,7 @@ Dev builds default to the file store; either is selectable explicitly via
 | `--uc07-pci` | `""` | Patient-surface PCI override for the UC-07 demo persona; `""` ⇒ resolved live |
 | `--bridge-demo-holder` | `"bridge-demo"` | Holder id the `"bridge-demo-payer"` Verify probe expects on the registrar feed (the bridging demo's bridged-exchange exhibit); `""` ⇒ that probe is skipped entirely, not reported red |
 | `--bridge-demo-refuse-holder` | `"bridge-demo-refuse"` | Holder id the `"bridge-demo-refuse"` Verify probe expects on the registrar feed (the bridging demo's refusal exhibit); `""` ⇒ that probe is skipped entirely, not reported red |
+| `--conformance-enforcement` | `""` | `"strict"` (an invalid message is refused) or `"none"` (every check still runs and is recorded as a finding; nothing is refused for conformance, and the message is relayed as sent — except a payload this gateway itself translated between IG lines, and an answer this gateway cannot read at all, which refuse at every level). `""` ⇒ left unset entirely, so the gateway child applies its own published default. Any other value is refused by the gateway child at boot (in `{state-dir}/gateway.log`), naming both accepted values |
 
 ## Observation windows
 
@@ -90,7 +91,7 @@ and time spent watching do not consume it. Each window publishes one start and
 one terminal event atomically with relay attribution, and history capture follows
 that terminal boundary. Late observer bytes remain visible as ambient activity.
 
-The packaged gateway is v0.44.0 and the SDK v0.50.1. Packaging uses a versioned Go
+The packaged gateway is v0.46.0 and the SDK v0.51.1. Packaging uses a versioned Go
 install and checks executable provenance before bundling it, including both slices
 of the universal macOS binary; it refuses any executable that does not read as the
 release this Kit pins. A manifest label alone is insufficient.
@@ -103,7 +104,7 @@ is read as the known absence it is.
 
 | Gateway identity | Observer completion behavior |
 |---|---|
-| Any gateway serving the supported completion protocol, including the packaged v0.44.0 executable | Waits for entered operations and their evidence callbacks, then catches up the stream |
+| Any gateway serving the supported completion protocol, including the packaged v0.46.0 executable and the earlier published v0.44.0 | Waits for entered operations and their evidence callbacks, then catches up the stream |
 | Published v0.43.1 executable with the exact module checksum and command path | Uses its synchronous observer counter for ordinary completed requests |
 | Unidentified `(devel)`, replaced module, mixed universal slices, or another unknown identity | Clinical work continues on the protocol when it is served; a missing barrier is reported, never excused |
 
@@ -141,8 +142,10 @@ The packaged Electron shell (`../desktop/`) resolves its own configuration from
 a JSON file — `kit.config.json` when packaged, `dev.config.json` in a dev
 checkout (the `SHN_KIT_CONFIG` env var overrides the path). It carries the
 non-path knobs (`discoveryUrl`; `accountsUrl` or `secretsDir`; `releasesUrl`;
-`additionalValidatorLines`; and a *relative* `javaAssets` marker) — every
-packaged **path** (the
+`additionalValidatorLines`; `conformanceEnforcement` — see "Conformance
+enforcement level" below for why this is only ONE of two ways to set it, and
+the only one a packaged app's operator cannot reach; and a *relative*
+`javaAssets` marker) — every packaged **path** (the
 gateway/kitd binaries, the UI dir, the manifest, the resolved Java-assets dir)
 is instead defaulted from Electron's own `process.resourcesPath` at runtime,
 never baked into the JSON, since an install path varies per machine. See
@@ -182,7 +185,7 @@ set headers).
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/health` | none | `200 {"ok":true}` |
-| `GET` | `/api/status` | token | Supervised-child status, the update-check result, and — on Kits built with the bridging demo — a `"bridging"` block carrying `demoMode` plus, once the boot-time Verify probes have run, optional `peer`/`refusePeer` probe results (each omitted, never a fabricated red, when its holder id is unconfigured) |
+| `GET` | `/api/status` | token | Supervised-child status, the update-check result, a `"conformanceLevel"` key carrying the enforcement level currently in effect (`""`/`"strict"`/`"none"`; key absent on a Kit build with no live level control), and — on Kits built with the bridging demo — a `"bridging"` block carrying `demoMode` plus, once the boot-time Verify probes have run, optional `peer`/`refusePeer` probe results (each omitted, never a fabricated red, when its holder id is unconfigured) |
 | `GET` | `/api/bootstrap` | token | Sign-in/provisioning state |
 | `POST` | `/api/bootstrap/signin` | token | Starts a loopback-PKCE browser sign-in |
 | `POST` | `/api/bootstrap/reset` | token | Clears stored credentials; `{"restartRequired":true}` |
@@ -198,6 +201,7 @@ set headers).
 | `GET` | `/api/support-bundle` | token | A zip of per-child logs, the manifest, the boot probe results, and recent run history — secrets excluded by inventory, not by hope |
 | `POST` | `/api/children/{name}/restart` | token | Restart one supervised Java child (`validator`/`data-server`/`br-provider`); `403` for the gateway child — restart the whole Kit for that |
 | `POST` | `/api/bridging/demo` | token | Turn bridging demo mode on/off (`{"enabled":bool}`); restarts the gateway child with a narrowed egress-native view; `409` while a run or watch is in flight |
+| `POST` | `/api/conformance-level` | token | Live conformance enforcement change (`{"level":"strict"\|"none"\|""}`, `""` clears back to the published default); restarts the gateway child with `CONFORMANCE_ENFORCEMENT` swapped in its env and persists the choice to `{state-dir}/conformance.json`; `400` for any other value, `409` while a run or watch is in flight — see "Conformance enforcement level" below |
 | `POST` | `/api/bridging/exhibit` | token | Run one embedded fixture (`{"kind":"carry"\|"refusal"}`) through the gateway child's real cross-version transform chain — a self-contained proof of the carry mechanism or a semantic-change refusal, independent of any scenario run or the demo-mode toggle |
 | `GET` | `/ui/*` | **none (ungated)** | The built Kit UI, served as static assets |
 
@@ -314,7 +318,10 @@ ingress directly. Once registered, the hosted Da Vinci reference payer
 answers four HCPCS order types end to end: **E0250** (hospital bed —
 covered, no prior authorization needed), **L8000** (breast prosthesis —
 prior authorization approved), **E0424** (stationary oxygen — held pending,
-then resolved on an amended re-submission), and **J3490** (an unclassified
+and held again on an amended re-submission; it decides on its own schedule, and
+the Kit asks for that decision through the gateway's inquiry leg on a bounded
+schedule, reporting the payer's own answer — the approval, or the hold still
+standing), and **J3490** (an unclassified
 drug — not covered, formally denied with the payer's stated reason).
 
 ## Bridging demo
@@ -341,6 +348,47 @@ independent seams:
 On a live bridged leg, the inspector's "Show transformation" expander fetches an
 on-demand before/after view of exactly what left this gateway's own edge — captured while
 the compatibility simulation is on, never on the wire and never part of the audit record.
+
+## Conformance enforcement level
+
+`CONFORMANCE_ENFORCEMENT` is a per-gateway setting: `"strict"` refuses an invalid
+message, `"none"` still checks and records every crossing but relays it as sent
+(except a payload this gateway itself translated between IG lines, and an answer it
+cannot read at all, which refuse at every level). The published default is `"none"` —
+**not** "validation off": every check still runs and every invalid verdict is still
+recorded as a finding (visible in the inspector's timeline, beside `validate.result`),
+metadata only, never a validator diagnostic string.
+
+Two ways to set it, and they compose:
+
+- **`--conformance-enforcement` / `kit.config.json`'s `conformanceEnforcement`**
+  (see "`shnkitd` flags" and "`kit.config.json`" above) sets it at process start.
+  This is the only reachable path in a dev checkout or a gate that pins a level on
+  the command line — but a **packaged, installed** Kit cannot use it:
+  `kit.config.json` lives inside the signed, read-only app bundle, and there is no
+  shell to pass a flag from.
+- **The "Conformance enforcement" control in the Kit UI's Status page**
+  (`POST /api/conformance-level`, above) changes the level live, in a running Kit —
+  the one path a packaged app's operator actually has. It restarts the supervised
+  gateway child with `CONFORMANCE_ENFORCEMENT` swapped into its env (the same
+  purpose-built, env-only restart the bridging demo toggle uses — same port, driver
+  keypair, and runner wiring; only the env differs) and persists the choice to
+  `{state-dir}/conformance.json`, so it survives a full Kit relaunch too. A failed
+  change reverts the gateway child to its prior, working level; the recorded level in
+  `GET /api/status` only ever advances on a change that actually succeeded.
+
+**Precedence at boot**: an explicit `--conformance-enforcement` (flag or
+`kit.config.json`) always wins over a previously-persisted live choice — the same
+"explicit config always overrides" rule `--token-store` follows — so a dev checkout
+or a gate that pins a level on the command line is never silently overridden by a
+choice recorded from an earlier, differently-flagged launch. Only when the flag is
+genuinely absent does `conformance.json` apply; with neither set, the gateway's own
+published default applies, tracked by absence — **`conformance.json` is never
+written with a value at package time**, and the packaging workflow's own shipped
+`kit.config.json` never pins a level either (`test/kitpackagingwf`'s
+`TestShippedKitConfigNeverPinsConformanceEnforcement` fails the build otherwise) —
+so a partner running the Kit gets the published default until they, or a config file
+they wrote themselves, choose otherwise.
 
 ## Packaging: the Java trio and JRE
 

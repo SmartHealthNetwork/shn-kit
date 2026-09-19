@@ -628,7 +628,9 @@
 }
 
 .open-step-note,
-.validate-substrate-note {
+.validate-substrate-note,
+.conformance-substrate-note,
+.conformance-timeline-note {
   margin: 0;
   color: var(--muted);
   font-size: 12px;

@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import type { HistorySummary, KitEvent, Register, RunResult } from './types';
 import type { RunSource } from './useRunEvents';
-import { buildDemoStory, buildRunStory, isDemoRun, normaliseLane } from './inspect';
+import { buildDemoStory, buildRunStory, conformanceTimelineNote, isDemoRun, normaliseLane } from './inspect';
 import { FlowMap } from './FlowMap';
 import { DemoStepDetail, StepDetail, type InspectorView, type ValidatorPosture } from './StepDetail';
 import { StatusChip } from './StatusChip';
@@ -295,6 +295,7 @@ export function RunInspector({
   // eviction; gating on source would disable the button at exactly the
   // moment users most want it.
   const replayDisabled = activeStory.terminal === undefined || replaying;
+  const findingsNote = conformanceTimelineNote(activeStory);
 
   return (
     <div className="insp">
@@ -329,6 +330,14 @@ export function RunInspector({
       {activeStory.terminal?.type === 'run.failed' && activeStory.terminal.detail && (
         <p className="run-terminal-detail">{activeStory.terminal.detail}</p>
       )}
+
+      {/* The timeline's own three-way empty-state discipline (inspect.ts's
+          conformanceTimelineNote) — undefined means SAY NOTHING, so this
+          renders only once the run is terminal AND at least one step
+          evidences a check having run, with no conformance.observed step
+          among them. Never claims a still-running or check-less run is
+          "clean". */}
+      {findingsNote && <p className="conformance-timeline-note">{findingsNote}</p>}
 
       <div className="insp-body">
         <FlowMap

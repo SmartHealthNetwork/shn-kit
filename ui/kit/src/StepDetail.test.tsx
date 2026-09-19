@@ -9,6 +9,7 @@ import {
   SUBSTRATE_FRAMING,
   VALIDATE_SUBSTRATE_NOTE,
   SOR_LOCAL_READ_NOTE,
+  CONFORMANCE_SUBSTRATE_NOTE,
   TRANSFORM_EMPTY_CONTENT_NOTE,
   IDENTITY_CHAIN_NOTE,
   ZERO_BYTES_NOTE,
@@ -280,6 +281,30 @@ function validateStep(): Step {
   };
 }
 
+function conformanceStep(overrides: Partial<Step> = {}): Step {
+  return {
+    id: '11',
+    kind: 'conformance',
+    legType: 'crd-order-select',
+    status: 'ok',
+    request: {
+      seq: 11,
+      time: '2026-07-03T00:00:00Z',
+      kind: 'conformance.observed',
+      legType: 'crd-order-select',
+      correlationId: 'c-9',
+      detail: JSON.stringify({ kind: 'fhir-ingress', decision: 'relayed', rule: 'Coverage.status', path: 'Coverage.status' }),
+    },
+    correlationId: 'c-9',
+    findingKind: 'fhir-ingress',
+    decision: 'relayed',
+    rule: 'Coverage.status',
+    path: 'Coverage.status',
+    narration: 'The Smart Gateway found a conformance issue with this message and relayed it as sent, recording the finding.',
+    ...overrides,
+  };
+}
+
 function ingressStep(): Step {
   return {
     id: '1',
@@ -318,6 +343,11 @@ describe('directionRows', () => {
   it('validate + ingress rows', () => {
     expect(directionRows(validateStep())[1].what).toBe('result: valid');
     expect(directionRows(ingressStep())[1].what).toBe('HTTP 200 response');
+  });
+  it('conformance rows name the check and its decision, never Hub/counterparty language', () => {
+    const rows = directionRows(conformanceStep());
+    expect(rows[1].what).toBe('relayed');
+    expect(JSON.stringify(rows)).not.toMatch(/Hub|counterpart/);
   });
 });
 
@@ -500,6 +530,39 @@ describe('StepDetail — clinical view', () => {
       "Read locally from the gateway's configured data source — this step never crosses the Hub.",
     );
   });
+
+  // The finding's whole story is kind/decision/rule/path — metadata only.
+  // No search box, no JsonView, no Request/Response pane: the event carries
+  // no payload at all (gateway/engine/finding.go's emitFinding sets none),
+  // and this step must never fabricate one.
+  it('a conformance step shows the finding facts (kind/decision/rule/path) and renders no payload search or JsonView pane', () => {
+    render(<StepDetail step={conformanceStep()} view="clinical" />);
+
+    expect(screen.getByText(conformanceStep().narration)).toBeDefined();
+    expect(screen.getByText('fhir-ingress')).toBeDefined();
+    // "relayed" appears both in the DirectionRows response row and the
+    // facts dl's Decision value — assert presence, not a unique match.
+    expect(screen.getAllByText('relayed').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Coverage.status').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByLabelText('Search resource')).toBeNull();
+    expect(screen.queryByLabelText('Search request and response')).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByText('Request')).toBeNull();
+    expect(screen.queryByText('Response')).toBeNull();
+    expect(screen.queryByText('Resource')).toBeNull();
+  });
+
+  it('a conformance step with an undefined decision/rule/path renders the honest "—" placeholder, never fabricating a value', () => {
+    render(
+      <StepDetail
+        step={conformanceStep({ decision: undefined, rule: undefined, path: undefined, findingKind: undefined })}
+        view="clinical"
+      />,
+    );
+    const dl = document.querySelector('.facts');
+    expect(dl?.textContent).toContain('—');
+    expect(screen.queryByText('Coverage.status')).toBeNull();
+  });
 });
 
 describe('StepDetail — network view', () => {
@@ -611,6 +674,23 @@ describe('StepDetail — network view', () => {
     expect(screen.getByText('OpenOrder')).toBeDefined();
     expect(screen.getByText('found')).toBeDefined();
     expect(document.body.textContent).not.toContain(SOR_RETURNED_MARKER);
+  });
+
+  // CRITICAL — shown-never-faked: a `conformance` step never crosses the
+  // Hub and never carries a payload — SUBSTRATE_FRAMING would be a false
+  // claim, and there is no request/response size to report.
+  it('a conformance step suppresses SUBSTRATE_FRAMING, shows the finding facts + local-judgment note, and never renders a payload size', () => {
+    render(<StepDetail step={conformanceStep()} view="substrate" />);
+
+    expect(screen.queryByText(SUBSTRATE_FRAMING)).toBeNull();
+    expect(screen.queryByText(OPEN_STEP_NOTE)).toBeNull();
+    expect(screen.getByText(CONFORMANCE_SUBSTRATE_NOTE)).toBeDefined();
+    expect(CONFORMANCE_SUBSTRATE_NOTE).toBe(
+      "A local judgment about this message's conformance — this step never crosses the Hub.",
+    );
+    expect(screen.getByText('fhir-ingress')).toBeDefined();
+    expect(screen.getAllByText('relayed').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/≈ \d+ KB/)).toBeNull();
   });
 });
 

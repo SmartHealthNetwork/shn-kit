@@ -198,6 +198,25 @@ function sorStep(op = 'OpenOrder'): Step {
   };
 }
 
+function conformanceStep(): Step {
+  return {
+    id: '11',
+    kind: 'conformance',
+    legType: 'crd-order-select',
+    status: 'ok',
+    request: {
+      seq: 11,
+      time: '2026-07-03T00:00:00Z',
+      kind: 'conformance.observed',
+      legType: 'crd-order-select',
+      detail: JSON.stringify({ kind: 'fhir-ingress', decision: 'relayed' }),
+    },
+    findingKind: 'fhir-ingress',
+    decision: 'relayed',
+    narration: 'conformance narration',
+  };
+}
+
 const NODE_IDS = ['provider', 'gateway', 'validator', 'hub', 'payer-gateway', 'payer-engine'];
 
 function getNode(id: string): HTMLElement {
@@ -285,6 +304,25 @@ describe('FlowMap — steps render in order, selection, click', () => {
 
     await user.click(buttons[2]);
     expect(onSelectStep).toHaveBeenCalledWith('3');
+  });
+
+  // A conformance.observed row sits beside a validate.result row in the same
+  // timeline — both are single-frame steps rendered by the same generic
+  // list, distinguished by legType (the leg it was found on) + a decision
+  // chip, never a network edge (data-from/to both "gateway": the edge-less
+  // gateway-flash treatment, same as edgeForStep(conformance) === undefined).
+  it('a conformance step renders beside a validate step, showing its leg + decision, with a gateway-only (no-network) edge', () => {
+    const story: RunStory = { runId: 'run-6', steps: [validateStep(), conformanceStep()], audit: [] };
+    render(<FlowMap story={story} lane="conformant" selectedStepId={undefined} onSelectStep={() => {}} />);
+
+    const buttons = Array.from(document.querySelectorAll('.step')) as HTMLElement[];
+    expect(buttons).toHaveLength(2);
+    const conformanceButton = buttons[1];
+    expect(conformanceButton.getAttribute('data-step-id')).toBe('11');
+    expect(conformanceButton.getAttribute('data-from')).toBe('gateway');
+    expect(conformanceButton.getAttribute('data-to')).toBe('gateway');
+    expect(conformanceButton.textContent).toContain('crd-order-select');
+    expect(conformanceButton.textContent).toContain('relayed');
   });
 
   it('marks the selected step with class "sel"', () => {
@@ -732,6 +770,15 @@ describe('edgeForStep', () => {
     expect(edgeForStep(ingressStep(), 'conformant')).toBe('src');
     expect(edgeForStep(validateStep(), 'ehr')).toBe('val');
     expect(edgeForStep(okLegStep(), 'ehr')).toBe('leg');
+  });
+  // conformance.observed is a local judgment, never a network hop — it must
+  // get the same edge-less gateway-flash treatment as the conformant-lane
+  // sor case, in EITHER lane. Mapping it onto the generic 'leg' fallback
+  // would light a false remote-node pulse for a check that never left the
+  // gateway.
+  it('conformance maps to NO edge in either lane — a local judgment, never a network hop', () => {
+    expect(edgeForStep(conformanceStep(), 'conformant')).toBeUndefined();
+    expect(edgeForStep(conformanceStep(), 'ehr')).toBeUndefined();
   });
 });
 

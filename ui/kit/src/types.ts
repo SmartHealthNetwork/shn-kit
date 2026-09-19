@@ -47,6 +47,13 @@ export interface StatusResponse {
   // the matching bootstrap.Verify BridgeProbes holder id was configured) —
   // never a fabricated red for a probe that didn't run.
   bridging?: { demoMode: boolean; peer?: Probe; refusePeer?: Probe };
+  // conformanceLevel mirrors kitd.go's handleStatus: the KEY ITSELF is
+  // present iff Config.ConformanceLevel is configured at all — an absent
+  // key means "this Kit build has no live conformance-level control,"
+  // never "the published default is off" (that's the value "", which IS
+  // the published-default state and is a genuine, present value here).
+  // "" | "strict" | "none".
+  conformanceLevel?: string;
 }
 
 // AboutManifest mirrors GET /api/about's body byte-for-byte — the
@@ -98,6 +105,17 @@ export interface RunResult {
   branch: string;
   state: 'passed' | 'failed';
   detail: string;
+  // The payer's own decision on this run's prior-authorization request, and —
+  // when it pended — the continuation the provider's gateway kept for it.
+  // ADDITIVE, key-presence semantics (the StatusResponse.validator /
+  // providerDataUrl convention): a runner that states no decision omits
+  // `decision` entirely and the row renders exactly as it did before. Never
+  // assume a default, and never read an absent `continuationDurable` as
+  // false — absent means the gateway said nothing about durability.
+  decision?: 'approved' | 'denied' | 'pended';
+  rationale?: string;
+  continuation?: string;
+  continuationDurable?: boolean;
 }
 
 export interface KitEvent {

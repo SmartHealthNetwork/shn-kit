@@ -132,6 +132,30 @@ describe('resolveConfig', () => {
     expect(cfg.bridgeDemoHolder).toBeUndefined();
     expect(cfg.bridgeDemoRefuseHolder).toBeUndefined();
   });
+
+  // conformanceEnforcement is the Kit operator's control over the packaged
+  // gateway child's CONFORMANCE_ENFORCEMENT — parses like every other
+  // pass-through knob above.
+  it('parses conformanceEnforcement when present', () => {
+    const path = '/kit.config.json';
+    const fields = { ...baseFields, conformanceEnforcement: 'strict' };
+    const readFile = fakeReadFile({ [path]: JSON.stringify(fields) });
+    const cfg = resolveConfig(readFile, {}, path);
+    expect(cfg.conformanceEnforcement).toBe('strict');
+  });
+
+  // Unset is the common, deliberate case — the whole point of this setting
+  // is that an operator who never touches it gets the published default, not
+  // a value the Kit invented on their behalf. resolveConfig must leave the
+  // field genuinely absent (undefined), not backfill it with 'none' or any
+  // other literal.
+  it('tolerates conformanceEnforcement missing — leaves it genuinely unset, never backfilled', () => {
+    const path = '/kit.config.json';
+    const readFile = fakeReadFile({ [path]: JSON.stringify(baseFields) });
+    const cfg = resolveConfig(readFile, {}, path);
+    expect(cfg.conformanceEnforcement).toBeUndefined();
+    expect('conformanceEnforcement' in cfg).toBe(false);
+  });
 });
 
 // Packaged-mode defaults: gatewayBin resolves exactly as

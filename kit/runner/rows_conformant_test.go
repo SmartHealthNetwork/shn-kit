@@ -14,6 +14,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -104,8 +105,60 @@ func dvApproved(preAuthRef string) string {
 	return `{"resourceType":"ClaimResponse","outcome":"complete","preAuthRef":"` + preAuthRef + `"}`
 }
 
-// dvPended is the held (A4) response shape: a pended ClaimResponse and the
-// payer's profiled Task asking for a questionnaire.
+// dvInquiryEnvelope is the envelope the reference payer answers Claim/$inquire in
+// (the live capture the SDK's inquiry reader was built against): a Parameters
+// whose single parameter, named responseBundle, holds the response Bundle. The
+// gateway relays those bytes verbatim, so this is what a row's inquiry reader is
+// handed — never the bare Bundle a $submit is answered with.
+func dvInquiryEnvelope(bundle string) string {
+	return `{"resourceType":"Parameters","parameter":[{"name":"responseBundle","resource":` + bundle + `}]}`
+}
+
+// dvInquiryNoMatch is the reference payer's answer to an inquiry that matches
+// nothing it holds, byte for byte as captured: an empty Parameters, no output
+// parameter at all.
+const dvInquiryNoMatch = `{"resourceType":"Parameters"}`
+
+// dvApprovedWhenAsked is the reference payer's answer to an inquiry once its timer
+// has decided: the inquiry envelope around a response Bundle whose ClaimResponse
+// is complete and states the authorization number in the review action's own
+// number — it carries no preAuthRef at all (the live capture the SDK's inquiry
+// reader was built against). The request line is present so the payer's echo of
+// the inquiry's trace number has somewhere to land; without it the answer names
+// no request.
+func dvApprovedWhenAsked(number string) string {
+	return dvInquiryEnvelope(`{"resourceType":"Bundle","type":"collection","timestamp":"2026-06-04T00:00:00Z","entry":[` +
+		`{"fullUrl":"https://payer.example/fhir/ClaimResponse/cr-decided","resource":{"resourceType":"ClaimResponse","id":"cr-decided",` +
+		`"status":"active","use":"preauthorization","patient":{"reference":"Patient/MBR-COVERED"},"outcome":"complete",` +
+		`"item":[{"itemSequence":1,"adjudication":[{"category":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/adjudication","code":"submitted"}]},` +
+		`"extension":[{"url":"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewAction","extension":[` +
+		`{"url":"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewActionCode",` +
+		`"valueCodeableConcept":{"coding":[{"system":"https://codesystem.x12.org/005010/306","code":"A1","display":"Certified in total"}]}},` +
+		`{"url":"number","valueString":"` + number + `"}]}]}]}]}}]}`)
+}
+
+// dvDeniedWhenAsked is an inquiry answer that states a denial (A3) with the
+// payer's own disposition, on the same envelope as dvApprovedWhenAsked.
+func dvDeniedWhenAsked(rationale string) string {
+	return dvInquiryEnvelope(`{"resourceType":"Bundle","type":"collection","timestamp":"2026-06-04T00:00:00Z","entry":[` +
+		`{"fullUrl":"https://payer.example/fhir/ClaimResponse/cr-denied","resource":{"resourceType":"ClaimResponse","id":"cr-denied",` +
+		`"status":"active","use":"preauthorization","patient":{"reference":"Patient/MBR-COVERED"},"outcome":"complete","disposition":"` + rationale + `",` +
+		`"item":[{"itemSequence":1,"adjudication":[{"category":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/adjudication","code":"submitted"}]},` +
+		`"extension":[{"url":"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewAction","extension":[` +
+		`{"url":"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewActionCode",` +
+		`"valueCodeableConcept":{"coding":[{"system":"https://codesystem.x12.org/005010/306","code":"A3","display":"Not Certified"}]}}]}]}]}]}}]}`)
+}
+
+// dvInquiryAnswerNoLines is an inquiry answer about SOME authorization, in the
+// inquiry envelope — a complete ClaimResponse with no request line, so no trace
+// number of the inquiry's can be echoed onto it and nothing ties it to the
+// request asked about. Distinct from dvInquiryNoMatch: here the payer answered
+// WITH a decision, and the row must not take it for its own.
+var dvInquiryAnswerNoLines = dvInquiryEnvelope(`{"resourceType":"Bundle","type":"collection","entry":[{"fullUrl":"https://payer.example/fhir/ClaimResponse/cr-other","resource":{"resourceType":"ClaimResponse","id":"cr-other","status":"active","use":"preauthorization","outcome":"complete"}}]}`)
+
+// dvPended is the held (A4) response shape a $submit or $update is answered with:
+// a response Bundle holding the pended ClaimResponse and the payer's profiled Task
+// asking for a questionnaire.
 func dvPended() string {
 	return `{"resourceType":"Bundle","type":"collection","timestamp":"2026-06-04T00:00:00Z","entry":[` +
 		`{"fullUrl":"https://payer.example/fhir/ClaimResponse/cr-held","resource":{"resourceType":"ClaimResponse","id":"cr-held",` +
@@ -122,6 +175,10 @@ func dvPended() string {
 		`{"type":{"coding":[{"system":"http://hl7.org/fhir/us/davinci-pas/CodeSystem/PASTempCodes","code":"questionnaires-needed"}]},` +
 		`"valueIdentifier":{"system":"https://payer.example/questionnaire","value":"home-oxygen"}}]}}]}`
 }
+
+// dvPendedWhenAsked is the same hold as the payer states it to an inquiry: the
+// pended response Bundle inside the inquiry envelope.
+func dvPendedWhenAsked() string { return dvInquiryEnvelope(dvPended()) }
 
 // dvDenied is the formal denial, rationale included.
 func dvDenied(rationale string) string {
@@ -150,11 +207,18 @@ type dvIngress struct {
 	card    func(code string) string             // "" ⇒ the family default
 	verdict func(code string, amend bool) string // "" ⇒ the family default
 	pkg     func(reqBody string) string          // "" ⇒ the payer default for this request
+	// inquire answers the n-th inquiry (1-based) about an order code; "" ⇒ the
+	// verdict hook's amended answer, then the payer default.
+	inquire func(code string, n int) string
 
-	mu           sync.Mutex
-	crdBodies    []string
-	pkgBodies    []string
-	submitBodies []string
+	mu            sync.Mutex
+	crdBodies     []string
+	pkgBodies     []string
+	submitBodies  []string
+	inquireBodies []string
+	// sleeps are the waits a row asked for before each inquiry, in order — the
+	// runner's Sleep is injected to record them and return at once.
+	sleeps []time.Duration
 }
 
 // dvDefaultCard is the reference payer's coverage answer per family.
@@ -273,9 +337,81 @@ func newDVIngress(t *testing.T) *dvIngress {
 		_, _ = w.Write([]byte(out))
 	})
 
+	// Claim/$inquire: the payer answers what it HOLDS for the authorization
+	// right now, because a pended authorization resolves only when the requester
+	// asks — the payer's answer to a $submit is its answer to THAT operation. The
+	// held rows drive this (conformantContinuation) after the payer answers their
+	// amendment "still held".
+	//
+	// The answer is INQUIRY-shaped, as the reference payer's is: a Parameters
+	// whose responseBundle parameter holds the response Bundle (dvInquiryEnvelope),
+	// its ClaimResponse stating the authorization number in the review action's
+	// own number, with the inquiry's trace numbers echoed onto its items
+	// (dvEchoItemTraceNumbers). The inquire hook's answer is sent as given, so a
+	// rejection row controls the exact bytes; the verdict hook's amended answer
+	// (a submit-shaped Bundle) is consulted, in the inquiry envelope, so a payer
+	// that "never decides" holds on every inquiry too; the default is the
+	// decision the reference payer's own timer has reached.
+	mux.HandleFunc("POST /Claim/$inquire", func(w http.ResponseWriter, r *http.Request) {
+		body := readBody(t, r)
+		ing.record(&ing.inquireBodies, body)
+		n := len(ing.inquiries())
+		code := dvInquiryOrder(t, body)
+		out := ""
+		if ing.inquire != nil {
+			out = ing.inquire(code, n)
+		}
+		if out == "" && ing.verdict != nil {
+			if held := ing.verdict(code, true); held != "" {
+				out = dvInquiryEnvelope(held)
+			}
+		}
+		if out == "" {
+			out = dvApprovedWhenAsked("AUTH-2001")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(dvEchoItemTraceNumbers(t, out, body)))
+	})
+
 	ing.srv = httptest.NewServer(mux)
 	t.Cleanup(ing.srv.Close)
 	return ing
+}
+
+// dvInquiryOrder reads the product code an inquiry asks about — the Claim item's
+// productOrService, which is the only place an inquiry states it (it carries no
+// order resource).
+func dvInquiryOrder(t *testing.T, body string) string {
+	t.Helper()
+	var b struct {
+		Entry []struct {
+			Resource struct {
+				ResourceType string `json:"resourceType"`
+				Item         []struct {
+					ProductOrService struct {
+						Coding []struct {
+							Code string `json:"code"`
+						} `json:"coding"`
+					} `json:"productOrService"`
+				} `json:"item"`
+			} `json:"resource"`
+		} `json:"entry"`
+	}
+	if err := json.Unmarshal([]byte(body), &b); err != nil {
+		t.Errorf("parse inquiry bundle: %v", err)
+		return ""
+	}
+	for _, e := range b.Entry {
+		if e.Resource.ResourceType != "Claim" {
+			continue
+		}
+		for _, it := range e.Resource.Item {
+			if len(it.ProductOrService.Coding) > 0 {
+				return it.ProductOrService.Coding[0].Code
+			}
+		}
+	}
+	return ""
 }
 
 func (i *dvIngress) record(into *[]string, body string) {
@@ -290,9 +426,10 @@ func (i *dvIngress) snapshot(of *[]string) []string {
 	return append([]string(nil), (*of)...)
 }
 
-func (i *dvIngress) crds() []string     { return i.snapshot(&i.crdBodies) }
-func (i *dvIngress) packages() []string { return i.snapshot(&i.pkgBodies) }
-func (i *dvIngress) submits() []string  { return i.snapshot(&i.submitBodies) }
+func (i *dvIngress) crds() []string      { return i.snapshot(&i.crdBodies) }
+func (i *dvIngress) packages() []string  { return i.snapshot(&i.pkgBodies) }
+func (i *dvIngress) submits() []string   { return i.snapshot(&i.submitBodies) }
+func (i *dvIngress) inquiries() []string { return i.snapshot(&i.inquireBodies) }
 
 func readBody(t *testing.T, r *http.Request) string {
 	t.Helper()
@@ -456,12 +593,28 @@ func dvRunner(t *testing.T, ing *dvIngress, bff *dvBFF) *Runner {
 		Key:             dvTestKey(t),
 	}
 	cfg := Config{Bus: event.NewBus(fixedClock)}
+	// The held rows' follow-up wait runs on no clock here: every delay a row
+	// asks for is recorded and returned at once, so the schedule itself is what
+	// a test reads, not wall time.
+	cfg.Sleep = func(_ context.Context, d time.Duration) error {
+		ing.mu.Lock()
+		defer ing.mu.Unlock()
+		ing.sleeps = append(ing.sleeps, d)
+		return nil
+	}
 	if bff != nil {
 		dcfg.BFFURL = bff.srv.URL
 		cfg.BFFURL = bff.srv.URL
 	}
 	cfg.Driver = scenariodriver.New(dcfg)
 	return New(cfg)
+}
+
+// waited returns the delays a row asked for before each inquiry, in order.
+func (i *dvIngress) waited() []time.Duration {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return append([]time.Duration(nil), i.sleeps...)
 }
 
 // ---- the pass table --------------------------------------------------------
@@ -661,13 +814,10 @@ func TestConformantRows_Reject(t *testing.T) {
 		{"uc03 coverage check requires no prior authorization", "uc03", "", cardFor("L8000", dvCardCovered), nil, nil, `want "auth-needed"`},
 		{"uc03 card advertises no questionnaire", "uc03", "", cardFor("L8000", dvCardAuthNeededNoQuestionnaire), nil, nil, "no questionnaire canonical"},
 		{"uc04 first submit approved", "uc04", "", nil, verdictFor("E0424", false, dvApproved("AUTH-9")), nil, "not pended"},
-		{"uc04 amend still held", "uc04", "", nil, verdictFor("E0424", true, dvPended()), nil, "not approved"},
 		{"uc04 amend non-reference prefix", "uc04", "", nil, verdictFor("E0424", true, dvApproved("PA-1")), nil, "AUTH-"},
 		{"uc05 first submit approved", "uc05", "", nil, verdictFor("E0424", false, dvApproved("AUTH-9")), nil, "not pended"},
-		{"uc05 amend still held", "uc05", "", nil, verdictFor("E0424", true, dvPended()), nil, "not approved"},
 		{"uc05 amend non-reference prefix", "uc05", "", nil, verdictFor("E0424", true, dvApproved("PA-1")), nil, "AUTH-"},
 		{"uc06 first submit approved", "uc06", "", nil, verdictFor("E0424", false, dvApproved("AUTH-9")), nil, "not pended"},
-		{"uc06 amend still held", "uc06", "", nil, verdictFor("E0424", true, dvPended()), nil, "not approved"},
 		{"uc06 amend non-reference prefix", "uc06", "", nil, verdictFor("E0424", true, dvApproved("PA-1")), nil, "AUTH-"},
 		// The E0424 family's coverage answer is CONDITIONAL on all three rows that
 		// drive it — a covered/no-auth answer means the payer decided the request
@@ -1024,4 +1174,403 @@ func TestConformantEvidenceUsesKnownHolderIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConformantRows_StillHeldIsReportedNotInvented: when the payer goes on holding a
+// request through every inquiry the row makes, the row says so — and says nothing
+// else.
+//
+// This replaces three rows that used to require the row to FAIL here ("not approved").
+// It failed for the wrong reason. A payer that has not decided has not failed, and it is
+// what a partner integrating against a live payer sees most of the time: real payers hold
+// requests for hours or days. A row that could only end "approved" taught the opposite and
+// would have gone red on the first slow payer.
+//
+// So the rejection this ships is the one that matters, and it is stricter than the old
+// one: the row must ASK, on the bounded schedule the shipped client uses and not one
+// inquiry past it, must report the payer's state as it is, must name the continuation it
+// holds, and must NOT state an authorization number — there isn't one. A row that
+// invented an authorization, quietly reported the pend as a decision, or kept asking
+// past the bound, fails here.
+func TestConformantRows_StillHeldIsReportedNotInvented(t *testing.T) {
+	for _, uc := range []string{"uc04", "uc05", "uc06"} {
+		t.Run(uc+" the payer never decides", func(t *testing.T) {
+			ing := newDVIngress(t)
+			// The payer answers "still held" to the amendment AND to every inquiry
+			// after it — a payer that has not made up its mind.
+			ing.verdict = func(code string, amend bool) string {
+				if code == "E0424" && amend {
+					return dvPended()
+				}
+				return ""
+			}
+			rn := dvRunner(t, ing, nil)
+			res, err := rn.Run(t.Context(), Req{Lane: "conformant", UC: uc})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if res.State != StatePassed {
+				t.Fatalf("state=%s detail=%q — a payer that has not decided has not failed", res.State, res.Detail)
+			}
+			if !strings.Contains(res.Detail, "still held by the payer") {
+				t.Errorf("detail %q does not report that the payer is still holding the request", res.Detail)
+			}
+			if !strings.Contains(res.Detail, "continuation is recorded") {
+				t.Errorf("detail %q does not name the continuation the requester keeps", res.Detail)
+			}
+			// The row asked, on the shipped client's schedule, and stopped at the
+			// bound: 2, 4, 5, 5, 5, 5 seconds — six inquiries, the last due at 26 s.
+			wantWaits := []time.Duration{2 * time.Second, 4 * time.Second, 5 * time.Second, 5 * time.Second, 5 * time.Second, 5 * time.Second}
+			if got := ing.waited(); !equalDurations(got, wantWaits) {
+				t.Errorf("waits before each inquiry = %v, want %v", got, wantWaits)
+			}
+			if got := len(ing.inquiries()); got != shnsdk.MaxPriorAuthInquiries {
+				t.Errorf("the row made %d inquiries, want the bound %d", got, shnsdk.MaxPriorAuthInquiries)
+			}
+			if !strings.Contains(res.Detail, "6 inquiries") {
+				t.Errorf("detail %q does not say how many times the payer was asked", res.Detail)
+			}
+			if strings.Contains(res.Detail, "AUTH-") || strings.Contains(res.Detail, "approved") {
+				t.Errorf("detail %q states an authorization the payer never gave", res.Detail)
+			}
+		})
+	}
+}
+
+// TestConformantRows_TheWaitBoundStopsTheAsking: the schedule is bounded twice — by
+// the inquiry count and by the wait — and the hermetic rows above, run on a clock
+// that never moves, can only reach the first. This one runs on a clock that moves:
+// every wait advances it by the delay asked for, and the payer takes 5 s to answer
+// each inquiry, so the sixth inquiry would fall due after the 30 s bound. The row
+// must stop at the last inquiry that still fits — the third, due at 21 s and
+// answered at 26 s; the fourth would fall due at 31 s — and say how many it made.
+// A row that counted inquiries but never looked at the clock keeps asking after
+// the bound the shipped client promises a payer, and fails here.
+func TestConformantRows_TheWaitBoundStopsTheAsking(t *testing.T) {
+	const answerTakes = 5 * time.Second
+	ing := newDVIngress(t)
+	ing.verdict = func(code string, amend bool) string {
+		if code == "E0424" && amend {
+			return dvPended()
+		}
+		return ""
+	}
+	clock := &dvClock{now: fixedClock()}
+	ing.inquire = func(string, int) string {
+		clock.advance(answerTakes)
+		return dvPendedWhenAsked()
+	}
+	rn := dvRunner(t, ing, nil)
+	rn.cfg.Now = clock.Now
+	rn.cfg.Sleep = func(_ context.Context, d time.Duration) error {
+		ing.mu.Lock()
+		ing.sleeps = append(ing.sleeps, d)
+		ing.mu.Unlock()
+		clock.advance(d)
+		return nil
+	}
+	res, err := rn.Run(t.Context(), Req{Lane: "conformant", UC: "uc04"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.State != StatePassed {
+		t.Fatalf("state=%s detail=%q — a payer that has not decided has not failed", res.State, res.Detail)
+	}
+	if got := len(ing.inquiries()); got != 3 {
+		t.Errorf("the row made %d inquiries, want 3 — the last that falls due inside the %v bound on this clock", got, shnsdk.MaxPriorAuthWait)
+	}
+	if got, want := ing.waited(), []time.Duration{2 * time.Second, 4 * time.Second, 5 * time.Second}; !equalDurations(got, want) {
+		t.Errorf("waits before each inquiry = %v, want %v", got, want)
+	}
+	if elapsed := clock.Now().Sub(fixedClock()); elapsed != 26*time.Second {
+		t.Errorf("the row's clock ran %v, want 26s (2+5, 4+5, 5+5)", elapsed)
+	}
+	for _, want := range []string{"still held by the payer", "continuation is recorded", "3 inquiries over 26s"} {
+		if !strings.Contains(res.Detail, want) {
+			t.Errorf("detail %q does not contain %q", res.Detail, want)
+		}
+	}
+}
+
+// dvClock is a clock a row's own waits and its payer's answers move forward.
+type dvClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *dvClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *dvClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+func equalDurations(a, b []time.Duration) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestConformantRows_DecidedWhenAsked: the payer holds the amendment and decides on
+// its own timer; the row learns the decision by ASKING and reports the payer's own
+// authorization number, read the way the shipped client reads an inquiry answer.
+//
+// The decision arrives on the second inquiry here, as it does against the reference
+// payer (its timer resolves before the row's second ask falls due), so the row is
+// also pinned to have asked exactly twice and waited the schedule's first two delays.
+func TestConformantRows_DecidedWhenAsked(t *testing.T) {
+	for _, uc := range []string{"uc04", "uc05", "uc06"} {
+		t.Run(uc, func(t *testing.T) {
+			ing := newDVIngress(t)
+			ing.verdict = func(code string, amend bool) string {
+				if code == "E0424" && amend {
+					return dvPended()
+				}
+				return ""
+			}
+			ing.inquire = func(code string, n int) string {
+				if n < 2 {
+					return dvPendedWhenAsked()
+				}
+				return dvApprovedWhenAsked("AUTH-2003")
+			}
+			rn := dvRunner(t, ing, nil)
+			res, err := rn.Run(t.Context(), Req{Lane: "conformant", UC: uc})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if res.State != StatePassed {
+				t.Fatalf("state=%s detail=%q", res.State, res.Detail)
+			}
+			for _, want := range []string{"approved when asked, auth AUTH-2003", "2 inquiries"} {
+				if !strings.Contains(res.Detail, want) {
+					t.Errorf("detail %q does not contain %q", res.Detail, want)
+				}
+			}
+			if strings.Contains(res.Detail, "still held") {
+				t.Errorf("detail %q reports a hold the payer has ended", res.Detail)
+			}
+			if got := ing.inquiries(); len(got) != 2 {
+				t.Fatalf("the row made %d inquiries, want 2", len(got))
+			}
+			if got, want := ing.waited(), []time.Duration{2 * time.Second, 4 * time.Second}; !equalDurations(got, want) {
+				t.Errorf("waits before each inquiry = %v, want %v", got, want)
+			}
+			// Each inquiry is its own exchange: it names the payer it is routed to,
+			// the member asked about, the request lines by their trace numbers, and
+			// an inquiry identifier of its own that the other inquiry does not share.
+			ids := map[string]bool{}
+			for i, inq := range ing.inquiries() {
+				if !strings.Contains(inq, `"`+string(shnsdk.CMSPayerIdentity.Value)+`"`) {
+					t.Errorf("inquiry %d does not name the payer it is sent to", i+1)
+				}
+				if len(dvInquiryTraceNumbers(t, inq)) == 0 {
+					t.Errorf("inquiry %d names no request line to ask about", i+1)
+				}
+				id := dvInquiryIdentifier(t, inq)
+				if id == "" || ids[id] {
+					t.Errorf("inquiry %d carries identifier %q, want one of its own", i+1, id)
+				}
+				ids[id] = true
+			}
+		})
+	}
+}
+
+// dvInquiryIdentifier reads the inquiry Claim's own identifier value.
+func dvInquiryIdentifier(t *testing.T, inquiry string) string {
+	t.Helper()
+	var b struct {
+		Entry []struct {
+			Resource struct {
+				ResourceType string `json:"resourceType"`
+				Identifier   []struct {
+					System string `json:"system"`
+					Value  string `json:"value"`
+				} `json:"identifier"`
+			} `json:"resource"`
+		} `json:"entry"`
+	}
+	if json.Unmarshal([]byte(inquiry), &b) != nil {
+		return ""
+	}
+	for _, e := range b.Entry {
+		if e.Resource.ResourceType != "Claim" {
+			continue
+		}
+		for _, id := range e.Resource.Identifier {
+			if id.System == shnsdk.PASInquiryIdentifierSystem {
+				return id.Value
+			}
+		}
+	}
+	return ""
+}
+
+// TestConformantRows_AskRejects: the ask's own fences. Each row is the decided-when-
+// asked exchange above with ONE fact mutated, and each must fail naming the fence it
+// broke — never pass by reading the first answer it found, by reading an inquiry
+// answer with the submit reader, or by accepting a number that is not the reference
+// payer's.
+func TestConformantRows_AskRejects(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		answer  string
+		sleep   func(context.Context, time.Duration) error
+		wantErr string
+	}{
+		// The reference payer's own answer to an inquiry that matches nothing it
+		// holds — the captured empty Parameters — is not a decision: the fence is the
+		// SDK reader's own (shnsdk.ErrInquiryNoMatch), asserted by its own words so
+		// the row cannot pass on a different refusal wearing the runner's wrapper.
+		{"the payer holds nothing for this inquiry", dvInquiryNoMatch, nil, shnsdk.ErrInquiryNoMatch.Error()},
+		// An answer that names no request line of the inquiry's is an answer about
+		// some other authorization: matching nothing is not answered, and the row must
+		// not take the decision it carries. Same fence, reached past a ClaimResponse
+		// the row could have read had it taken the first one it found.
+		{"answer is about no request of this inquiry's", dvInquiryAnswerNoLines, nil, shnsdk.ErrInquiryNoMatch.Error()},
+		// A bare ClaimResponse is the submit answer's shape, not an inquiry answer's:
+		// the inquiry reader refuses it rather than the submit reader accepting it.
+		{"answer is not inquiry-shaped", dvApproved("AUTH-2003"), nil, "not a Bundle or Parameters"},
+		{"approved with a number that is not the reference payer's", dvApprovedWhenAsked("PA-1"), nil, "not the reference payer's AUTH-NNNN"},
+		{"denied when asked", dvDeniedWhenAsked("Oxygen saturation criteria not met."), nil, `answered "denied": Oxygen saturation criteria not met.`},
+		// The wait follows the run: a cancelled run makes no further inquiry.
+		{"the wait is cancelled", "", func(context.Context, time.Duration) error { return context.Canceled }, "wait before inquiry: context canceled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ing := newDVIngress(t)
+			ing.verdict = func(code string, amend bool) string {
+				if code == "E0424" && amend {
+					return dvPended()
+				}
+				return ""
+			}
+			ing.inquire = func(string, int) string { return tc.answer }
+			rn := dvRunner(t, ing, nil)
+			if tc.sleep != nil {
+				rn.cfg.Sleep = tc.sleep
+			}
+			res, err := rn.Run(t.Context(), Req{Lane: "conformant", UC: "uc04"})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if res.State != StateFailed {
+				t.Fatalf("state=%s detail=%q, want failed", res.State, res.Detail)
+			}
+			if !strings.Contains(res.Detail, tc.wantErr) {
+				t.Errorf("detail %q does not name the fence %q", res.Detail, tc.wantErr)
+			}
+			if strings.Contains(res.Detail, "approved when asked") {
+				t.Errorf("detail %q reports an approval the fence refused", res.Detail)
+			}
+			if tc.sleep != nil && len(ing.inquiries()) != 0 {
+				t.Errorf("a cancelled wait still made %d inquiries", len(ing.inquiries()))
+			}
+		})
+	}
+}
+
+// dvEchoItemTraceNumbers stamps the inquiry's own item trace numbers onto the
+// ClaimResponse items of the answer, which is what the reference payer does.
+//
+// This is not decoration. A requester asks a payer about ONE authorization and
+// gets back every authorization the payer holds for the parties it named; the
+// trace number the requester itself sent is how it tells which of the answers is
+// about its request (shnsdk.InquiryDecision selects on it). The reference payer
+// echoes them on every answer it gives — the pend, the re-pend and the resolution
+// alike, live-captured — so a stand-in that did not echo them would answer an
+// inquiry nothing could read, and a row driving it would either fail where the
+// real payer succeeds or, worse, pass by reading the first response it found.
+func dvEchoItemTraceNumbers(t *testing.T, answer, inquiry string) string {
+	t.Helper()
+	traces := dvInquiryTraceNumbers(t, inquiry)
+	if len(traces) == 0 {
+		return answer
+	}
+	var doc any
+	if json.Unmarshal([]byte(answer), &doc) != nil {
+		return answer
+	}
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if x["resourceType"] == "ClaimResponse" {
+				items, _ := x["item"].([]any)
+				for i, raw := range items {
+					it, ok := raw.(map[string]any)
+					if !ok || i >= len(traces) {
+						continue
+					}
+					exts, _ := it["extension"].([]any)
+					it["extension"] = append(exts, map[string]any{
+						"url":             "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-itemTraceNumber",
+						"valueIdentifier": traces[i],
+					})
+				}
+			}
+			for _, c := range x {
+				walk(c)
+			}
+		case []any:
+			for _, c := range x {
+				walk(c)
+			}
+		}
+	}
+	walk(doc)
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("dvEchoItemTraceNumbers: %v", err)
+	}
+	return string(out)
+}
+
+// dvInquiryTraceNumbers reads the item trace numbers an inquiry states, in item order.
+func dvInquiryTraceNumbers(t *testing.T, inquiry string) []map[string]any {
+	t.Helper()
+	var b struct {
+		Entry []struct {
+			Resource struct {
+				ResourceType string `json:"resourceType"`
+				Item         []struct {
+					Extension []struct {
+						URL             string         `json:"url"`
+						ValueIdentifier map[string]any `json:"valueIdentifier"`
+					} `json:"extension"`
+				} `json:"item"`
+			} `json:"resource"`
+		} `json:"entry"`
+	}
+	if json.Unmarshal([]byte(inquiry), &b) != nil {
+		return nil
+	}
+	for _, e := range b.Entry {
+		if e.Resource.ResourceType != "Claim" {
+			continue
+		}
+		var out []map[string]any
+		for _, it := range e.Resource.Item {
+			var found map[string]any
+			for _, x := range it.Extension {
+				if x.URL == "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-itemTraceNumber" {
+					found = x.ValueIdentifier
+				}
+			}
+			out = append(out, found)
+		}
+		return out
+	}
+	return nil
 }

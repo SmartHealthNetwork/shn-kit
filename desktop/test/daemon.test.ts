@@ -49,6 +49,7 @@ describe('buildArgs', () => {
       additionalValidatorLines: '2.1,2.2',
       bridgeDemoHolder: 'bridge-demo',
       bridgeDemoRefuseHolder: 'bridge-demo-refuse',
+      conformanceEnforcement: 'strict',
       apiAddr: '127.0.0.1:5555',
     };
     const args = buildArgs(cfg, '/state');
@@ -69,6 +70,7 @@ describe('buildArgs', () => {
       '--additional-validator-lines', '2.1,2.2',
       '--bridge-demo-holder', 'bridge-demo',
       '--bridge-demo-refuse-holder', 'bridge-demo-refuse',
+      '--conformance-enforcement', 'strict',
       '--ui-dir', '/opt/shn/ui',
       '--api-addr', '127.0.0.1:5555',
       '--state-dir', '/state',
@@ -102,6 +104,27 @@ describe('buildArgs', () => {
     const args = buildArgs(cfgBase, '/state');
     expect(args).not.toContain('--validator-line');
     expect(args).not.toContain('--additional-validator-lines');
+  });
+
+  // The Kit setting for CONFORMANCE_ENFORCEMENT is the same optional-flag
+  // shape as validatorLine above: threaded when set, OMITTED entirely when
+  // not — never a literal 'none' written on the operator's behalf. An
+  // operator who never touches this setting must get exactly what an
+  // unconfigured gateway gets (the published default), and the ONLY way
+  // that stays true as the published default moves is if the Kit never puts
+  // a value on the wire at all when the operator hasn't chosen one (see
+  // kit/cmd/shnkitd/main.go's conformanceEnv, which applies the identical
+  // rule one hop downstream).
+  it('threads --conformance-enforcement through when set', () => {
+    const args = buildArgs({ ...cfgBase, conformanceEnforcement: 'strict' }, '/state');
+    const idx = args.indexOf('--conformance-enforcement');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe('strict');
+  });
+
+  it('omits --conformance-enforcement entirely when unset — never defaults it to a literal value', () => {
+    const args = buildArgs(cfgBase, '/state');
+    expect(args).not.toContain('--conformance-enforcement');
   });
 
   it('secretsDir set + accountsUrl unset -> no --accounts flag, --secrets instead', () => {

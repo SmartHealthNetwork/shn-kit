@@ -8,7 +8,7 @@ import type { JSX } from 'react';
 import type { BootstrapResponse, Probe, StatusResponse } from './types';
 import type { SSEState } from './useEvents';
 import { canRestart, openExternal, restartKit, resolveToken } from './bridge';
-import { ApiError, postChildRestart, postReset, postVerify, supportBundleUrl } from './api';
+import { ApiError, postChildRestart, postConformanceLevel, postReset, postVerify, supportBundleUrl } from './api';
 import { AboutPanel } from './AboutPanel';
 
 export interface StatusPanelProps {
@@ -104,6 +104,93 @@ function ChildRestartControl({ name, admissionPending }: { name: string; admissi
       </button>
       {state.kind === 'error' && (
         <p role="alert" className="child-restart-error">
+          {state.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// CONFORMANCE_LEVEL_OPTIONS: the three choices ConformanceLevelControl
+// renders as tabs, in the order shown. "" is "Published default" — never
+// labeled with the default's current VALUE (that value is this Kit's own
+// published default, not something the control should assert, since it can
+// change without this file changing).
+const CONFORMANCE_LEVEL_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'Published default' },
+  { value: 'strict', label: 'Strict' },
+  { value: 'none', label: 'None' },
+];
+
+type ConformanceLevelState = { kind: 'idle' } | { kind: 'pending' } | { kind: 'error'; message: string };
+
+// ConformanceLevelControl is the operator-facing equivalent of
+// --conformance-enforcement/kit.config.json's conformanceEnforcement for a
+// PACKAGED, installed Kit (which can reach neither — see
+// kitd.Config.ConformanceLevel's own doc). A mutually-exclusive selection,
+// same role="tablist"/role="tab" idiom as ModeSwitch's lane switch — never
+// aria-pressed, which is for independent toggles. `level` is the CURRENT
+// server-reported value (StatusResponse.conformanceLevel); a click that
+// repeats it is a no-op (no request), and every tab disables while a change
+// is in flight so a second click can't race the first restart.
+function ConformanceLevelControl({ level }: { level: string }): JSX.Element {
+  const [state, setState] = useState<ConformanceLevelState>({ kind: 'idle' });
+  // applied is the locally-known current level: seeded from the prop,
+  // advanced only by this control's OWN successful change — never
+  // overwritten by a later prop update, so a slow/racing status poll can't
+  // visually revert a change this control just confirmed. A genuinely
+  // external change (e.g. another client's toggle) is picked up on the next
+  // full StatusPanel remount, the same eventual-consistency posture
+  // ChildRestartControl's own local state already has.
+  const [applied, setApplied] = useState(level);
+
+  const handleSelect = async (value: string) => {
+    if (value === applied || state.kind === 'pending') return;
+    setState({ kind: 'pending' });
+    try {
+      const res = await postConformanceLevel(value);
+      setApplied(res.level);
+      setState({ kind: 'idle' });
+    } catch (err) {
+      // 409 (a run or watch is in flight, a best-effort gate) gets the
+      // SAME operator-actionable copy ChildRestartControl uses; every other
+      // error surfaces the raw server detail.
+      const message =
+        err instanceof ApiError && err.status === 409
+          ? 'finish or stop the current run first'
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setState({ kind: 'error', message });
+    }
+  };
+
+  return (
+    <div className="conformance-level-control">
+      <div className="conformance-level-switch" role="tablist" aria-label="Conformance enforcement">
+        {CONFORMANCE_LEVEL_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            role="tab"
+            aria-selected={applied === opt.value}
+            // aria-current is what the stylesheet's selected-tab rule
+            // actually keys on (mirroring ModeSwitch's own dual
+            // aria-selected+aria-current — role="tab" alone is correct
+            // ARIA but, without this, the CSS has nothing to render the
+            // selection with).
+            aria-current={applied === opt.value ? 'true' : undefined}
+            disabled={state.kind === 'pending'}
+            onClick={() => {
+              void handleSelect(opt.value);
+            }}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {state.kind === 'error' && (
+        <p role="alert" className="conformance-level-error">
           {state.message}
         </p>
       )}
@@ -345,6 +432,24 @@ export function StatusPanel({ boot, status, sseState, admissionPending = false, 
           </p>
         )}
       </section>
+
+      {/* status?.conformanceLevel !== undefined: key-presence, not truthiness
+          — "" (the published default) is a genuine present value, never
+          conflated with "this Kit build has no live level control at all"
+          (StatusResponse.conformanceLevel's own doc). */}
+      {status?.conformanceLevel !== undefined && (
+        <section className="card systems-card conformance-level">
+          <h2>Conformance enforcement</h2>
+          <p className="conformance-level-hint">
+            Every governed check runs regardless of level; only “Strict” refuses a non-conformant
+            message (two checks always refuse, at any level: a payload this gateway itself
+            translated between IG lines, and an answer it cannot read at all). “Published default”
+            tracks this Kit&apos;s own published default rather than a fixed value, since that
+            default can change.
+          </p>
+          <ConformanceLevelControl level={status.conformanceLevel} />
+        </section>
+      )}
 
       <section className="card systems-card systems-card-wide about-card">
         <AboutPanel />

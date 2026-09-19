@@ -88,6 +88,16 @@ export const SUBSTRATE_FRAMING =
 export const VALIDATE_SUBSTRATE_NOTE =
   "Checked locally against the Kit's validator — this step never crosses the Hub.";
 
+// Shown-never-faked: a `conformance` step (conformance.observed) is a SINGLE
+// observer frame — a governed check's own judgment, never a network hop —
+// so SUBSTRATE_FRAMING's sealed-envelope claim would be false for it too.
+// It never carries a payload (gateway/engine/finding.go's emitFinding sets
+// no ObserverEvent.Payload for this kind) — CONFORMANCE_FACTS below is the
+// whole story: findingKind/decision/rule/path, metadata only, never a
+// validator diagnostic. Pinned exactly; do not paraphrase.
+export const CONFORMANCE_SUBSTRATE_NOTE =
+  "A local judgment about this message's conformance — this step never crosses the Hub.";
+
 // Shown-never-faked: a `sor` step is a SINGLE observer frame — one read of
 // the gateway's configured data source. Its request.payload holds the
 // RETURNED resource bytes (never a "request"), and it never has a response,
@@ -183,6 +193,15 @@ export function directionRows(step: Step): DirectionRow[] {
         { arrow: '→', who: 'Smart Gateway → its data source', what: `read: ${step.sorOp ?? 'record'}` },
         { arrow: '←', who: 'its data source → Smart Gateway', what: step.sorDetail ?? 'returned' },
       ];
+    // conformance: a single-frame local judgment, never a network hop — not
+    // reached in practice (the render path carves this kind out before
+    // calling DirectionRows, same as validate/sor), kept for shape parity
+    // and so this switch stays exhaustive.
+    case 'conformance':
+      return [
+        { arrow: '→', who: 'Smart Gateway → its own conformance check', what: `${step.findingKind ?? 'check'} against ${step.legType}` },
+        { arrow: '←', who: 'its own conformance check → Smart Gateway', what: step.decision ?? 'recorded' },
+      ];
   }
 }
 
@@ -197,6 +216,33 @@ function DirectionRows({ step }: { step: Step }): JSX.Element {
         </div>
       ))}
     </div>
+  );
+}
+
+// ConformanceFacts renders a conformance.observed step's whole story —
+// findingKind/decision/rule/path — the same four facts in both views (the
+// carve-outs below use this once each). Metadata only; a finding never
+// carries a validator diagnostic string, and this component never reads one.
+function ConformanceFacts({ step }: { step: Step }): JSX.Element {
+  return (
+    <dl className="facts">
+      <dt>Check</dt>
+      <dd>{step.findingKind ?? '—'}</dd>
+      <dt>Decision</dt>
+      <dd>{step.decision ?? '—'}</dd>
+      {step.rule !== undefined && (
+        <>
+          <dt>Rule</dt>
+          <dd>{step.rule}</dd>
+        </>
+      )}
+      {step.path !== undefined && (
+        <>
+          <dt>Path</dt>
+          <dd>{step.path}</dd>
+        </>
+      )}
+    </dl>
   );
 }
 
@@ -812,6 +858,7 @@ export function StepDetail({ step, view, posture = 'stand-in', register = 'overv
   const failureDetail = step.status === 'failed' ? step.response?.detail ?? step.request?.detail : undefined;
   const isValidate = step.kind === 'validate';
   const isSor = step.kind === 'sor';
+  const isConformance = step.kind === 'conformance';
   // isRefused: step.refusal is set on BOTH self-contained failed-
   // leg species (inspect.ts's makeRefusedLegStep/makeTransformRefusedLegStep)
   // — neither ever got a request/response pair for an actual exchange (both
@@ -863,6 +910,18 @@ export function StepDetail({ step, view, posture = 'stand-in', register = 'overv
             <ValidationBadge validation={step.validation} posture={posture} />
           )}
           <p className="validate-substrate-note">{VALIDATE_SUBSTRATE_NOTE}</p>
+        </div>
+      );
+    }
+
+    // Conformance carve-out: never a network hop, never a payload (see
+    // CONFORMANCE_SUBSTRATE_NOTE's own comment) — show the finding's facts
+    // and the honest local-judgment line, nothing else.
+    if (isConformance) {
+      return (
+        <div className={rootClassName} data-view="substrate">
+          <ConformanceFacts step={step} />
+          <p className="conformance-substrate-note">{CONFORMANCE_SUBSTRATE_NOTE}</p>
         </div>
       );
     }
@@ -974,6 +1033,20 @@ export function StepDetail({ step, view, posture = 'stand-in', register = 'overv
         {step.validation !== undefined && (
           <ValidationBadge validation={step.validation} posture={posture} />
         )}
+      </div>
+    );
+  }
+
+  // Conformance carve-out: a conformance.observed step never carries a
+  // payload (see CONFORMANCE_SUBSTRATE_NOTE's comment) — no search box, no
+  // JsonView, no Request/Response panes. Just the narration and the
+  // finding's own facts (findingKind/decision/rule/path), metadata only.
+  if (isConformance) {
+    return (
+      <div className={rootClassName} data-view="clinical">
+        <DirectionRows step={step} />
+        <p className="narr">{step.narration}</p>
+        <ConformanceFacts step={step} />
       </div>
     );
   }

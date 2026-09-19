@@ -92,13 +92,17 @@ type Config struct {
 	// (bridge-refuse excepted — that row originates on Driver, the main
 	// child) with ehrLaneUnavailable before any run is created.
 	ProviderDataDriver *scenariodriver.Driver
-	Bus                *event.Bus             // the Kit run-timeline bus (required)
-	Relay              relay.Stamper          // nil ok — unit tests without a live observer; a relay.Multi when several children emit
-	AuditURL           string                 // "" ⇒ merge skipped, one audit.unavailable event per run
-	HTTP               *http.Client           // nil → http.DefaultClient
-	Now                func() time.Time       // nil → time.Now
-	NewRunID           func() string          // nil → monotonic "run-N"
-	UC07PCI            func() (string, error) // patient-surface PCI resolver
+	Bus                *event.Bus       // the Kit run-timeline bus (required)
+	Relay              relay.Stamper    // nil ok — unit tests without a live observer; a relay.Multi when several children emit
+	AuditURL           string           // "" ⇒ merge skipped, one audit.unavailable event per run
+	HTTP               *http.Client     // nil → http.DefaultClient
+	Now                func() time.Time // nil → time.Now
+	// Sleep waits for d or until ctx ends (nil → a timer that follows ctx). A
+	// held row's bounded follow-up wait runs on it, so a hermetic test can run
+	// the whole schedule on no clock at all and still see every delay.
+	Sleep    func(ctx context.Context, d time.Duration) error
+	NewRunID func() string          // nil → monotonic "run-N"
+	UC07PCI  func() (string, error) // patient-surface PCI resolver
 	// PatientSurfaceReadable reports whether the hosted patient-surface reads
 	// (/personas, /authorizations) are reachable by this (machine) client. shnkitd
 	// sets it from a boot-time probe: in the HOSTED topology the discovery-advertised
@@ -130,7 +134,35 @@ type Result struct {
 	Branch string `json:"branch"`
 	State  string `json:"state"`
 	Detail string `json:"detail"`
+
+	// PayerDecision is what the payer said about this run's prior
+	// authorization, as the run's own driver read it off the answer — never
+	// what the row expected. Its fields are empty on a run that carries no
+	// prior-authorization determination at all.
+	PayerDecision
 }
+
+// PayerDecision is one payer determination as a run read it.
+//
+// Decision is approved, denied or pended. A PENDED authorization is a complete,
+// correct outcome, not a failure: the payer has the request and has not decided
+// yet, and Continuation is the capability the decision can be asked for later
+// with.
+type PayerDecision struct {
+	Decision     string `json:"decision,omitempty"`
+	Rationale    string `json:"rationale,omitempty"`
+	Continuation string `json:"continuation,omitempty"`
+	// ContinuationDurable is a POINTER because absent and false are different
+	// facts: absent is "there is no continuation to be durable about", and
+	// present-and-false is the deployment disclosing that what it minted does
+	// not survive a restart. A non-durable continuation that discloses itself
+	// by being absent is not a disclosure.
+	ContinuationDurable *bool `json:"continuationDurable,omitempty"`
+}
+
+// stated reports whether this is a determination at all — the one condition
+// under which a run reports one.
+func (d PayerDecision) stated() bool { return d.Decision != "" }
 
 // rowFunc drives one lane's UC — branch is "" for UCs that take none. It
 // returns a one-sentence human detail on success, or an error whose message
@@ -204,6 +236,52 @@ type Runner struct {
 	// lock out from under a real run — an atomic read never
 	// contends with mu at all.
 	inFlight atomic.Bool
+
+	// decision is the payer determination the row currently holding mu has
+	// read, if it read one. It needs no lock of its own: mu is held for the
+	// whole of exactly one row's execution (the sequential-only invariant this
+	// package is built on), so the row that writes it and the runLocked frame
+	// that reads it are the same held section. It is cleared when a run or a
+	// watch takes the lock, so nothing can inherit the previous run's.
+	decision PayerDecision
+
+	// ctx is the run context of the row currently holding mu, under the same
+	// held-section rule as decision: the row that waits on it and the runLocked
+	// frame that set it are the same held section. A row that waits (a held
+	// prior authorization asking for its decision) follows it.
+	ctx context.Context
+}
+
+// wait pauses the row holding mu for d, or until its run context ends.
+func (r *Runner) wait(d time.Duration) error {
+	ctx := r.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if r.cfg.Sleep != nil {
+		return r.cfg.Sleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// reportDecision records the payer determination this row read. The LAST one a
+// row reads is the one the Result carries: a row that submits and then continues
+// the authorization reports the payer's latest word, not its first.
+//
+// Only a stated determination is recorded. A later step that says nothing about
+// the payer (a read-back, a patient-surface render) must not erase what the payer
+// already said.
+func (r *Runner) reportDecision(d PayerDecision) {
+	if d.stated() {
+		r.decision = d
+	}
 }
 
 // New constructs a Runner, defaulting HTTP/Now/NewRunID when unset.
@@ -310,6 +388,7 @@ func (r *Runner) StartWatch(ctx context.Context) (string, error) {
 		return "", ErrRunInFlight
 	}
 	r.inFlight.Store(true)
+	r.decision = PayerDecision{} // a watch reports no determination of its own
 	mergeAudit := r.cfg.AuditURL != ""
 	var preHW int
 	if mergeAudit {
@@ -411,6 +490,8 @@ func (r *Runner) finishWatch(tctx context.Context, w *watch) (res Result) {
 
 // runLocked holds admission through preparation, terminal publication and history.
 func (r *Runner) runLocked(ctx context.Context, runID, lane, uc, branch string, row rowFunc) (res Result) {
+	r.decision = PayerDecision{} // never inherit the previous run's determination
+	r.ctx = ctx
 	w := r.beginObservation(ctx, relay.Stamp{RunID: runID, Lane: lane, UC: uc}, branch)
 	var detail string
 	var clinicalErr error
@@ -438,6 +519,11 @@ func (r *Runner) runLocked(ctx context.Context, runID, lane, uc, branch string, 
 		// panic without transport completion evidence cannot prove dispatch ended.
 		uncertain := panicked && r.cfg.Dispatch == nil
 		res = w.end(detail, clinicalErr, uncertain)
+		// The payer's determination rides the Result whether the row passed or
+		// failed: a run that failed AFTER the payer answered must still report
+		// what the payer said, or its own failure is the only thing anyone can
+		// see.
+		res.PayerDecision = r.decision
 		r.completeLocked(res)
 	}()
 	if mergeAudit {

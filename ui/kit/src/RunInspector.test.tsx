@@ -269,6 +269,73 @@ describe('RunInspector — run.failed terminal (failure is content)', () => {
   });
 });
 
+// conformanceTimelineNote's three-way empty-state discipline, surfaced at
+// the RunInspector level (inspect.test.ts already pins the pure function
+// itself) — an operator must be able to tell "no findings" apart from
+// "still running" and "nothing arrived yet" from the run pane, not just from
+// a passing unit test on a function nothing renders.
+describe('RunInspector — conformance findings empty-state note', () => {
+  it('a still-running (no terminal) run shows no "no findings" claim', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started', runId: 'run-cf1', lane: 'conformant', uc: 'uc03' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        runId: 'run-cf1',
+        observer: observerFrame({ kind: 'validate.result', detail: 'valid' }),
+      }),
+    ];
+    render(<RunInspector runId="run-cf1" events={events} source="live" results={[]} />);
+    expect(screen.queryByText('No conformance findings recorded in this run.')).toBeNull();
+  });
+
+  it('a terminal run with a check-bearing step and NO conformance.observed step states "no findings"', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started', runId: 'run-cf2', lane: 'conformant', uc: 'uc03' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        runId: 'run-cf2',
+        observer: observerFrame({ kind: 'validate.result', detail: 'valid' }),
+      }),
+      evt({ seq: 3, type: 'run.finished', runId: 'run-cf2' }),
+    ];
+    const results: RunResult[] = [{ runId: 'run-cf2', lane: 'conformant', uc: 'uc03', branch: '', state: 'passed', detail: '' }];
+    render(<RunInspector runId="run-cf2" events={events} source="live" results={results} />);
+    expect(screen.getByText('No conformance findings recorded in this run.')).toBeDefined();
+  });
+
+  it('a terminal run WITH a conformance.observed step shows no separate "no findings" claim — the finding step itself is the evidence', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started', runId: 'run-cf3', lane: 'conformant', uc: 'uc03' }),
+      evt({
+        seq: 2,
+        type: 'observer',
+        runId: 'run-cf3',
+        observer: observerFrame({
+          kind: 'conformance.observed',
+          legType: 'crd-order-select',
+          detail: JSON.stringify({ kind: 'fhir-ingress', decision: 'relayed' }),
+        }),
+      }),
+      evt({ seq: 3, type: 'run.finished', runId: 'run-cf3' }),
+    ];
+    const results: RunResult[] = [{ runId: 'run-cf3', lane: 'conformant', uc: 'uc03', branch: '', state: 'passed', detail: '' }];
+    render(<RunInspector runId="run-cf3" events={events} source="live" results={results} />);
+    expect(screen.queryByText('No conformance findings recorded in this run.')).toBeNull();
+  });
+
+  it('a terminal run with NO steps at all (failed before anything ran) states nothing — no evidence any check ran', () => {
+    const events: KitEvent[] = [
+      evt({ seq: 1, type: 'run.started', runId: 'run-cf4', lane: 'conformant', uc: 'uc03' }),
+      evt({ seq: 2, type: 'run.failed', runId: 'run-cf4', detail: 'boot failed' }),
+    ];
+    const results: RunResult[] = [{ runId: 'run-cf4', lane: 'conformant', uc: 'uc03', branch: '', state: 'failed', detail: 'boot failed' }];
+    render(<RunInspector runId="run-cf4" events={events} source="live" results={results} />);
+    expect(screen.queryByText('No conformance findings recorded in this run.')).toBeNull();
+  });
+});
+
 describe('RunInspector — providerLabel forwarding', () => {
   it('forwards providerLabel through to the FlowMap provider node', () => {
     render(

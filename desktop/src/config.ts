@@ -37,6 +37,19 @@ export interface KitConfig {
   additionalValidatorLines?: string; // --additional-validator-lines (CSV); "" / unset => no extra lanes
   bridgeDemoHolder?: string; // --bridge-demo-holder; "" / unset => shnkitd's own default ("bridge-demo")
   bridgeDemoRefuseHolder?: string; // --bridge-demo-refuse-holder; "" / unset => shnkitd's own default ("bridge-demo-refuse")
+  // conformanceEnforcement --conformance-enforcement: "strict" (an invalid
+  // message is refused) or "none" (every check still runs and is recorded as
+  // a finding; nothing is refused for conformance, and the message is
+  // relayed as sent) — except a payload this gateway itself translated
+  // between IG lines, and an answer it cannot read at all, which refuse at
+  // every level. "" / unset => the flag is left off shnkitd's own command
+  // line entirely, so the packaged gateway child applies its OWN published
+  // default (kit/cmd/shnkitd/main.go's conformanceEnv), exactly as an
+  // unconfigured gateway anywhere else on the network would. This field must
+  // never be backfilled with a literal value on the operator's behalf — see
+  // resolveConfig below and buildArgs in daemon.ts, which both preserve
+  // "unset" all the way to the child's environment.
+  conformanceEnforcement?: string;
 }
 
 const REQUIRED_STRING_FIELDS = ['discoveryUrl'] as const;
@@ -62,6 +75,7 @@ const OPTIONAL_STRING_FIELDS = [
   'additionalValidatorLines',
   'bridgeDemoHolder',
   'bridgeDemoRefuseHolder',
+  'conformanceEnforcement',
 ] as const;
 
 /** Every packaged-only path the app ships under Resources (electron-builder.yml's

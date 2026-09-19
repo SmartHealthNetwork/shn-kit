@@ -2837,3 +2837,156 @@ func TestRunner_InFlight(t *testing.T) {
 		t.Fatal("InFlight() = true after StopWatch, want false")
 	}
 }
+
+// ---- the payer's determination on the Result --------------------------------
+
+// runEHRUC03WithAnswer runs the Plain-EHR uc03 row against a child answering
+// exactly answer, and returns the Result.
+func runEHRUC03WithAnswer(t *testing.T, answer string) Result {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /scenario/uc03", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(answer))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	bus := event.NewBus(fixedClock)
+	rn := New(Config{
+		Driver:             scenariodriver.New(scenariodriver.Config{}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                bus,
+	})
+	res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc03"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return res
+}
+
+// TestRun_ResultCarriesThePayersDetermination: a run reports what the payer
+// said, read off the gateway's own answer rather than from what the row
+// expected — including a PEND, which is a complete outcome carrying the
+// capability its decision can be asked for later with.
+func TestRun_ResultCarriesThePayersDetermination(t *testing.T) {
+	const filled = `"qrAnswers":{"2.2":"87","2.3":"53"}`
+
+	t.Run("an approval states the decision and has nothing to continue", func(t *testing.T) {
+		res := runEHRUC03WithAnswer(t,
+			`{"paRequired":true,"authNumber":"AUTH-9901","decision":"approved",`+filled+`}`)
+		if res.State != StatePassed {
+			t.Fatalf("state = %q, want passed (Detail=%q)", res.State, res.Detail)
+		}
+		if res.Decision != "approved" {
+			t.Fatalf("Decision = %q, want the payer's own determination", res.Decision)
+		}
+		if res.Continuation != "" {
+			t.Fatalf("a decided authorization has nothing to continue, got %q", res.Continuation)
+		}
+		// Not "false": with nothing continued there is nothing to be durable
+		// about, and stating false would answer a question nobody asked.
+		if res.ContinuationDurable != nil {
+			t.Fatalf("ContinuationDurable = %v, want unstated when there is no continuation", *res.ContinuationDurable)
+		}
+	})
+
+	t.Run("a pend states the decision and the continuation", func(t *testing.T) {
+		// This row's own bar is the reference payer's authorization, so it
+		// FAILS on a pend — and the Result still carries what the payer said,
+		// because a run that failed after the payer answered must not make its
+		// own verdict the only thing anyone can see.
+		res := runEHRUC03WithAnswer(t,
+			`{"paRequired":true,"decision":"pended","pended":true,"pendedItems":["http://example.org/Questionnaire/HomeOxygen"],`+
+				`"continuation":"m0-1e0b","continuationDurable":false,`+filled+`}`)
+		if res.State != StateFailed {
+			t.Fatalf("state = %q: this row demands the reference payer's authorization, so a pend is not a pass for it", res.State)
+		}
+		if res.Decision != "pended" {
+			t.Fatalf("Decision = %q, want pended", res.Decision)
+		}
+		if res.Continuation != "m0-1e0b" {
+			t.Fatalf("Continuation = %q, want the capability the answer carried", res.Continuation)
+		}
+		if res.ContinuationDurable == nil {
+			t.Fatal("the deployment disclosed that this continuation does not survive a restart; a disclosure that is absent is not a disclosure")
+		}
+		if *res.ContinuationDurable {
+			t.Fatal("ContinuationDurable = true, want the stated false")
+		}
+	})
+
+	t.Run("durability without a continuation is not carried", func(t *testing.T) {
+		// The guard's own rejection row: an answer stating durability but
+		// naming nothing to continue must not put a durability claim on the
+		// Result, where a reader would take it for a fact about a capability
+		// they hold.
+		res := runEHRUC03WithAnswer(t,
+			`{"paRequired":true,"authNumber":"AUTH-9902","decision":"approved","continuationDurable":true,`+filled+`}`)
+		if res.Decision != "approved" {
+			t.Fatalf("Decision = %q", res.Decision)
+		}
+		if res.ContinuationDurable != nil {
+			t.Fatalf("ContinuationDurable = %v, want unstated: the answer named nothing to continue", *res.ContinuationDurable)
+		}
+	})
+
+	t.Run("a run with no prior authorization states no determination", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("POST /scenario/uc01", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"covered":true,"reason":"active coverage"}`))
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		rn := New(Config{
+			Driver:             scenariodriver.New(scenariodriver.Config{}),
+			ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+			Bus:                event.NewBus(fixedClock),
+		})
+		res, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if res.State != StatePassed {
+			t.Fatalf("state = %q (Detail=%q)", res.State, res.Detail)
+		}
+		if res.Decision != "" || res.Continuation != "" || res.ContinuationDurable != nil {
+			t.Fatalf("an eligibility run carries no payer determination, got %+v", res.PayerDecision)
+		}
+	})
+}
+
+// TestRun_DeterminationIsNotInheritedByTheNextRun: each run reports its OWN
+// payer determination. A later run that reaches no payer must never show the
+// previous run's decision, which a reader would take for its own.
+func TestRun_DeterminationIsNotInheritedByTheNextRun(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /scenario/uc03", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"paRequired":true,"authNumber":"AUTH-9903","decision":"approved","qrAnswers":{"2.2":"87","2.3":"53"}}`))
+	})
+	mux.HandleFunc("POST /scenario/uc01", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"covered":true,"reason":"active coverage"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	rn := New(Config{
+		Driver:             scenariodriver.New(scenariodriver.Config{}),
+		ProviderDataDriver: scenariodriver.New(scenariodriver.Config{ProviderDataURL: srv.URL}),
+		Bus:                event.NewBus(fixedClock),
+	})
+	first, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc03"})
+	if err != nil || first.Decision != "approved" {
+		t.Fatalf("first run = %+v err=%v, want an approved determination", first.PayerDecision, err)
+	}
+	second, err := rn.Run(context.Background(), Req{Lane: "ehr", UC: "uc01", Branch: "covered"})
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if second.Decision != "" {
+		t.Fatalf("the second run carries the first run's determination %q", second.Decision)
+	}
+}

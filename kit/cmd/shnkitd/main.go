@@ -40,6 +40,7 @@ import (
 
 	"github.com/SmartHealthNetwork/shn-kit/bootstrap"
 	"github.com/SmartHealthNetwork/shn-kit/byo"
+	"github.com/SmartHealthNetwork/shn-kit/conformance"
 	"github.com/SmartHealthNetwork/shn-kit/event"
 	"github.com/SmartHealthNetwork/shn-kit/kitd"
 	"github.com/SmartHealthNetwork/shn-kit/relay"
@@ -98,6 +99,7 @@ func main() {
 	additionalValidatorLines := flag.String("additional-validator-lines", "", `comma-separated EXTRA contract lines to boot additional validator-only children for, each wired to its own FHIR_VALIDATE_URL_<line> for the gateway child (mirrors gateway/app/app.go's own per-line URLs) — config-gated, "" => today's single-line behavior (do not boot extra validators by default); every extra child boots cold`)
 	bridgeDemoHolder := flag.String("bridge-demo-holder", "bridge-demo", `holder id the "bridge-demo-payer" Verify probe expects on the registrar feed (cross-version bridged-exchange exhibit); "" => that probe is skipped entirely, not reported red`)
 	bridgeDemoRefuseHolder := flag.String("bridge-demo-refuse-holder", "bridge-demo-refuse", `holder id the "bridge-demo-refuse" Verify probe expects on the registrar feed; "" => that probe is skipped entirely, not reported red`)
+	conformanceEnforcement := flag.String("conformance-enforcement", "", `conformance enforcement level for the gateway child: "strict" (an invalid message is refused) or "none" (every check still runs and is recorded as a finding; nothing is refused for conformance, and the message is relayed as sent) — except a payload this gateway itself translated between IG lines, and an answer this gateway cannot read at all, which refuse at every level. "" => this flag is left unset entirely, so the gateway child applies its own published default. Any other value is refused by the gateway child at boot, naming both accepted values — that refusal lands in {state-dir}/gateway.log (the supervisor sends the child's own stderr there), not on shnkitd's own stdout/stderr.`)
 	tokenStoreFlag := flag.String("token-store", "", `login token storage backend: "keychain" or "file" ("" => derived: keychain when --java-assets is set, file otherwise)`)
 	manifestPath := flag.String("manifest", "", `path to the package-time versions.json manifest, served verbatim at GET /api/about ("" => 404-with-body, a dev checkout with no packaged manifest)`)
 	releasesURL := flag.String("releases-url", defaultReleasesURL, "GitHub \"latest release\" feed the launch-time update check GETs; overridable so a gate/test can stub it")
@@ -249,7 +251,15 @@ func main() {
 	// event, or log line.
 	var gwEnvPtr atomic.Pointer[[]string]
 
-	bridgingDemo := newBridgingDemo(sup.RestartWithEnv, bus, &rlyPtr, &gwEnvPtr, *gatewayBin)
+	// gwSwitch is the ONE gatewayEnvSwitch instance both the bridging-demo
+	// toggle and the conformance-level toggle build their closures over —
+	// not two separate instances that happen to wrap the same gwEnvPtr: the
+	// mutex must be genuinely shared too, so the two toggles serialize
+	// against EACH OTHER (not just each against itself), which is what lets
+	// each one's transform see the other's most recently applied env rather
+	// than racing it. See gatewayEnvSwitch's own doc for the bug this fixes.
+	gwSwitch := &gatewayEnvSwitch{restart: sup.RestartWithEnv, rlyPtr: &rlyPtr, gwEnvPtr: &gwEnvPtr, gatewayBinary: *gatewayBin}
+	bridgingDemo := newBridgingDemo(gwSwitch, bus)
 
 	// tokens is the selected TokenStore: newTokenStore wraps the
 	// file-backed store in a keychain-backed one (falling back to the SAME
@@ -291,6 +301,40 @@ func main() {
 		byoCfg = byo.Config{} // fail-safe; surfaced via GET /api/byo loadError
 	}
 
+	// conformance.json is loaded the same way byo.json is, immediately
+	// above: once, up front, so both the boot-time seed below and the
+	// live-toggle closure (newConformanceLevel) see the SAME store. A
+	// missing file is not an error (conformance.Store.Load's contract):
+	// conformanceCfg stays the zero Config (Level == ""), meaning "no live
+	// choice recorded yet, the CLI flag/config-file value (or the published
+	// default) applies." A present-but-corrupt file IS an error; fail safe
+	// rather than fail closed — boot proceeds as if nothing were recorded.
+	conformanceStore := conformance.NewStore(*stateDir)
+	conformanceCfg, conformanceLoadErr := conformanceStore.Load()
+	if conformanceLoadErr != nil {
+		log.Printf("shnkitd: conformance.json unreadable — booting as if no live level were recorded: %v", conformanceLoadErr)
+		conformanceCfg = conformance.Config{}
+	}
+
+	// initialConformanceLevel resolves the boot-time seed for
+	// CONFORMANCE_ENFORCEMENT: an EXPLICIT --conformance-enforcement (from
+	// the flag or kit.config.json/dev.config.json's conformanceEnforcement)
+	// always wins — the same "explicit config always overrides" rule
+	// --token-store's own derivation follows — so a dev checkout or a gate
+	// that pins a level on the command line is never silently overridden by
+	// a stale operator choice recorded from a previous, differently-flagged
+	// launch. Only when the flag is genuinely absent does the persisted
+	// live choice (conformance.json, written by a successful
+	// POST /api/conformance-level) apply, so a packaged app's operator
+	// choice survives a full relaunch. Neither set: "" — the published
+	// default, same as an ordinary unconfigured gateway.
+	initialConformanceLevel := *conformanceEnforcement
+	if initialConformanceLevel == "" {
+		initialConformanceLevel = conformanceCfg.Level
+	}
+
+	conformanceLevel := newConformanceLevel(gwSwitch, conformanceStore, bus)
+
 	// tokenStorage surfaces tokens' Detail() at GET /api/bootstrap
 	// when the selected store implements it (the keychain backend does; the
 	// plain file store does not, and the key is omitted entirely in that
@@ -301,22 +345,23 @@ func main() {
 	}
 
 	d, err := kitd.New(kitd.Config{
-		APIAddr:       *apiAddr,
-		StateDir:      *stateDir,
-		Token:         *token,
-		Bus:           bus,
-		Sup:           sup,
-		Runner:        nil, // daemon-first: no Runner until the boot goroutine's SetRunner, once the stack starts
-		Boot:          m,
-		PatientAppURL: *patientAppURL,
-		UIDir:         *uiDir,
-		History:       histStore,
-		BYO:           byoStore,
-		Restarter:     restarterFunc(sup.Restart),
-		BridgingDemo:  bridgingDemo,
-		TokenStorage:  tokenStorage,
-		ManifestPath:  *manifestPath,
-		Clock:         time.Now, // same source as the bus above (event.NewBus(time.Now))
+		APIAddr:          *apiAddr,
+		StateDir:         *stateDir,
+		Token:            *token,
+		Bus:              bus,
+		Sup:              sup,
+		Runner:           nil, // daemon-first: no Runner until the boot goroutine's SetRunner, once the stack starts
+		Boot:             m,
+		PatientAppURL:    *patientAppURL,
+		UIDir:            *uiDir,
+		History:          histStore,
+		BYO:              byoStore,
+		Restarter:        restarterFunc(sup.Restart),
+		BridgingDemo:     bridgingDemo,
+		ConformanceLevel: conformanceLevel,
+		TokenStorage:     tokenStorage,
+		ManifestPath:     *manifestPath,
+		Clock:            time.Now, // same source as the bus above (event.NewBus(time.Now))
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "shnkitd: new daemon: %v\n", err)
@@ -447,6 +492,13 @@ func main() {
 
 			BridgeDemoHolder:   *bridgeDemoHolder,
 			BridgeRefuseHolder: *bridgeDemoRefuseHolder,
+
+			// initialConformanceLevel, not the raw flag: an explicit
+			// --conformance-enforcement wins, else the persisted live choice
+			// (conformance.json) applies, so a packaged app's operator
+			// choice survives a full relaunch too — see initialConformanceLevel's
+			// own comment above.
+			ExtraEnv: conformanceEnv(initialConformanceLevel),
 		}
 		// byo.json overrides: the EHR lane replaces
 		// the --fhir-data-url demo default and carries its own SMART quad;
@@ -523,6 +575,20 @@ func main() {
 		// closure (kitd.Stack.GatewayEnv's SECURITY note).
 		gwEnv := stack.GatewayEnv
 		gwEnvPtr.Store(&gwEnv)
+
+		// Seeds GET /api/status's "conformanceLevel" with the boot-resolved
+		// value (CLI flag / kit.config.json, else the persisted
+		// conformance.json choice, else "" — initialConformanceLevel's own
+		// comment above) BEFORE any live toggle — the same daemon-first
+		// seeding StackInfo/BYO get. Before this call, d.conformanceLevel
+		// reads "" (kitd.New's zero value) regardless of what
+		// initialConformanceLevel actually resolved to — a genuinely stale
+		// "" for the short boot window between kitd.New and here, the same
+		// pre-SetStackInfo window Validator=="" already has. Harmless only
+		// because no gateway child exists yet during that window for the
+		// value to misrepresent; this call closes it before the stack is
+		// ready for any live traffic.
+		d.SetConformanceLevel(initialConformanceLevel)
 
 		// Pre-spawn H2 prewarm copy: MUST run
 		// between BuildStack and the Start loop below — a running HAPI child
@@ -822,91 +888,151 @@ const providerDataChild = "gateway-provider-data"
 // this constant moves with it.
 const demoEgressNativeLine = "2.0"
 
-// envRestarter is the supervisor seam newBridgingDemo drives —
+// envRestarter is the supervisor seam gatewayEnvSwitch drives —
 // supervisor.Supervisor.RestartWithEnv's exact shape, taken as a func so a
 // test can inject a recorder instead of spawning a real gateway child (the
 // same test-seam-by-func-shape posture as restarterFunc below).
 type envRestarter func(ctx context.Context, name string, env []string, preSpawn func()) error
 
+// gatewayEnvSwitch is the ONE shared mechanism every live, env-only gateway
+// restart goes through — newBridgingDemo and newConformanceLevel are both
+// thin wrappers over it, each supplying only the transform its own knob
+// needs. This exists to fix a real bug the first cut of newConformanceLevel
+// had: two independent closures each reading gwEnvPtr's FROZEN BOOT
+// baseline and never writing back to it meant the second toggle silently
+// erased whatever the first had applied (set Strict, then flip bridging
+// demo on: the demo closure rebuilt its env from the boot baseline, which
+// never had a CONFORMANCE_ENFORCEMENT entry, so the respawned gateway
+// silently reverted to the published default while GET /api/status kept
+// reporting Strict — a "looks applied and is not" defect, and worse for
+// being invisible: the record disagreed with the child actually running).
+//
+// gwEnvPtr is not just read here — apply() PUBLISHES the env it just
+// applied back into gwEnvPtr on every successful (or successfully reverted)
+// restart, so it always names the env ACTUALLY REGISTERED on the child,
+// never a stale boot-time snapshot. Each closure's transform therefore
+// layers its own knob onto whatever the OTHER toggle most recently applied,
+// in either order, rather than re-deriving from history. This also RETIRES
+// the old per-closure "prev" revert-target field: the revert target is
+// simply "the env gwEnvPtr held before this attempt" — gwEnvPtr already IS
+// the running truth, so there is nothing else to track.
+//
+// One shared mutex serializes EVERY gateway-child env-only restart
+// regardless of which knob triggered it: both toggles target the SAME
+// child, and two overlapping RestartWithEnv calls — one demo, one
+// conformance, or two of the same kind — could interleave their
+// stop/respawn arcs so the env actually running disagrees with what either
+// closure (or kitd's recorded state) believes. One change at a time; the
+// next simply waits its turn.
+//
+// rlyPtr and gwEnvPtr are read through pointers rather than captured by
+// value for the same daemon-first reason as before: both closures must
+// exist at kitd.New time (a nil Config field means "this Kit has no such
+// control at all," a fact that must not flicker mid-boot), while the relay
+// and the baseline env only come into being later, inside the boot
+// goroutine.
+type gatewayEnvSwitch struct {
+	mu            sync.Mutex
+	restart       envRestarter
+	rlyPtr        *atomic.Pointer[relay.Relay]
+	gwEnvPtr      *atomic.Pointer[[]string]
+	gatewayBinary string
+}
+
+// apply restarts the gateway child with transform(current-running-env),
+// and on success publishes that new env as the current running env for the
+// NEXT call (from either closure) to build on.
+//
+// TOGGLE REVERTS — a failed change must leave no half-applied env behind: a
+// failed restart has ALREADY registered the new env on the child before the
+// ready probe gave up, so a later crash-respawn would come back in a state
+// the daemon's recorded state denies. On failure this runs ONE more restart
+// arc re-registering the env that was actually running before this attempt
+// (gwEnvPtr's OWN value at the top of this call — not a per-closure "prev",
+// see the type doc above), via the supervisor's recovers-a-failed-child
+// contract; a revert that itself fails is error-joined so the caller sees
+// both. gwEnvPtr is left exactly where it was (the revert-succeeds case) or
+// reflects a child that is down (the revert-fails case, named in the
+// error) — never advanced to the failed env either way.
+func (sw *gatewayEnvSwitch) apply(ctx context.Context, transform func(current []string) []string) error {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+
+	current := sw.gwEnvPtr.Load()
+	if current == nil {
+		return fmt.Errorf("gateway env control unavailable: the gateway stack has not been built yet")
+	}
+	// transform is handed a CLONE, never *current itself: current is shared
+	// with the Stack and every other holder of the last-published env, so a
+	// transform that appends in place could rewrite a live child's spec out
+	// from under it.
+	env := transform(append([]string(nil), *current...))
+	var preSpawn func()
+	if r := sw.rlyPtr.Load(); r != nil {
+		preSpawn = func() { resetGatewaySource(r, sw.gatewayBinary) }
+	}
+	if err := sw.restart(ctx, gatewayChild, env, preSpawn); err != nil {
+		revertEnv := append([]string(nil), *current...)
+		// The revert respawn serves a fresh observer seq epoch too, so the
+		// cursor reset rides its preSpawn hook exactly like the main arc's.
+		if rerr := sw.restart(ctx, gatewayChild, revertEnv, preSpawn); rerr != nil {
+			return errors.Join(err,
+				fmt.Errorf("revert restart also failed — gateway child left down with its prior env registered: %w", rerr))
+		}
+		return fmt.Errorf("gateway env change failed (gateway child reverted to its prior env): %w", err)
+	}
+	sw.gwEnvPtr.Store(&env)
+	return nil
+}
+
+// demoEnvKeyEgress/demoEnvKeyCapture are setDemoEnv's own two entries' exact
+// prefixes — used to find and remove them before applying, the same
+// replace-not-duplicate discipline setConformanceEnvVar uses for its own
+// single entry, and for the identical reason: gwEnvPtr's current value can
+// now carry EITHER knob regardless of which toggle set it last, so
+// "disable" must remove precisely these two keys wherever they sit, not
+// merely skip re-adding them.
+const (
+	demoEnvKeyEgress  = "SHN_DEMO_EGRESS_NATIVE_LINES="
+	demoEnvKeyCapture = "SHN_DEMO_EDGE_CAPTURE="
+)
+
+// setDemoEnv returns a fresh slice: base with both demo entries removed,
+// then — enabled — both reapplied. Mirrors setConformanceEnvVar's shape
+// exactly (see its own doc) so the two knobs compose regardless of call
+// order: each removes only its own entries and leaves everything else,
+// including the other knob's entries, untouched.
+func setDemoEnv(base []string, enabled bool) []string {
+	out := make([]string, 0, len(base)+2)
+	for _, e := range base {
+		if strings.HasPrefix(e, demoEnvKeyEgress) || strings.HasPrefix(e, demoEnvKeyCapture) {
+			continue
+		}
+		out = append(out, e)
+	}
+	if enabled {
+		// Edge capture rides the simulation: it exists exactly while the
+		// operator is driving bridged legs on purpose, never on its own
+		// knob, so production posture stays off by construction.
+		out = append(out, demoEnvKeyEgress+demoEgressNativeLine, demoEnvKeyCapture+"true")
+	}
+	return out
+}
+
 // newBridgingDemo builds kitd.Config.BridgingDemo's closure: it flips the
 // gateway child's bridging demo mode by restarting it with (enabled) or
-// without (disabled) the SHN_DEMO_EGRESS_NATIVE_LINES and SHN_DEMO_EDGE_CAPTURE
-// knobs. A PURPOSE-BUILT gateway restart — same spec, same port, same driver
-// keypair, same runner wiring, only the env differs — which is why it does not
-// reopen kitd's
-// generic per-child restart seam, which still refuses the gateway outright.
-//
-// The relay's identity refresh and cursor reset ride RestartWithEnv's preSpawn hook, NEVER a call
-// after the restart returns: the new child serves a fresh observer seq epoch,
-// and a cursor reset landing after it is already up can strand a relay
-// connection redialed inside the restart window as stale-gen forever
-// (supervisor.RestartWithEnv's doc carries the full wedge analysis).
-//
-// rlyPtr and gwEnvPtr are read through on every call rather than captured by
-// value: this closure must exist at kitd.New time (a nil Config.BridgingDemo
-// means "this Kit has no demo mode at all", a fact that must not flicker
-// mid-boot), while both the relay and the baseline env only come into being
-// later, inside the boot goroutine.
-//
-// The returned closure SERIALIZES itself: two concurrent toggles both clear
-// the handler's in-flight gate (it is a plain atomic read, not a lock), and
-// two overlapping RestartWithEnv calls could interleave their stop/respawn
-// arcs so the env actually running disagrees with the state kitd records.
-// One toggle at a time; the second simply waits its turn.
-//
-// TOGGLE REVERTS — a failed toggle must leave no half-applied env behind: a
-// failed restart has ALREADY registered the new env on the child before the
-// ready probe gave up, so a later crash-respawn would come back in a mode the
-// recorded demoMode denies.
-// On failure the closure runs ONE more restart arc with the env of the last
-// successful toggle (the bare baseline before any), re-registering it via the
-// supervisor's recovers-a-failed-child contract; a revert that itself fails is
-// error-joined so the operator sees both. Either way the toggle still reports
-// failure and kitd's recorded demoMode stays put — which after a successful
-// revert is once again the truth.
-func newBridgingDemo(restart envRestarter, bus *event.Bus, rlyPtr *atomic.Pointer[relay.Relay], gwEnvPtr *atomic.Pointer[[]string], gatewayBinary string) func(context.Context, bool) error {
-	var mu sync.Mutex
-	// prev is the env the last SUCCESSFUL toggle registered — the revert
-	// target. nil until a toggle succeeds; the recorded demoMode is then still
-	// its boot value (false), whose env is the bare baseline.
-	var prev []string
+// without (disabled) the SHN_DEMO_EGRESS_NATIVE_LINES and
+// SHN_DEMO_EDGE_CAPTURE knobs, via the shared gatewayEnvSwitch (see its own
+// doc for the restart/revert/serialization contract — all of it applies
+// here unchanged). A PURPOSE-BUILT gateway restart — same spec, same port,
+// same driver keypair, same runner wiring, only the env differs — which is
+// why it does not reopen kitd's generic per-child restart seam, which still
+// refuses the gateway outright.
+func newBridgingDemo(sw *gatewayEnvSwitch, bus *event.Bus) func(context.Context, bool) error {
 	return func(ctx context.Context, enabled bool) error {
-		mu.Lock()
-		defer mu.Unlock()
-
-		base := gwEnvPtr.Load()
-		if base == nil {
-			return fmt.Errorf("bridging demo unavailable: the gateway stack has not been built yet")
+		if err := sw.apply(ctx, func(current []string) []string { return setDemoEnv(current, enabled) }); err != nil {
+			return err
 		}
-		// Clone before append: the loaded baseline is shared with the Stack
-		// (and with whatever env a previous toggle registered), so an append
-		// landing in a shared backing array could rewrite a live child's spec.
-		env := append([]string(nil), *base...)
-		if enabled {
-			env = append(env, "SHN_DEMO_EGRESS_NATIVE_LINES="+demoEgressNativeLine)
-			// Edge capture rides the simulation: it exists exactly while the
-			// operator is driving bridged legs on purpose, never on its own
-			// knob, so production posture stays off by construction.
-			env = append(env, "SHN_DEMO_EDGE_CAPTURE=true")
-		}
-		var preSpawn func()
-		if r := rlyPtr.Load(); r != nil {
-			preSpawn = func() { resetGatewaySource(r, gatewayBinary) }
-		}
-		if err := restart(ctx, gatewayChild, env, preSpawn); err != nil {
-			revertEnv := prev
-			if revertEnv == nil {
-				revertEnv = append([]string(nil), *base...)
-			}
-			// The revert respawn serves a fresh observer seq epoch too, so the
-			// cursor reset rides its preSpawn hook exactly like the main arc's.
-			if rerr := restart(ctx, gatewayChild, revertEnv, preSpawn); rerr != nil {
-				return errors.Join(err,
-					fmt.Errorf("revert restart also failed — gateway child left down with its prior env registered: %w", rerr))
-			}
-			return fmt.Errorf("toggle failed (gateway child reverted to its prior env): %w", err)
-		}
-		prev = env
 		bus.Emit(event.Event{Type: event.TypeChild, Child: gatewayChild,
 			Detail: "demo-mode: " + map[bool]string{true: "enabled", false: "disabled"}[enabled]})
 		return nil
@@ -947,6 +1073,103 @@ func resolveTokenStoreKind(explicit bool, value, javaAssets string) string {
 		return "keychain"
 	}
 	return "file"
+}
+
+// conformanceEnv turns --conformance-enforcement into the gateway child's
+// ExtraEnv. An empty level emits NOTHING: the gateway child's own
+// CONFORMANCE_ENFORCEMENT default then applies, untouched by the Kit — the
+// published default has exactly one home (the gateway's own env loader,
+// gateway/app/app.go), so a Kit gateway with no flag ships what a partner's
+// own gateway ships, and the two can never drift apart the next time that
+// default moves. A named level reaches the child exactly as given, with no
+// validation here: an invalid value is refused by the gateway child at
+// boot, naming both accepted values, which is the honest place for that
+// error (see the flag's own help text above).
+func conformanceEnv(level string) []string {
+	if level == "" {
+		return nil
+	}
+	return []string{"CONFORMANCE_ENFORCEMENT=" + level}
+}
+
+// conformanceEnvKey is conformanceEnv's own single entry's exact prefix —
+// setConformanceEnvVar uses it to find and remove any existing
+// CONFORMANCE_ENFORCEMENT= entry before applying a new one, live.
+const conformanceEnvKey = "CONFORMANCE_ENFORCEMENT="
+
+// setConformanceEnvVar returns a fresh slice: base with any existing
+// CONFORMANCE_ENFORCEMENT= entry removed, then — level non-empty — the new
+// one appended. level == "" mirrors conformanceEnv("")'s own "emit nothing"
+// rule (the entry is removed and nothing replaces it, so the gateway
+// child's own published default applies). Never mutates base or shares its
+// backing array with the result — base is shared with the Stack and any
+// earlier successful toggle (the same clone-before-append discipline
+// newBridgingDemo's own doc requires).
+func setConformanceEnvVar(base []string, level string) []string {
+	out := make([]string, 0, len(base)+1)
+	for _, e := range base {
+		if strings.HasPrefix(e, conformanceEnvKey) {
+			continue
+		}
+		out = append(out, e)
+	}
+	if level != "" {
+		out = append(out, conformanceEnvKey+level)
+	}
+	return out
+}
+
+// levelPersister is the seam newConformanceLevel drives to persist a
+// SUCCESSFUL toggle — conformance.Store's own Set method shape, taken as an
+// interface (mirroring envRestarter's test-seam-by-shape posture) so a test
+// can inject a recorder instead of touching disk.
+type levelPersister interface {
+	Set(level string) error
+}
+
+// levelLabel renders a level for a bus event detail line: "" reads as
+// "published default", never a bare empty string an operator would misread
+// as a missing/truncated log line.
+func levelLabel(level string) string {
+	if level == "" {
+		return "published default"
+	}
+	return level
+}
+
+// newConformanceLevel builds kitd.Config.ConformanceLevel's closure: it
+// changes the gateway child's LIVE CONFORMANCE_ENFORCEMENT by restarting it
+// with the requested level swapped into its env, via the SAME shared
+// gatewayEnvSwitch newBridgingDemo uses — sw.apply's transform REPLACES any
+// existing CONFORMANCE_ENFORCEMENT entry (setConformanceEnvVar) rather than
+// appending a second, conflicting one, and — because both knobs now
+// compose over gatewayEnvSwitch's single running-env cell — a level set
+// here survives an UNRELATED bridging-demo toggle (and vice versa): each
+// transform touches only its own entries and carries the other's forward
+// untouched. See gatewayEnvSwitch's own doc for the restart/revert/
+// serialization contract this closure inherits unchanged.
+//
+// On success (and ONLY on success — a reverted failure leaves whatever level
+// is actually running on disk untouched), persist.Set(level) records the
+// choice so it survives a full Kit relaunch too. A persist FAILURE is
+// logged, not treated as a toggle failure: the live effect already
+// succeeded, and the operator's next boot silently falling back to the
+// pre-toggle level is a smaller failure than reporting a live change that
+// genuinely worked as an error.
+func newConformanceLevel(sw *gatewayEnvSwitch, persist levelPersister, bus *event.Bus) func(context.Context, string) error {
+	return func(ctx context.Context, level string) error {
+		if err := conformance.ValidateLevel(level); err != nil {
+			return err
+		}
+		if err := sw.apply(ctx, func(current []string) []string { return setConformanceEnvVar(current, level) }); err != nil {
+			return err
+		}
+		if err := persist.Set(level); err != nil {
+			log.Printf("shnkitd: conformance level applied live but failed to persist for next launch: %v", err)
+		}
+		bus.Emit(event.Event{Type: event.TypeChild, Child: gatewayChild, Detail: "conformance-enforcement: " + levelLabel(level)})
+		return nil
+	}
 }
 
 // newTokenStore builds the bootstrap.TokenStore for kind ("keychain" wraps

@@ -13,10 +13,13 @@ import (
 )
 
 const (
-	publishedBarrierVersion = "v0.44.0"
-	publishedBarrierSum     = "h1:Mn4El5H2YvaJCv+i/PfjZldGUXKf+P8YB7+6Oemd1ks="
-	publishedLegacyVersion  = "v0.43.1"
-	publishedLegacySum      = "h1:XKVtKSaDam/e9KJhB4+lbsJP/3f8ktLZV4qJ1A4Dctw="
+	publishedBarrierVersion = "v0.46.0"
+	publishedBarrierSum     = "h1:9rRpOJwmhnINHMyCVDFXhOMNtvnots5sCwG/AnF9yIo="
+	// The earlier barrier release stays recognized beside the packaged one.
+	publishedEarlierBarrierVersion = "v0.44.0"
+	publishedEarlierBarrierSum     = "h1:Mn4El5H2YvaJCv+i/PfjZldGUXKf+P8YB7+6Oemd1ks="
+	publishedLegacyVersion         = "v0.43.1"
+	publishedLegacySum             = "h1:XKVtKSaDam/e9KJhB4+lbsJP/3f8ktLZV4qJ1A4Dctw="
 )
 
 func buildInfo(version, sum string) *debug.BuildInfo {
@@ -29,6 +32,7 @@ func TestGatewayProfileExactMetadata(t *testing.T) {
 		want         GatewayProfile
 	}{
 		{publishedBarrierVersion, publishedBarrierSum, GatewayBarrier0440},
+		{publishedEarlierBarrierVersion, publishedEarlierBarrierSum, GatewayBarrier0440},
 		{publishedLegacyVersion, publishedLegacySum, GatewayLegacySync0431},
 	} {
 		t.Run(rel.version, func(t *testing.T) {
@@ -51,6 +55,8 @@ func TestGatewayProfileExactMetadata(t *testing.T) {
 	for _, mixed := range []struct{ version, sum string }{
 		{publishedBarrierVersion, publishedLegacySum},
 		{publishedLegacyVersion, publishedBarrierSum},
+		{publishedBarrierVersion, publishedEarlierBarrierSum},
+		{publishedEarlierBarrierVersion, publishedBarrierSum},
 	} {
 		t.Run("crossed "+mixed.version, func(t *testing.T) {
 			if got := gatewayProfile(buildInfo(mixed.version, mixed.sum)); got != GatewayUnknown {

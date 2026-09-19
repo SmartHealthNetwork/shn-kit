@@ -9,6 +9,14 @@ import type { KitEvent, Lane, Register, RunResult } from './types';
 import type { EventsView } from './useEvents';
 import { postRun, ApiError } from './api';
 import { UC_METAS, LANE_LABELS, type UCMeta } from './ucmeta';
+import {
+  PA_CONTINUATION_CAPTION,
+  PA_CONTINUATION_LABEL,
+  PA_CONTINUATION_NOT_DURABLE,
+  PA_DECISION_LABELS,
+  PA_DECISION_OUTCOMES,
+  PA_RATIONALE_LABEL,
+} from './pameta';
 import { RegisterSwitch } from './RegisterSwitch';
 import { StatusChip } from './StatusChip';
 
@@ -58,6 +66,38 @@ const PlayIcon = (
 // lowercase "ucNN" form untouched.
 function displayTag(uc: string): string {
   return `UC-${uc.replace(/^uc/, '')}`;
+}
+
+// PADecisionRow — the payer's own decision on a finished run, rendered under
+// the card's copy. The pass/fail chip says whether the SCENARIO did what it
+// asserts; this says what the PAYER decided, which is a different fact: a run
+// can pass with the request still undecided. It renders only for a result
+// that actually carries a decision (key-presence — see RunResult), so a
+// runner that states none leaves the row exactly as it was.
+function PADecisionRow({ result }: { result: RunResult }): JSX.Element | null {
+  const decision = result.decision;
+  if (!decision) return null;
+  return (
+    <div className="pa-decision" data-testid={`pa-decision-${result.uc}`}>
+      <span className={`pa-decision-label ${decision}`}>{PA_DECISION_LABELS[decision]}</span>
+      <span className="pa-decision-outcome">{PA_DECISION_OUTCOMES[decision]}</span>
+      {decision === 'denied' && result.rationale && (
+        <span className="pa-decision-rationale">
+          {PA_RATIONALE_LABEL}: {result.rationale}
+        </span>
+      )}
+      {decision === 'pended' && result.continuation && (
+        <span className="pa-continuation">
+          {PA_CONTINUATION_LABEL}: <code>{result.continuation}</code>
+          <span className="pa-continuation-caption"> — {PA_CONTINUATION_CAPTION}</span>
+        </span>
+      )}
+      {/* Strictly `=== false`: an absent durability fact is not a false one. */}
+      {result.continuationDurable === false && (
+        <span className="pa-continuation-note">{PA_CONTINUATION_NOT_DURABLE}</span>
+      )}
+    </div>
+  );
 }
 
 interface UCCardProps {
@@ -161,6 +201,8 @@ function UCCard({
           {latest ? 'Run again' : 'Run'}
         </button>
       </div>
+
+      {latest && <PADecisionRow result={latest} />}
     </li>
   );
 }

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -545,6 +546,51 @@ func TestBuildStack_ExtraChildrenAppended(t *testing.T) {
 	for i, want := range wantNames {
 		if stack.Children[i].Name != want {
 			t.Errorf("Children[%d].Name = %q, want %q (gateway first, then ExtraChildren in order)", i, stack.Children[i].Name, want)
+		}
+	}
+}
+
+// TestBuildStack_ExtraEnvReachesGatewayChild proves the seam
+// shnkitd's --conformance-enforcement flag rides: ExtraEnv is appended LAST
+// to the gateway child's env (this file's env-recipe code, after every named
+// field), so it reaches supervisor.ChildSpec.Env unchanged. A Kit gateway
+// runs at the published default, which is none, unless the operator names a
+// level; kit-e2e names strict, so the gate never proves conformance against a
+// gateway that only records instead of refusing.
+func TestBuildStack_ExtraEnvReachesGatewayChild(t *testing.T) {
+	cfg := baseCfg(t)
+	cfg.ExtraEnv = []string{"CONFORMANCE_ENFORCEMENT=strict"}
+
+	stack, err := BuildStack(cfg)
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	defer stack.Close() //nolint:errcheck // releases the no-trio lane's fixture SoR listener
+	spec := stack.Children[0]
+	if !slices.Contains(spec.Env, "CONFORMANCE_ENFORCEMENT=strict") {
+		t.Fatalf("gateway child Env = %q, want it to contain CONFORMANCE_ENFORCEMENT=strict", spec.Env)
+	}
+}
+
+// TestBuildStack_NoExtraEnv_NoConformanceVar pins the absent-flag case: with
+// ExtraEnv unset (baseCfg's zero value — shnkitd's own default when
+// --conformance-enforcement is never passed), the gateway child's env
+// carries NO CONFORMANCE_ENFORCEMENT entry at all — not the literal string
+// "none". The gateway's own env loader then applies its published default,
+// so the Kit has exactly one home for that default, never a second one here
+// that could drift from it.
+func TestBuildStack_NoExtraEnv_NoConformanceVar(t *testing.T) {
+	cfg := baseCfg(t)
+
+	stack, err := BuildStack(cfg)
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	defer stack.Close() //nolint:errcheck // releases the no-trio lane's fixture SoR listener
+	spec := stack.Children[0]
+	for _, e := range spec.Env {
+		if strings.HasPrefix(e, "CONFORMANCE_ENFORCEMENT=") {
+			t.Fatalf("gateway child Env contains %q, want no CONFORMANCE_ENFORCEMENT entry when ExtraEnv is unset", e)
 		}
 	}
 }
