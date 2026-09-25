@@ -5,10 +5,12 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1346,11 +1348,11 @@ func TestSupervisor_SpawnReadsSpecUnderLock(t *testing.T) {
 	}()
 
 	for i := 0; i < 6; i++ {
-		cmd, exited, err := s.spawn(c)
+		p, exited, err := s.spawn(c)
 		if err != nil {
 			t.Fatalf("spawn %d: %v", i, err)
 		}
-		_ = cmd.Wait()
+		_ = p.wait()
 		close(exited)
 	}
 	close(done)
@@ -1375,7 +1377,9 @@ func TestSupervisor_RestartWithEnvUnknownChild(t *testing.T) {
 	}
 }
 
-// Row 6: AllocatePorts returns n distinct, immediately bindable ports.
+// Row 6: AllocatePorts returns n distinct, immediately bindable ports, drawn
+// from below every common OS ephemeral range, so no other process's
+// listen-on-:0 or outbound connection is handed the same port.
 func TestAllocatePorts(t *testing.T) {
 	ports, err := AllocatePorts(5)
 	if err != nil {
@@ -1388,6 +1392,9 @@ func TestAllocatePorts(t *testing.T) {
 	for _, p := range ports {
 		if seen[p] {
 			t.Fatalf("duplicate port %d", p)
+		}
+		if p < portRangeLow || p >= portRangeHigh {
+			t.Fatalf("port %d outside [%d, %d): it may come from the ephemeral range other processes are handed", p, portRangeLow, portRangeHigh)
 		}
 		seen[p] = true
 		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
@@ -1666,5 +1673,177 @@ func TestSupervisor_StopDuringReadyHook(t *testing.T) {
 	}
 	if states := statesOf(nc.snapshot(), "stophook1"); countState(states, "failed") != 0 || countState(states, "restarting") != 0 {
 		t.Fatalf("notices %v carry failed/restarting after a deliberate Stop", states)
+	}
+}
+
+// ---- a child that exits during startup ---------------------------------------
+
+// A child that exits before it is ready fails its start at once, not at the
+// end of its readiness window, and the failure names the exit status and the
+// child's own last log line. Here the child's port is already held, so it
+// exits with the bind error a real collision produces.
+func TestSupervisor_ExitDuringStartupFailsFast(t *testing.T) {
+	var nc noticeCollector
+	s := New(nc.notify)
+	spec, addr := stubSpec(t, "collides", true, 3)
+	spec.ReadyTimeout = 20 * time.Second
+	held, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("hold %s: %v", addr, err)
+	}
+	defer held.Close()
+
+	start := time.Now()
+	err = s.Start(context.Background(), spec)
+	if err == nil {
+		t.Fatal("Start succeeded for a child that cannot bind its port")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Start took %s; a child that exited must fail its start at once, not at the %s readiness limit", elapsed, spec.ReadyTimeout)
+	}
+	var exitErr *StartupExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("error %v (%T), want a *StartupExitError", err, err)
+	}
+	if exitErr.Child != "collides" || !strings.Contains(exitErr.Status, "exit status 1") {
+		t.Fatalf("StartupExitError = %+v, want child collides and exit status 1", exitErr)
+	}
+	if !strings.Contains(exitErr.LastLog, "address already in use") || !strings.Contains(err.Error(), "address already in use") {
+		t.Fatalf("error %q (last log %q), want the child's own bind error", err, exitErr.LastLog)
+	}
+	st, ok := statusOf(s.Status(), "collides")
+	if !ok || st.State != StateFailed || !strings.Contains(st.Detail, "address already in use") {
+		t.Fatalf("status = %+v, want failed naming the bind error", st)
+	}
+	if st.Restarts != 0 {
+		t.Fatalf("restarts = %d; RestartMax covers exits after ready, not a failed first start", st.Restarts)
+	}
+}
+
+// A child that is merely slow still gets its whole readiness window: the
+// early-exit check must not cut a live child short.
+func TestSupervisor_SlowChildStillGetsItsWindow(t *testing.T) {
+	s := New(nil)
+	spec, _ := stubSpec(t, "slow", true, 0)
+	spec.Env = append(spec.Env, "STUB_READY_AFTER_MS=1500")
+	spec.ReadyTimeout = 10 * time.Second
+	if err := s.Start(context.Background(), spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(s.StopAll)
+}
+
+// Forget drops a child whose start failed, so the same name can be started
+// again (a boot retry on fresh ports); a child that is still live is refused.
+func TestSupervisor_ForgetTerminalChild(t *testing.T) {
+	s := New(nil)
+	spec, addr := stubSpec(t, "again", true, 0)
+	held, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("hold %s: %v", addr, err)
+	}
+	if err := s.Start(context.Background(), spec); err == nil {
+		t.Fatal("Start succeeded on a held port")
+	}
+	held.Close()
+	if err := s.Start(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "already started") {
+		t.Fatalf("second Start before Forget = %v, want already started", err)
+	}
+	if err := s.Forget("again"); err != nil {
+		t.Fatalf("Forget failed child: %v", err)
+	}
+	if _, ok := statusOf(s.Status(), "again"); ok {
+		t.Fatal("a forgotten child is still listed")
+	}
+	if err := s.Start(context.Background(), spec); err != nil {
+		t.Fatalf("Start after Forget: %v", err)
+	}
+	t.Cleanup(s.StopAll)
+	if err := s.Forget("again"); err == nil || !strings.Contains(err.Error(), "ready") {
+		t.Fatalf("Forget of a live child = %v, want a refusal naming its state", err)
+	}
+	if err := s.Forget("nobody"); err == nil {
+		t.Fatal("Forget of an unknown child succeeded")
+	}
+}
+
+// A child that exits while its Ready hook runs is reported as an exit, with
+// its status and last log line, even when the hook returns its own error
+// before the process has been reaped (a warm-up call that fails on the
+// connection the exit refused).
+func TestSupervisor_ExitDuringReadyHookIsAnExit(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		s := New(nil)
+		var addr string
+		spec, a := readySpec(t, fmt.Sprintf("hookexit%d", i), 3, func(ctx context.Context, _ func(string)) error {
+			resp, err := http.Post("http://"+addr+"/exit", "text/plain", nil)
+			if err == nil {
+				resp.Body.Close()
+			}
+			return errors.New("warm-up: connection refused")
+		})
+		addr = a
+		err := s.Start(context.Background(), spec)
+		var exitErr *StartupExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("run %d: err = %v (%T), want a *StartupExitError", i, err, err)
+		}
+		if !strings.Contains(exitErr.Status, "exit status 2") || !strings.Contains(exitErr.LastLog, "exiting on cue") {
+			t.Fatalf("run %d: %+v, want exit status 2 and the child's own last line", i, exitErr)
+		}
+	}
+}
+
+// When the range has too few free ports, the rest come from the kernel (:0)
+// rather than failing the boot.
+func TestAllocatePorts_FallsBackWhenTheRangeIsTaken(t *testing.T) {
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	taken := held.Addr().(*net.TCPAddr).Port
+	ports, err := allocatePortsIn(2, taken, taken+1) // a one-port range, already held
+	if err != nil {
+		t.Fatalf("allocatePortsIn: %v", err)
+	}
+	if len(ports) != 2 || ports[0] == taken || ports[1] == taken || ports[0] == ports[1] {
+		t.Fatalf("ports = %v, want two distinct ports other than the held %d", ports, taken)
+	}
+}
+
+// The ready probe reuses its connection while it waits: each poll reads the
+// answer to the end, so keep-alive holds and a starting child costs one
+// connection, not one per 100 ms poll. A connection dropped per poll leaves a
+// TIME_WAIT socket behind, and enough of them across a parallel test run
+// exhaust the machine's ephemeral ports.
+func TestSupervisor_ReadyProbeReusesItsConnection(t *testing.T) {
+	var conns atomic.Int64
+	start := time.Now()
+	probe := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if time.Since(start) < 1500*time.Millisecond {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"status":"starting","detail":"the child is still loading its configuration"}`))
+			return
+		}
+		w.Write([]byte(`{"status":"ready"}`))
+	}))
+	probe.Config.ConnState = func(_ net.Conn, st http.ConnState) {
+		if st == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	probe.Start()
+	defer probe.Close()
+
+	s := New(nil)
+	spec, _ := stubSpec(t, "reuse", true, 0)
+	spec.ReadyURLs = []string{probe.URL + "/health"}
+	if err := s.Start(context.Background(), spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(s.StopAll)
+	if n := conns.Load(); n > 2 {
+		t.Fatalf("the ready probe opened %d connections over about 15 polls; want it to reuse one", n)
 	}
 }

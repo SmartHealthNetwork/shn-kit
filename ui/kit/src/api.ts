@@ -236,7 +236,8 @@ export function postBridgingDemo(enabled: boolean): Promise<{ demoMode: boolean 
 // under the hood, same as postBridgingDemo above) — 404 when the Kit build
 // has no live level control at all (StatusResponse.conformanceLevel stays
 // absent), 409 while a run or watch is in flight, 503 before the stack has
-// started, 400 for anything other than "", "strict", "none". `level` is
+// started, 400 for anything other than "" or one of the levels this Kit's
+// pinned gateway accepts (StatusResponse.conformanceLevels). `level` is
 // ALWAYS sent explicitly: kitd's conformanceLevelRequest decodes a missing
 // "level" key the same as an explicit "" — both mean "use the published
 // default" — so there is no silent/ambiguous no-op form here.

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,6 +34,13 @@ import (
 var relayOrder atomic.Uint64
 
 const reconnectDelay = 500 * time.Millisecond
+
+// errorDrainBytes and errorDrainTimeout bound how much of a non-200 stream
+// answer is read, and for how long, so its connection can be reused.
+const (
+	errorDrainBytes   = 64 << 10
+	errorDrainTimeout = 200 * time.Millisecond
+)
 
 // drainPoll is Drain's re-check cadence while waiting for the stream to
 // catch up with the hub's emitted count.
@@ -174,7 +182,11 @@ func (r *Relay) stream(ctx context.Context) error {
 	connGen := r.gen
 	r.mu.Unlock()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.url, nil)
+	// reqCtx lets a non-200 answer's drain be cut short (below) without
+	// touching Run's ctx.
+	reqCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, r.url, nil)
 	if err != nil {
 		return err
 	}
@@ -188,6 +200,13 @@ func (r *Relay) stream(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		// Read the error answer to its end so the connection is reused by
+		// the next attempt, reconnectDelay from now, instead of dropped —
+		// bounded in bytes and in time (hc has no timeout), so a trickling
+		// answer costs at most errorDrainTimeout and then just its connection.
+		stop := time.AfterFunc(errorDrainTimeout, cancel)
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, errorDrainBytes))
+		stop.Stop()
 		return fmt.Errorf("kit/relay: GET %s: status %d", r.url, resp.StatusCode)
 	}
 

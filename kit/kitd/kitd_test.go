@@ -30,6 +30,7 @@ import (
 
 	"github.com/SmartHealthNetwork/shn-kit/bootstrap"
 	"github.com/SmartHealthNetwork/shn-kit/byo"
+	"github.com/SmartHealthNetwork/shn-kit/conformance"
 	"github.com/SmartHealthNetwork/shn-kit/event"
 	"github.com/SmartHealthNetwork/shn-kit/relay"
 	"github.com/SmartHealthNetwork/shn-kit/runhistory"
@@ -1066,7 +1067,8 @@ func TestBootstrapSignin_NonSentinelError_Maps500(t *testing.T) {
 	const token = "row-nonsentinel-signin-token"
 	bus := event.NewBus(fixedClock)
 	boot := bootstrap.New(bootstrap.Config{
-		AccountsURL: fmt.Sprintf("http://127.0.0.1:%d", freePort(t)), // nothing listening: connection refused
+		AccountsURL: "http://accounts.invalid",
+		HTTP:        refusingClient(t, http.MethodGet, "/cli-config"), // connection refused
 		SecretsDir:  filepath.Join(t.TempDir(), "secrets"),
 		ClientName:  "SHN Kit",
 		Role:        "provider",
@@ -1086,6 +1088,10 @@ func TestBootstrapSignin_NonSentinelError_Maps500(t *testing.T) {
 	status, body := doJSON(t, http.MethodPost, apiBase+"/api/bootstrap/signin", token, nil)
 	if status != http.StatusInternalServerError {
 		t.Fatalf("POST /api/bootstrap/signin (unreachable accounts URL) = %d (body=%s), want 500 — a non-sentinel SignIn error must not map to 409", status, body)
+	}
+	// The 500 carries the accounts configuration fetch's transport failure.
+	if !strings.Contains(string(body), "GET /cli-config: ") || !strings.Contains(string(body), errRefused.Error()) {
+		t.Fatalf("POST /api/bootstrap/signin (unreachable accounts URL) body = %s, want the /cli-config transport failure", body)
 	}
 }
 
@@ -3960,5 +3966,94 @@ func TestChildRestart_ProviderDataGatewayRefused403(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "only a full Kit restart re-derives") {
 		t.Fatalf("403 body = %s, want the gateway refusal rationale", body)
+	}
+}
+
+// GET /api/status offers exactly the levels the pinned gateway accepts, and
+// POST /api/conformance-level accepts each of them — including observe and
+// structural, which the Kit could not select before it pinned gateway v0.54.0
+// — while "basic", the level's working name before it shipped, is refused
+// with the accepted levels named.
+func TestConformanceLevel_OffersThePinnedGatewaysLevels(t *testing.T) {
+	const token = "conformance-levels-token"
+	bus := event.NewBus(fixedClock)
+	lvl := &fakeLevel{}
+	cfg := Config{
+		APIAddr:          "127.0.0.1:0",
+		StateDir:         t.TempDir(),
+		Token:            token,
+		Bus:              bus,
+		Sup:              supervisor.New(nil),
+		Runner:           runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		ConformanceLevel: lvl.change,
+	}
+	_, apiBase := startDaemon(t, cfg)
+
+	status, body := doJSON(t, http.MethodGet, apiBase+"/api/status", token, nil)
+	var st struct {
+		Levels []string `json:"conformanceLevels"`
+	}
+	if status != http.StatusOK || json.Unmarshal(body, &st) != nil {
+		t.Fatalf("GET /api/status = %d %s", status, body)
+	}
+	if got, want := strings.Join(st.Levels, ","), "none,observe,structural,strict"; got != want {
+		t.Fatalf("status conformanceLevels = %q, want %q", got, want)
+	}
+	for _, l := range st.Levels {
+		if status, body := doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": l}); status != http.StatusOK {
+			t.Fatalf("POST level=%s = %d %s, want 200", l, status, body)
+		}
+	}
+	status, body = doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": "basic"})
+	if status != http.StatusBadRequest || !strings.Contains(string(body), "none, observe, structural, strict") {
+		t.Fatalf("POST level=basic = %d %s, want 400 naming the accepted levels", status, body)
+	}
+	if got := lvl.snapshot(); len(got) != len(st.Levels) {
+		t.Fatalf("closure calls = %v, want one per accepted level and none for basic", got)
+	}
+}
+
+// A notice about the operator's saved level (a pre-v0.21.0 "none" moved to
+// observe) is served with the level until the operator next chooses a level
+// themselves.
+func TestConformanceLevel_NoticeUntilTheOperatorChooses(t *testing.T) {
+	const token = "conformance-notice-token"
+	bus := event.NewBus(fixedClock)
+	lvl := &fakeLevel{}
+	cfg := Config{
+		APIAddr:          "127.0.0.1:0",
+		StateDir:         t.TempDir(),
+		Token:            token,
+		Bus:              bus,
+		Sup:              supervisor.New(nil),
+		Runner:           runner.New(runner.Config{Driver: scenariodriver.New(scenariodriver.Config{}), Bus: bus}),
+		ConformanceLevel: lvl.change,
+	}
+	d, apiBase := startDaemon(t, cfg)
+	notice := func() string {
+		_, body := doJSON(t, http.MethodGet, apiBase+"/api/status", token, nil)
+		var st struct {
+			Notice *string `json:"conformanceNotice"`
+		}
+		if err := json.Unmarshal(body, &st); err != nil {
+			t.Fatalf("decode status: %v", err)
+		}
+		if st.Notice == nil {
+			return ""
+		}
+		return *st.Notice
+	}
+	if got := notice(); got != "" {
+		t.Fatalf("conformanceNotice = %q before any notice, want absent", got)
+	}
+	d.SetConformanceNotice(conformance.LegacyNoneNotice)
+	if got := notice(); got != conformance.LegacyNoneNotice {
+		t.Fatalf("conformanceNotice = %q, want the migration notice", got)
+	}
+	if status, body := doJSON(t, http.MethodPost, apiBase+"/api/conformance-level", token, map[string]string{"level": "none"}); status != http.StatusOK {
+		t.Fatalf("POST level=none = %d %s", status, body)
+	}
+	if got := notice(); got != "" {
+		t.Fatalf("conformanceNotice = %q after the operator chose a level, want absent", got)
 	}
 }

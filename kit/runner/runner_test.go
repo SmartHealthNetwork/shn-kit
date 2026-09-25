@@ -439,56 +439,10 @@ func TestRun_ConformantUC02(t *testing.T) {
 	}
 }
 
-// TestRun_ConformantUC02_MemberNotOnConnectedEHR is a deliberate
-// rejection row: the CRD ingress answers the byte-real subject-bind-miss
-// shape (status 400, body {"error":"unknown member"} — pinned live at
-// gateway/engine/ingress_crd.go:104's ingressCRDSubjectPCI, written via
-// gateway/engine/gateway.go:524's writeJSON; see
-// ConformantMemberNotOnConnectedEHRSentence's doc comment for the full
-// evidence trail) — the run must fail with the named sentence, never the
-// raw 400 relayed verbatim.
-func TestRun_ConformantUC02_MemberNotOnConnectedEHR(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"unknown member"}`))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate RSA key: %v", err)
-	}
-
-	bus := event.NewBus(fixedClock)
-	rn := New(Config{
-		Driver: scenariodriver.New(scenariodriver.Config{
-			IngressURL:  srv.URL,
-			IngressBase: srv.URL,
-			ClientID:    "kit-runner-test",
-			Key:         key,
-		}),
-		Bus: bus,
-	})
-
-	res, err := rn.Run(context.Background(), Req{Lane: "conformant", UC: "uc02", Branch: ""})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if res.State != StateFailed {
-		t.Fatalf("Result.State = %q, want failed", res.State)
-	}
-	if !strings.Contains(res.Detail, ConformantMemberNotOnConnectedEHRSentence) {
-		t.Errorf("Result.Detail = %q, want it to contain the named sentence %q", res.Detail, ConformantMemberNotOnConnectedEHRSentence)
-	}
-}
-
 // TestRun_ConformantUC02_OtherIngressFailure_NotRelabeled is the pass-through
-// regression row: a DIFFERENT ingress failure (same 400 status, a wholly
-// different body) must keep its raw detail — status alone is not the
-// discriminator, and isConformantIngressUnknownMember must not over-match.
+// regression row: an ingress failure keeps its raw status and body; the
+// runner relabels no ingress answer (a missing seeded member is caught
+// before sending, by the connected-EHR check).
 func TestRun_ConformantUC02_OtherIngressFailure_NotRelabeled(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /cds-services/shn-order-sign", func(w http.ResponseWriter, r *http.Request) {

@@ -157,6 +157,11 @@ type IngressClient struct {
 
 // Stack is BuildStack's output.
 type Stack struct {
+	// GatewayPortPinned is true when the caller fixed the gateway's port
+	// (StackConfig.GatewayPort, --gateway-port): a rebuild keeps that port,
+	// so StartStack does not retry a gateway that could not bind it.
+	GatewayPortPinned bool
+
 	// Children are the BLOCKING children: shnkitd starts them in order and
 	// waits for each one's ready probe before the next, and only calls
 	// SetRunner (i.e. lets scenarios run at all) once the last one is ready.
@@ -755,6 +760,7 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		ObserverURL:       observerURL,
 		ObserverHealthURL: observerHealthURL,
 		GatewayURL:        gatewayURL,
+		GatewayPortPinned: cfg.GatewayPort != 0,
 		ValidatorURL:      validatorURL,
 		DataServerURL:     dataServerURL,
 		BRProviderURL:     brProviderURL,

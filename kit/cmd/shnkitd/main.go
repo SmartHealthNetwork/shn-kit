@@ -99,7 +99,7 @@ func main() {
 	additionalValidatorLines := flag.String("additional-validator-lines", "", `comma-separated EXTRA contract lines to boot additional validator-only children for, each wired to its own FHIR_VALIDATE_URL_<line> for the gateway child (mirrors gateway/app/app.go's own per-line URLs) — config-gated, "" => today's single-line behavior (do not boot extra validators by default); every extra child boots cold`)
 	bridgeDemoHolder := flag.String("bridge-demo-holder", "bridge-demo", `holder id the "bridge-demo-payer" Verify probe expects on the registrar feed (cross-version bridged-exchange exhibit); "" => that probe is skipped entirely, not reported red`)
 	bridgeDemoRefuseHolder := flag.String("bridge-demo-refuse-holder", "bridge-demo-refuse", `holder id the "bridge-demo-refuse" Verify probe expects on the registrar feed; "" => that probe is skipped entirely, not reported red`)
-	conformanceEnforcement := flag.String("conformance-enforcement", "", `conformance enforcement level for the gateway child: "strict" (an invalid message is refused) or "none" (every check still runs and is recorded as a finding; nothing is refused for conformance, and the message is relayed as sent) — except a payload this gateway itself translated between IG lines, and an answer this gateway cannot read at all, which refuse at every level. "" => this flag is left unset entirely, so the gateway child applies its own published default. Any other value is refused by the gateway child at boot, naming both accepted values — that refusal lands in {state-dir}/gateway.log (the supervisor sends the child's own stderr there), not on shnkitd's own stdout/stderr.`)
+	conformanceEnforcement := flag.String("conformance-enforcement", "", `conformance enforcement level for the gateway child, one of the levels its pinned gateway release accepts: "none" (no payload conformance checks run and nothing is recorded), "observe" (every check runs, each defect is recorded as a finding, and the message is relayed as sent — the published default), "structural" (a message whose structure or profile is broken, or with a defect it cannot classify, is refused; other defects are recorded and relayed) or "strict" (every supported check refuses an invalid message, and a check that cannot run refuses too). The network rules and a payload this gateway itself translated between IG lines are refused at every level; an answer it cannot read is relayed at "none" and "observe" and refused at "structural" and "strict". "" => left unset, so the gateway child applies its published default. Any other value, or a level the pinned gateway does not know, stops shnkitd at startup with the accepted levels named.`)
 	tokenStoreFlag := flag.String("token-store", "", `login token storage backend: "keychain" or "file" ("" => derived: keychain when --java-assets is set, file otherwise)`)
 	manifestPath := flag.String("manifest", "", `path to the package-time versions.json manifest, served verbatim at GET /api/about ("" => 404-with-body, a dev checkout with no packaged manifest)`)
 	releasesURL := flag.String("releases-url", defaultReleasesURL, "GitHub \"latest release\" feed the launch-time update check GETs; overridable so a gate/test can stub it")
@@ -107,6 +107,13 @@ func main() {
 
 	if *stateDir == "" || *gatewayBin == "" {
 		fmt.Fprintln(os.Stderr, "shnkitd: --state-dir and --gateway-bin are required")
+		os.Exit(1)
+	}
+	// A level the pinned gateway does not accept would only make the gateway
+	// child refuse to boot, with the reason buried in its own log: refuse it
+	// here instead, naming the accepted levels.
+	if err := checkConformanceFlag(*conformanceEnforcement); err != nil {
+		fmt.Fprintf(os.Stderr, "shnkitd: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -310,12 +317,6 @@ func main() {
 	// default) applies." A present-but-corrupt file IS an error; fail safe
 	// rather than fail closed — boot proceeds as if nothing were recorded.
 	conformanceStore := conformance.NewStore(*stateDir)
-	conformanceCfg, conformanceLoadErr := conformanceStore.Load()
-	if conformanceLoadErr != nil {
-		log.Printf("shnkitd: conformance.json unreadable — booting as if no live level were recorded: %v", conformanceLoadErr)
-		conformanceCfg = conformance.Config{}
-	}
-
 	// initialConformanceLevel resolves the boot-time seed for
 	// CONFORMANCE_ENFORCEMENT: an EXPLICIT --conformance-enforcement (from
 	// the flag or kit.config.json/dev.config.json's conformanceEnforcement)
@@ -328,10 +329,12 @@ func main() {
 	// POST /api/conformance-level) apply, so a packaged app's operator
 	// choice survives a full relaunch. Neither set: "" — the published
 	// default, same as an ordinary unconfigured gateway.
-	initialConformanceLevel := *conformanceEnforcement
-	if initialConformanceLevel == "" {
-		initialConformanceLevel = conformanceCfg.Level
-	}
+	//
+	// resolveConformanceLevel also moves a "none" saved by a Kit before
+	// v0.21.0 to observe (it ran every check and recorded it; observe is the
+	// closest level now), and returns the
+	// notice the Status page shows about it; see its own doc.
+	initialConformanceLevel, conformanceNotice := resolveConformanceLevel(conformanceStore, *conformanceEnforcement, log.Printf)
 
 	conformanceLevel := newConformanceLevel(gwSwitch, conformanceStore, bus)
 
@@ -367,6 +370,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "shnkitd: new daemon: %v\n", err)
 		sup.StopAll() // no children yet at this point, but defensive: every exit path stops the supervisor
 		os.Exit(1)
+	}
+	if conformanceNotice != "" {
+		// Shown with the level in GET /api/status until the operator next
+		// changes the level; the migration itself is already persisted, so
+		// the notice appears on this one boot only.
+		d.SetConformanceNotice(conformanceNotice)
 	}
 
 	// signal.Notify is registered BEFORE the boot goroutine launches:
@@ -546,36 +555,6 @@ func main() {
 			return
 		}
 
-		stack, err := kitd.BuildStack(scfg)
-		if err != nil {
-			if ctx.Err() != nil {
-				// A signal (or other cancellation) landed while BuildStack was
-				// running: BuildStack's own failure (if any) is just fallout
-				// from the shutdown already in flight, not a genuine boot
-				// failure — ctx is already cancelled, so don't close
-				// bootFailed or call cancel() again.
-				bus.Emit(event.Event{Type: event.TypeChild, Detail: "boot aborted by shutdown"})
-				return
-			}
-			bus.Emit(event.Event{Type: event.TypeChild, Detail: "build stack: " + err.Error()})
-			close(bootFailed)
-			cancel()
-			return
-		}
-
-		// Published as soon as BuildStack has resolved the facts it carries —
-		// this is what unlocks GET /api/status's
-		// "validator"/"brProviderUrl" fields and POST /api/children/{name}/
-		// restart's pre-boot gate; both were 503/absent before this point.
-		d.SetStackInfo(kitd.StackInfo{Validator: validatorPosture, BRProviderURL: stack.BRProviderURL, ObserverURL: stack.ObserverURL, ProviderDataURL: stack.ProviderDataURL})
-
-		// The bridging demo toggle's baseline env — published as soon as
-		// BuildStack has assembled it, so the closure built at kitd.New time
-		// has something to rebuild from. Reachable only through that
-		// closure (kitd.Stack.GatewayEnv's SECURITY note).
-		gwEnv := stack.GatewayEnv
-		gwEnvPtr.Store(&gwEnv)
-
 		// Seeds GET /api/status's "conformanceLevel" with the boot-resolved
 		// value (CLI flag / kit.config.json, else the persisted
 		// conformance.json choice, else "" — initialConformanceLevel's own
@@ -583,50 +562,81 @@ func main() {
 		// seeding StackInfo/BYO get. Before this call, d.conformanceLevel
 		// reads "" (kitd.New's zero value) regardless of what
 		// initialConformanceLevel actually resolved to — a genuinely stale
-		// "" for the short boot window between kitd.New and here, the same
-		// pre-SetStackInfo window Validator=="" already has. Harmless only
-		// because no gateway child exists yet during that window for the
-		// value to misrepresent; this call closes it before the stack is
-		// ready for any live traffic.
+		// "" for the short boot window between kitd.New and here. Harmless
+		// only because no gateway child exists yet during that window for
+		// the value to misrepresent; this call closes it before the stack
+		// is ready for any live traffic.
 		d.SetConformanceLevel(initialConformanceLevel)
 
-		// Pre-spawn H2 prewarm copy: MUST run
-		// between BuildStack and the Start loop below — a running HAPI child
-		// creates its own empty H2 store and holds its file lock the moment
-		// it spawns, so copying the package-time-prewarmed store any later
-		// would either silently no-op or collide with that live lock. A
-		// no-op when *javaAssets == "" (CopyPrewarmedH2's own guard).
-		if err := kitd.CopyPrewarmedH2(*javaAssets, *stateDir, kitVersion, log.Printf); err != nil {
+		// Build the stack and start its children. A child whose allocated
+		// port another process took before it could bind it exits during
+		// startup; StartStack then stops what it started and builds again
+		// on fresh ports, a bounded number of times (kitd.BootStartAttempts).
+		// prepare runs after every build, before any child spawns: the facts
+		// it publishes carry the build's ports.
+		prepare := func(stack kitd.Stack) error {
+			// Published as soon as BuildStack has resolved the facts it
+			// carries — this is what unlocks GET /api/status's
+			// "validator"/"brProviderUrl" fields and POST
+			// /api/children/{name}/restart's pre-boot gate; both were
+			// 503/absent before this point.
+			d.SetStackInfo(kitd.StackInfo{Validator: validatorPosture, BRProviderURL: stack.BRProviderURL, ObserverURL: stack.ObserverURL, ProviderDataURL: stack.ProviderDataURL})
+
+			// The bridging demo toggle's baseline env — published as soon
+			// as BuildStack has assembled it, so the closure built at
+			// kitd.New time has something to rebuild from. Reachable only
+			// through that closure (kitd.Stack.GatewayEnv's SECURITY note).
+			gwEnv := stack.GatewayEnv
+			gwEnvPtr.Store(&gwEnv)
+
+			// Pre-spawn H2 prewarm copy: MUST run between BuildStack and
+			// the children's start — a running HAPI child creates its own
+			// empty H2 store and holds its file lock the moment it spawns,
+			// so copying the package-time-prewarmed store any later would
+			// either silently no-op or collide with that live lock. A no-op
+			// when *javaAssets == "" (CopyPrewarmedH2's own guard), and on
+			// a retry once its marker is written.
+			if err := kitd.CopyPrewarmedH2(*javaAssets, *stateDir, kitVersion, log.Printf); err != nil {
+				return fmt.Errorf("copy prewarmed H2: %w", err)
+			}
+			return nil
+		}
+		// A retry (or why there is none) goes to shnkitd's log and onto the
+		// bus, so the boot screen shows it rather than a child that failed
+		// and then vanished.
+		notify := func(line string) {
+			log.Print(line)
+			bus.Emit(event.Event{Type: event.TypeChild, Detail: line})
+		}
+		stack, err := kitd.StartStack(ctx, sup, kitd.BootStartAttempts, func() (kitd.Stack, error) { return kitd.BuildStack(scfg) }, prepare, notify)
+		if err != nil {
 			if ctx.Err() != nil {
-				bus.Emit(event.Event{Type: event.TypeChild, Detail: "boot aborted by shutdown"})
+				// A signal (or other cancellation) landed during the build
+				// or a child's start: supervisor.waitReady treats ctx
+				// cancellation as a start error, so the failure is fallout
+				// from the shutdown already in flight, not a genuine boot
+				// failure — don't close bootFailed or call cancel() again.
+				var cse *kitd.ChildStartError
+				aborted := event.Event{Type: event.TypeChild, Detail: "boot aborted by shutdown"}
+				if errors.As(err, &cse) {
+					aborted.Child = cse.Child
+				}
+				bus.Emit(aborted)
 				return
 			}
-			bus.Emit(event.Event{Type: event.TypeChild, Detail: "copy prewarmed H2: " + err.Error()})
+			var cse *kitd.ChildStartError
+			if errors.As(err, &cse) {
+				bus.Emit(event.Event{Type: event.TypeChild, Child: cse.Child, Detail: "start failed: " + cse.Err.Error()})
+			} else {
+				bus.Emit(event.Event{Type: event.TypeChild, Detail: err.Error()})
+			}
+			// The event bus alone leaves no trace once nothing is left
+			// subscribed to it — a boot that fails otherwise produces a
+			// silent failure with no explanation in shnkitd's own log.
+			log.Printf("shnkitd: boot failed: %v", err)
 			close(bootFailed)
 			cancel()
 			return
-		}
-
-		for _, spec := range stack.Children {
-			if err := sup.Start(ctx, spec); err != nil {
-				if ctx.Err() != nil {
-					// Same reasoning as above: supervisor.waitReady treats ctx
-					// cancellation as a start error, so a SIGINT that lands
-					// while a child is starting must not be misclassified as
-					// a boot failure.
-					bus.Emit(event.Event{Type: event.TypeChild, Child: spec.Name, Detail: "boot aborted by shutdown"})
-					return
-				}
-				bus.Emit(event.Event{Type: event.TypeChild, Child: spec.Name, Detail: "start failed: " + err.Error()})
-				// The event bus alone leaves no trace once nothing is left
-				// subscribed to it — a child that fails to start otherwise
-				// produces a silent boot failure with no explanation in
-				// shnkitd's own log.
-				log.Printf("shnkitd: child %s failed to start: %v", spec.Name, err)
-				close(bootFailed)
-				cancel()
-				return
-			}
 		}
 
 		// Post-ready persona freshen: runs after every child
@@ -698,7 +708,17 @@ func main() {
 			resolveUC07PCI = func() (string, error) { return pinned, nil }
 		}
 
+		// Under an applied EHR swap, a conformant row asks the partner's own
+		// server whether it carries the row's seeded member before sending
+		// anything (runner.Config.MemberOnConnectedEHR); with no swap the
+		// bundled demo data always carries them, so nothing is asked.
+		var memberOnEHR func(context.Context, string) (bool, error)
+		if browser != nil {
+			memberOnEHR = browser.HasPersona
+		}
+
 		d.SetRunner(runner.New(runner.Config{
+			MemberOnConnectedEHR:   memberOnEHR,
 			Driver:                 driver,
 			Dispatch:               dispatch,
 			ProviderDataDriver:     pdDriver,
@@ -1075,16 +1095,78 @@ func resolveTokenStoreKind(explicit bool, value, javaAssets string) string {
 	return "file"
 }
 
+// checkConformanceFlag refuses a --conformance-enforcement level the pinned
+// gateway does not accept ("" — left unset — is fine), naming the accepted
+// levels, so shnkitd stops at startup instead of leaving the gateway child to
+// refuse to boot with the reason in its own log.
+func checkConformanceFlag(level string) error {
+	if err := conformance.ValidateLevel(level); err != nil {
+		return fmt.Errorf("--conformance-enforcement: %w", err)
+	}
+	return nil
+}
+
+// conformanceStore is the part of conformance.Store resolveConformanceLevel
+// uses.
+type conformanceStore interface {
+	MigrateLegacy() (bool, error)
+	Load() (conformance.Config, error)
+}
+
+// resolveConformanceLevel returns the level the gateway child boots with,
+// and a notice for the operator ("" when there is none).
+//
+// An explicit flag level always wins. Otherwise the saved level applies:
+//   - A "none" saved by a Kit before v0.21.0 is moved to observe first
+//     (conformance.Store.MigrateLegacy). If the file cannot be rewritten, the
+//     level is still observe for this boot: the saved "none" ran every check,
+//     and booting it as today's "none" would switch the checks off.
+//   - A saved level the pinned gateway does not accept (a hand edit, or a
+//     file from a newer Kit) is not handed to the gateway child, which would
+//     refuse to boot on it: the published default applies instead.
+//   - An unreadable file boots as if nothing were saved.
+//
+// The notice is returned only when the saved level is what applies: with an
+// explicit flag level, telling the operator to re-choose on the Status page
+// would describe a choice that is not in effect, so it is only logged.
+func resolveConformanceLevel(store conformanceStore, flagLevel string, logf func(string, ...any)) (level, notice string) {
+	migrated, migrateErr := store.MigrateLegacy()
+	cfg, loadErr := store.Load()
+	switch {
+	case loadErr != nil:
+		logf("shnkitd: conformance.json unreadable — booting as if no live level were recorded: %v", loadErr)
+		cfg = conformance.Config{}
+	case migrateErr != nil && cfg.Version == 0 && cfg.Level == "none":
+		logf("shnkitd: conformance.json could not be migrated, so its earlier-Kit \"none\" is read as observe for this start: %v", migrateErr)
+		cfg.Level, migrated = "observe", true
+	case migrateErr != nil:
+		logf("shnkitd: conformance.json could not be migrated: %v", migrateErr)
+	}
+	if migrated {
+		logf("shnkitd: %s", conformance.LegacyNoneNotice)
+	}
+	if err := conformance.ValidateLevel(cfg.Level); err != nil {
+		logf("shnkitd: conformance.json names a level this Kit's gateway does not accept, so the published default applies: %v", err)
+		cfg.Level = ""
+	}
+	if flagLevel != "" {
+		return flagLevel, ""
+	}
+	if migrated {
+		notice = conformance.LegacyNoneNotice
+	}
+	return cfg.Level, notice
+}
+
 // conformanceEnv turns --conformance-enforcement into the gateway child's
 // ExtraEnv. An empty level emits NOTHING: the gateway child's own
 // CONFORMANCE_ENFORCEMENT default then applies, untouched by the Kit — the
 // published default has exactly one home (the gateway's own env loader,
 // gateway/app/app.go), so a Kit gateway with no flag ships what a partner's
 // own gateway ships, and the two can never drift apart the next time that
-// default moves. A named level reaches the child exactly as given, with no
-// validation here: an invalid value is refused by the gateway child at
-// boot, naming both accepted values, which is the honest place for that
-// error (see the flag's own help text above).
+// default moves. A named level reaches the child exactly as given; it was
+// already checked against the pinned gateway's levels at startup
+// (conformance.ValidateLevel), and a live change is checked the same way.
 func conformanceEnv(level string) []string {
 	if level == "" {
 		return nil

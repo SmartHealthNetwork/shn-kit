@@ -111,16 +111,31 @@ function ChildRestartControl({ name, admissionPending }: { name: string; admissi
   );
 }
 
-// CONFORMANCE_LEVEL_OPTIONS: the three choices ConformanceLevelControl
-// renders as tabs, in the order shown. "" is "Published default" — never
-// labeled with the default's current VALUE (that value is this Kit's own
-// published default, not something the control should assert, since it can
-// change without this file changing).
-const CONFORMANCE_LEVEL_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: 'Published default' },
-  { value: 'strict', label: 'Strict' },
-  { value: 'none', label: 'None' },
-];
+// CONFORMANCE_LEVEL_LABELS names each level ConformanceLevelControl can
+// offer. Which of them it actually offers comes from the daemon
+// (StatusResponse.conformanceLevels: the levels this Kit's pinned gateway
+// accepts), so this file keeps no list of its own. "" — left unset, the
+// gateway's published default — is labelled "Observe (default)", and an
+// explicitly saved "observe" (for example one migrated from an earlier Kit's
+// "none") shows as that same option, since the two behave the same.
+const CONFORMANCE_LEVEL_LABELS: Record<string, string> = {
+  '': 'Observe (default)',
+  structural: 'Structural',
+  strict: 'Strict',
+  none: 'None',
+};
+
+// conformanceLevelOptions lists the tabs for the levels the daemon offers:
+// the default first, then each offered level other than observe (which the
+// default already stands for), from least to most refusing.
+function conformanceLevelOptions(levels: string[] | undefined): { value: string; label: string }[] {
+  const offered = levels ?? ['none', 'strict'];
+  const order = ['structural', 'strict', 'none'];
+  return [
+    { value: '', label: CONFORMANCE_LEVEL_LABELS[''] },
+    ...order.filter((l) => offered.includes(l)).map((l) => ({ value: l, label: CONFORMANCE_LEVEL_LABELS[l] })),
+  ];
+}
 
 type ConformanceLevelState = { kind: 'idle' } | { kind: 'pending' } | { kind: 'error'; message: string };
 
@@ -133,7 +148,7 @@ type ConformanceLevelState = { kind: 'idle' } | { kind: 'pending' } | { kind: 'e
 // server-reported value (StatusResponse.conformanceLevel); a click that
 // repeats it is a no-op (no request), and every tab disables while a change
 // is in flight so a second click can't race the first restart.
-function ConformanceLevelControl({ level }: { level: string }): JSX.Element {
+function ConformanceLevelControl({ level, levels }: { level: string; levels?: string[] }): JSX.Element {
   const [state, setState] = useState<ConformanceLevelState>({ kind: 'idle' });
   // applied is the locally-known current level: seeded from the prop,
   // advanced only by this control's OWN successful change — never
@@ -143,8 +158,14 @@ function ConformanceLevelControl({ level }: { level: string }): JSX.Element {
   // full StatusPanel remount, the same eventual-consistency posture
   // ChildRestartControl's own local state already has.
   const [applied, setApplied] = useState(level);
+  const options = conformanceLevelOptions(levels);
+  // A saved "observe" is the default's behavior: select the default tab.
+  const shown = applied === 'observe' ? '' : applied;
 
   const handleSelect = async (value: string) => {
+    // Compared with the saved value, not the shown tab: clicking "Observe
+    // (default)" while an explicit "observe" is saved clears it back to the
+    // default, so the level again follows the published default by absence.
     if (value === applied || state.kind === 'pending') return;
     setState({ kind: 'pending' });
     try {
@@ -168,18 +189,18 @@ function ConformanceLevelControl({ level }: { level: string }): JSX.Element {
   return (
     <div className="conformance-level-control">
       <div className="conformance-level-switch" role="tablist" aria-label="Conformance enforcement">
-        {CONFORMANCE_LEVEL_OPTIONS.map((opt) => (
+        {options.map((opt) => (
           <button
             key={opt.value}
             type="button"
             role="tab"
-            aria-selected={applied === opt.value}
+            aria-selected={shown === opt.value}
             // aria-current is what the stylesheet's selected-tab rule
             // actually keys on (mirroring ModeSwitch's own dual
             // aria-selected+aria-current — role="tab" alone is correct
             // ARIA but, without this, the CSS has nothing to render the
             // selection with).
-            aria-current={applied === opt.value ? 'true' : undefined}
+            aria-current={shown === opt.value ? 'true' : undefined}
             disabled={state.kind === 'pending'}
             onClick={() => {
               void handleSelect(opt.value);
@@ -440,14 +461,21 @@ export function StatusPanel({ boot, status, sseState, admissionPending = false, 
       {status?.conformanceLevel !== undefined && (
         <section className="card systems-card conformance-level">
           <h2>Conformance enforcement</h2>
+          {status.conformanceNotice && (
+            <p role="status" className="conformance-level-notice">
+              {status.conformanceNotice}
+            </p>
+          )}
           <p className="conformance-level-hint">
-            Every governed check runs regardless of level; only “Strict” refuses a non-conformant
-            message (two checks always refuse, at any level: a payload this gateway itself
-            translated between IG lines, and an answer it cannot read at all). “Published default”
-            tracks this Kit&apos;s own published default rather than a fixed value, since that
-            default can change.
+            “Observe (default)” runs every check, records each defect as a finding and relays the
+            message as sent. “Structural” refuses a message whose structure or profile is broken,
+            or with a defect it cannot classify, and records the rest. “Strict” refuses any message
+            a supported check finds invalid, and any a check cannot run on. “None” runs no
+            conformance checks and records nothing. At every level, the network rules and a payload
+            this gateway itself translated between IG lines are refused. An answer the gateway
+            cannot read is relayed at Observe and None, and refused at Structural and Strict.
           </p>
-          <ConformanceLevelControl level={status.conformanceLevel} />
+          <ConformanceLevelControl level={status.conformanceLevel} levels={status.conformanceLevels} />
         </section>
       )}
 

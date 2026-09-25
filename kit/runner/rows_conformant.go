@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -58,78 +59,68 @@ var conformantRows = map[string]rowFunc{
 }
 
 // ConformantMemberNotOnConnectedEHRSentence is the plain-language sentence a
-// conformant-lane row's failure Detail names when the gateway's OWN ingress
-// subject-bind rejects the row's hardcoded member — status 400, body
-// {"error":"unknown member"}. This is a deliberate rejection: the other lane
-// keeps running seeded when the swap target carries the seeded members, but
-// under an applied EHR swap this shape means the member a conformant row hardcodes
-// (MBR-COVERED, MBR-NOTCOVERED, MBR-UC06, MBR-UC07HCPCS, MBR-UC08) is not a
-// Patient on the partner's connected FHIR server — the remedy is loading the
-// demo persona bundle (fhirseed.ConformantSeedBundle(), downloadable from
-// GET /api/byo/seed-bundle/conformant, manual transaction-POST) onto it, or
-// restoring demo data.
-//
-// Pinned live at gateway/engine/ingress_crd.go:104 (ingressCRDSubjectPCI's
-// g.cfg.SoR.ResolvePatient miss — hit by every PostCRD-driven row) and
-// gateway/engine/pas_native.go:171 (ingressPASNativeSubjectPCI's identical
-// miss — hit by every SubmitPAS-driven row), both via
-// gateway/engine/gateway.go:524's writeJSON(w, http.StatusBadRequest,
-// map[string]string{"error": "unknown member"}) — the EXACT SAME byte shape
-// kit/runner/rows_ehr.go's freeformProviderUnknownMemberSentence recognizes
-// for the SoR's own free-form-side unknown-member guard
-// (originate_homeoxygen.go:61); this is that same wire shape's
-// conformant-ingress twin (gateway/engine/ingress_crd_test.go's
-// TestIngressSubjectPCI_UnknownReferenceFailsClosed pins the fail-closed
-// contract (status != 0) and test/ingressconformance/crd_adversarial_test.go's
-// TestCRDIngress_UnknownMember_RejectedNoLeg pins ≥400 end-to-end; the exact
-// byte shape (400 + the literal "unknown member" body) is confirmed by
-// reading ingress_crd.go/pas_native.go's writeJSON calls directly, the same
-// evidence-first method rows_ehr.go's own analogous constant documents for
-// its guard).
+// conformant-lane row's failure Detail names when the row's hardcoded seeded
+// member (MBR-COVERED, MBR-NOTCOVERED, MBR-UC06, MBR-UC07HCPCS, MBR-UC08,
+// MBR-BRIDGE-DEMO) is not a Patient on the partner's connected FHIR server
+// under an applied EHR swap. The row learns it from the partner's own server
+// before sending anything (requireConformantMember, Config.MemberOnConnectedEHR):
+// the Kit's gateway carries a member its system of record does not hold, so
+// the exchange itself would not say so. The remedy is loading the demo
+// persona bundle (fhirseed.ConformantSeedBundle(), downloadable from
+// GET /api/byo/seed-bundle/conformant) onto that server, or restoring demo
+// data.
 //
 // The conformant lane's sentence differs from the ehr/free-form lane's
 // (rows_ehr.go's freeformProviderUnknownMemberSentence, "check the id or
 // refresh the patient list") because the two lanes' members come from
-// DIFFERENT places: a free-form member is caller-typed (so "check the id"
-// is the right remedy), while every conformant-lane member is a HARDCODED
-// seeded persona the row itself chose (never caller input) — so the honest
-// remedy here is "load the demo personas," not "check the id."
+// DIFFERENT places: a free-form member is caller-typed, while every
+// conformant-lane member is a hardcoded seeded persona the row itself chose.
 //
-// Safe to map UNCONDITIONALLY, with no swap-state check: in un-swapped demo
-// mode every conformant row's member is a persona the bundled demo data
-// always resolves,
-// so this shape cannot occur there — it is reachable ONLY once an EHR swap
-// has repointed the gateway's SoR at a partner server missing the persona.
-//
-// EXPORTED so the live kit gate's both-states rows
-// (test/kitlive/byo_test.go) assert against the constant itself rather than
-// retyping the sentence — copy that a test retypes can drift from the copy
-// the product actually renders.
+// EXPORTED so the live kit gate's both-states rows (test/kitlive/byo_test.go)
+// assert against the constant itself rather than retyping the sentence.
 const ConformantMemberNotOnConnectedEHRSentence = "this member isn't on your connected EHR — load the demo personas or restore demo data"
 
-// isConformantIngressUnknownMember recognizes the byte-real ingress
-// subject-bind-miss shape (status 400, body containing
-// {"error":"unknown member"}) — a conservative, exact-shape match. It does
-// NOT fire on the DTR ingress's own DIFFERENT unresolvable-patient guard
-// (gateway/engine/ingress.go's handleDTRIngress: status 403, body
-// {"error":"carried coverage patient does not resolve"}) — a different
-// status AND a different body, left with its raw detail unchanged (see
-// TestRun_ConformantUC02_OtherIngressFailure_NotRelabeled's regression row).
-func isConformantIngressUnknownMember(status int, body []byte) bool {
-	return status == http.StatusBadRequest && strings.Contains(string(body), `"unknown member"`)
+// memberCheckTimeout bounds the connected-EHR member check. It is one small
+// search; a server that cannot answer in this time is treated as "could not
+// check", and the row runs as usual.
+const memberCheckTimeout = 10 * time.Second
+
+// requireConformantMember checks, before a conformant row sends anything,
+// that the connected EHR carries the row's seeded member. From shn-gateway
+// v0.53.0 the gateway carries a member its system of record does not hold
+// instead of refusing it, so the ingress no longer answers "unknown member"
+// for a partner server missing the demo personas; the Kit asks the partner's
+// own server itself (Config.MemberOnConnectedEHR, set only under an applied
+// EHR swap) so the row still names the remedy rather than passing on data the
+// partner's system does not have. A check that cannot run leaves the row to
+// run as usual and records why (Runner.memberCheckNote) — shown, never
+// assumed.
+func (rn *Runner) requireConformantMember(uc, member string) error {
+	check := rn.cfg.MemberOnConnectedEHR
+	if check == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(rn.baseCtx, memberCheckTimeout)
+	defer cancel()
+	held, err := check(ctx, member)
+	if err != nil {
+		rn.memberCheckNote = "could not check your connected EHR for " + member + ": " + err.Error()
+		return nil
+	}
+	if !held {
+		return fmt.Errorf("runner: conformant/%s: %s (%s is not on the connected EHR)", uc, ConformantMemberNotOnConnectedEHRSentence, member)
+	}
+	return nil
 }
 
 // conformantIngressErr builds a conformant row's failure error for a
 // non-200 ingress response at step (a short "ucNN: CRD"/"ucNN: submit"-style
-// label matching the row's existing wording, so "runner: conformant/"+step
-// reads identically to the pre-mapping error text). It recognizes the
-// unknown-member shape and substitutes the named sentence
-// (ConformantMemberNotOnConnectedEHRSentence) ahead of the raw status/body;
-// every other shape keeps its raw "status %d: %s" detail unchanged.
+// label), keeping the ingress's own status and body. A seeded member missing
+// from the connected EHR is caught before anything is sent
+// (requireConformantMember); the Kit's gateway carries a member its system of
+// record does not hold, so the ingress no longer answers "unknown member" for
+// one, and this function relabels nothing.
 func conformantIngressErr(step string, status int, body []byte) error {
-	if isConformantIngressUnknownMember(status, body) {
-		return fmt.Errorf("runner: conformant/%s: %s (status %d: %s)", step, ConformantMemberNotOnConnectedEHRSentence, status, excerpt(body))
-	}
 	return fmt.Errorf("runner: conformant/%s status %d: %s", step, status, excerpt(body))
 }
 
@@ -549,6 +540,9 @@ func originated(viaBFF bool, detail string) string {
 // and refuses only a card that actually demands prior authorization.
 func conformantUC02(rn *Runner, branch string) (string, error) {
 	const member = "MBR-COVERED"
+	if err := rn.requireConformantMember("uc02", member); err != nil {
+		return "", err
+	}
 	order := scenariodriver.PersonaOrders["noPA"] // E0250, Hospital Bed with Side Rails
 
 	cards, viaBFF, err := conformantCRD(rn, "uc02", "noPA", member)
@@ -612,6 +606,9 @@ func conformantUC03(rn *Runner, branch string) (string, error) {
 		return conformantUC03BridgeDemo(rn)
 	}
 	const member = "MBR-COVERED"
+	if err := rn.requireConformantMember("uc03", member); err != nil {
+		return "", err
+	}
 	ref := "Patient/" + member
 	now := rn.now()
 	order := scenariodriver.PersonaOrders["approve"] // L8000
@@ -687,6 +684,9 @@ func conformantUC03(rn *Runner, branch string) (string, error) {
 // exactly the claim the exhibit is allowed to make.
 func conformantUC03BridgeDemo(rn *Runner) (string, error) {
 	const member = "MBR-BRIDGE-DEMO"
+	if err := rn.requireConformantMember("uc03", member); err != nil {
+		return "", err
+	}
 	ref := "Patient/" + member
 	order := scenariodriver.PersonaOrders["approve"] // L8000
 
@@ -963,6 +963,9 @@ func conformantBundlePatient(bundle []byte) ([]byte, error) {
 // integrating against a live payer will see most of the time, and a row that could
 // only end "approved" taught the opposite.
 func conformantHeldStillHeld(rn *Runner, uc, member string, evidence func(ref string, now time.Time) (drJSON, provJSON []byte, err error)) (viaBFF bool, detail string, err error) {
+	if err := rn.requireConformantMember(uc, member); err != nil {
+		return false, "", err
+	}
 	ref := "Patient/" + member
 	now := rn.now()
 	submitCorr := randCorr("kit-" + uc + "-submit")
@@ -1094,6 +1097,9 @@ func conformantUC05(rn *Runner, branch string) (string, error) {
 // schedule.
 func conformantUC06(rn *Runner, branch string) (string, error) {
 	const member = "MBR-UC06"
+	if err := rn.requireConformantMember("uc06", member); err != nil {
+		return "", err
+	}
 	ref := "Patient/" + member
 	now := rn.now()
 	submitCorr := randCorr("kit-uc06-submit")
@@ -1183,6 +1189,9 @@ func conformantUC06(rn *Runner, branch string) (string, error) {
 // is about, so it submits directly.
 func conformantUC07(rn *Runner, branch string) (string, error) {
 	const member = "MBR-UC07HCPCS"
+	if err := rn.requireConformantMember("uc07", member); err != nil {
+		return "", err
+	}
 	ref := "Patient/" + member
 	now := rn.now()
 	order := scenariodriver.PersonaOrders["approve"] // L8000
@@ -1237,6 +1246,9 @@ func conformantUC07(rn *Runner, branch string) (string, error) {
 // never a passed deny.
 func conformantUC08(rn *Runner, branch string) (string, error) {
 	const member = "MBR-UC08"
+	if err := rn.requireConformantMember("uc08", member); err != nil {
+		return "", err
+	}
 	ref := "Patient/" + member
 	now := rn.now()
 	order := scenariodriver.PersonaOrders["deny"] // J3490, Unclassified drugs

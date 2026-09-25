@@ -6,6 +6,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -159,13 +160,39 @@ func TestCheck_NonOKStatus_Error(t *testing.T) {
 	}
 }
 
+// errFeedRefused is what refusingClient's transport returns for every request.
+var errFeedRefused = errors.New("connect: connection refused")
+
+// refusingClient fails every request at the transport, the way a refused
+// connection does, and records what reached it. A closed test server's
+// address is no substitute: its port can be handed to the next listener any
+// test starts, turning the refusal into a live answer from the wrong server.
+func refusingClient(reached *[]string) *http.Client {
+	return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		*reached = append(*reached, r.Method+" "+r.URL.String())
+		return nil, errFeedRefused
+	})}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestCheck_UnreachableFeed_Error(t *testing.T) {
-	srv := feedServer(t, http.StatusOK, releaseJSON(t, "v1.0.0", ""))
-	url := srv.URL
-	srv.Close() // closed before the call: connection refused, no live network involved
-	_, err := Check(context.Background(), http.DefaultClient, url, "1.0.0")
+	const feedURL = "http://feed.invalid/releases/latest"
+	var reached []string
+	_, err := Check(context.Background(), refusingClient(&reached), feedURL, "1.0.0")
 	if err == nil {
 		t.Fatal("Check(unreachable feed) = nil error, want non-nil")
+	}
+	// The transport-failure branch, not a status or decode refusal: the
+	// transport's own error, wrapped under the fetch prefix, after exactly
+	// one GET of the feed.
+	if !errors.Is(err, errFeedRefused) || !strings.HasPrefix(err.Error(), "update: fetch "+feedURL+": ") {
+		t.Fatalf("Check(unreachable feed) error = %v, want the fetch transport failure", err)
+	}
+	if len(reached) != 1 || reached[0] != "GET "+feedURL {
+		t.Fatalf("transport reached by %v, want one GET %s", reached, feedURL)
 	}
 }
 

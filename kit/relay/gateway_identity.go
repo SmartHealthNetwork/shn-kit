@@ -28,12 +28,14 @@ type publishedRelease struct {
 // releases a Kit may still be pointed at, kept so their observation keeps
 // working rather than silently degrading.
 //
-// v0.46.0 carries the same observer listener as v0.44.0: its observer package
-// is byte-identical to v0.44.0's, the opt-in loopback listener still serves
-// POST /barrier with protocol 1, an incarnation and the emitted count, and the
-// application still wires the barrier to the engine's completion wait. So it
-// takes the same profile, and the reader keeps v0.44.0 recognized beside it.
+// v0.46.0 and v0.54.0 carry the same observer listener as v0.44.0: their
+// observer packages are byte-identical to v0.44.0's, the opt-in loopback
+// listener still serves POST /barrier with protocol 1, an incarnation and the
+// emitted count, and the application still wires the barrier to the engine's
+// completion wait. So they take the same profile, and the reader keeps the
+// earlier releases recognized beside them.
 var publishedReleases = []publishedRelease{
+	{"v0.54.0", "h1:WNMQA3aWZ3+pVOYzJO6h291dig6/MUmxk/MRcjwOjWM=", GatewayBarrier0440},
 	{"v0.46.0", "h1:9rRpOJwmhnINHMyCVDFXhOMNtvnots5sCwG/AnF9yIo=", GatewayBarrier0440},
 	{"v0.44.0", "h1:Mn4El5H2YvaJCv+i/PfjZldGUXKf+P8YB7+6Oemd1ks=", GatewayBarrier0440},
 	{"v0.43.1", "h1:XKVtKSaDam/e9KJhB4+lbsJP/3f8ktLZV4qJ1A4Dctw=", GatewayLegacySync0431},

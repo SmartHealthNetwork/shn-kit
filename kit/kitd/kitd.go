@@ -98,8 +98,9 @@ type Config struct {
 	// ConformanceLevel is the seam POST /api/conformance-level dispatches an
 	// operator's live enforcement-level change through: main wires a closure
 	// that restarts the gateway child with the requested
-	// CONFORMANCE_ENFORCEMENT swapped into its env (accepting exactly "",
-	// "strict", "none" — "" clears back to the published default), the same
+	// CONFORMANCE_ENFORCEMENT swapped into its env (accepting "" — which
+	// clears back to the published default — or any level the pinned gateway
+	// accepts, conformance.Levels()), the same
 	// PURPOSE-BUILT env-only gateway restart BridgingDemo above uses, and
 	// persists the choice so it survives a full Kit relaunch. nil ⇒ the
 	// whole feature is absent: the route 404s and GET /api/status omits its
@@ -236,6 +237,10 @@ type Daemon struct {
 	// Whether the "conformanceLevel" key is served at all keys off
 	// Config.ConformanceLevel != nil instead, mirroring bridgingDemo.
 	conformanceLevel string
+	// conformanceNotice tells the operator about a change the Kit made to
+	// their saved level (conformance.LegacyNoneNotice); "" when there is
+	// none. Cleared by the next successful POST /api/conformance-level.
+	conformanceNotice string
 
 	// update/updateSet back GET /api/status's "update" field.
 	// Unlike StackInfo/PatientAppURL, update.Info's own zero
@@ -430,6 +435,21 @@ func (d *Daemon) SetConformanceLevel(level string) {
 	d.mu.Lock()
 	d.conformanceLevel = level
 	d.mu.Unlock()
+}
+
+// SetConformanceNotice records a notice about the operator's saved level,
+// served in GET /api/status as "conformanceNotice" until the operator next
+// changes the level.
+func (d *Daemon) SetConformanceNotice(notice string) {
+	d.mu.Lock()
+	d.conformanceNotice = notice
+	d.mu.Unlock()
+}
+
+func (d *Daemon) getConformanceNotice() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.conformanceNotice
 }
 
 // getConformanceLevel returns the recorded level ("" before the first
@@ -677,6 +697,12 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	// "absent"/"not looking").
 	if d.cfg.ConformanceLevel != nil {
 		resp["conformanceLevel"] = d.getConformanceLevel()
+		// The levels this Kit's pinned gateway accepts, so the UI offers
+		// exactly those and keeps no list of its own.
+		resp["conformanceLevels"] = conformance.Levels()
+		if notice := d.getConformanceNotice(); notice != "" {
+			resp["conformanceNotice"] = notice
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -779,7 +805,7 @@ func (d *Daemon) handleBridgingDemo(w http.ResponseWriter, r *http.Request) {
 }
 
 // conformanceLevelRequest is POST /api/conformance-level's body:
-// {"level":"strict"|"none"|""}. "" clears back to the published default —
+// {"level": one of conformance.Levels() or ""}. "" clears back to the published default —
 // always sent explicitly, never inferred from an absent key (mirrors
 // demoRequest's own "missing means the safe/off direction" posture, except
 // here the JSON zero value for a string IS already "" — decode leaves a
@@ -846,6 +872,7 @@ func (d *Daemon) handleConformanceLevelPost(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	d.SetConformanceLevel(req.Level)
+	d.SetConformanceNotice("") // the operator has now chosen for themselves
 	writeJSON(w, http.StatusOK, conformanceLevelStatus{Level: req.Level})
 }
 

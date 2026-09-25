@@ -77,10 +77,10 @@ Dev builds default to the file store; either is selectable explicitly via
 | `--token-store` | `""` | `"keychain"` or `"file"`; `""` ⇒ derived (keychain when `--java-assets` is set, file otherwise) |
 | `--manifest` | `""` | Path to the package-time `versions.json`, served verbatim at `GET /api/about`; `""` ⇒ 404 with an honest "development build" body |
 | `--releases-url` | GitHub `shn-kit` latest-release feed | The update-check feed GETed once at launch — see "Phone-home honesty" below |
-| `--uc07-pci` | `""` | Patient-surface PCI override for the UC-07 demo persona; `""` ⇒ resolved live |
+| `--uc07-pci` | `""` | Test-harness pin of the patient identifier the UC-07 row reads authorizations back for on the patient surface; leave unset (`""` ⇒ looked up live from the patient surface) |
 | `--bridge-demo-holder` | `"bridge-demo"` | Holder id the `"bridge-demo-payer"` Verify probe expects on the registrar feed (the bridging demo's bridged-exchange exhibit); `""` ⇒ that probe is skipped entirely, not reported red |
 | `--bridge-demo-refuse-holder` | `"bridge-demo-refuse"` | Holder id the `"bridge-demo-refuse"` Verify probe expects on the registrar feed (the bridging demo's refusal exhibit); `""` ⇒ that probe is skipped entirely, not reported red |
-| `--conformance-enforcement` | `""` | `"strict"` (an invalid message is refused) or `"none"` (every check still runs and is recorded as a finding; nothing is refused for conformance, and the message is relayed as sent — except a payload this gateway itself translated between IG lines, and an answer this gateway cannot read at all, which refuse at every level). `""` ⇒ left unset entirely, so the gateway child applies its own published default. Any other value is refused by the gateway child at boot (in `{state-dir}/gateway.log`), naming both accepted values |
+| `--conformance-enforcement` | `""` | One of the levels the packaged gateway accepts: `"none"`, `"observe"`, `"structural"` or `"strict"` (see "Conformance enforcement level" below). `""` ⇒ left unset entirely, so the gateway child applies its own published default (`observe`). Any other value stops `shnkitd` at startup, naming the accepted levels |
 
 ## Observation windows
 
@@ -91,7 +91,7 @@ and time spent watching do not consume it. Each window publishes one start and
 one terminal event atomically with relay attribution, and history capture follows
 that terminal boundary. Late observer bytes remain visible as ambient activity.
 
-The packaged gateway is v0.46.0 and the SDK v0.51.1. Packaging uses a versioned Go
+The packaged gateway is v0.54.0 and the SDK v0.57.1. Packaging uses a versioned Go
 install and checks executable provenance before bundling it, including both slices
 of the universal macOS binary; it refuses any executable that does not read as the
 release this Kit pins. A manifest label alone is insufficient.
@@ -104,7 +104,7 @@ is read as the known absence it is.
 
 | Gateway identity | Observer completion behavior |
 |---|---|
-| Any gateway serving the supported completion protocol, including the packaged v0.46.0 executable and the earlier published v0.44.0 | Waits for entered operations and their evidence callbacks, then catches up the stream |
+| Any gateway serving the supported completion protocol, including the packaged v0.54.0 executable and the earlier published v0.46.0 and v0.44.0 | Waits for entered operations and their evidence callbacks, then catches up the stream |
 | Published v0.43.1 executable with the exact module checksum and command path | Uses its synchronous observer counter for ordinary completed requests |
 | Unidentified `(devel)`, replaced module, mixed universal slices, or another unknown identity | Clinical work continues on the protocol when it is served; a missing barrier is reported, never excused |
 
@@ -185,7 +185,7 @@ set headers).
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/health` | none | `200 {"ok":true}` |
-| `GET` | `/api/status` | token | Supervised-child status, the update-check result, a `"conformanceLevel"` key carrying the enforcement level currently in effect (`""`/`"strict"`/`"none"`; key absent on a Kit build with no live level control), and — on Kits built with the bridging demo — a `"bridging"` block carrying `demoMode` plus, once the boot-time Verify probes have run, optional `peer`/`refusePeer` probe results (each omitted, never a fabricated red, when its holder id is unconfigured) |
+| `GET` | `/api/status` | token | Supervised-child status, the update-check result, a `"conformanceLevel"` key carrying the enforcement level currently in effect (`""` or one of the offered levels; key absent on a Kit build with no live level control), with `"conformanceLevels"` (the levels this Kit's pinned gateway accepts) and, after the Kit changed a saved level, a one-boot `"conformanceNotice"`, and — on Kits built with the bridging demo — a `"bridging"` block carrying `demoMode` plus, once the boot-time Verify probes have run, optional `peer`/`refusePeer` probe results (each omitted, never a fabricated red, when its holder id is unconfigured) |
 | `GET` | `/api/bootstrap` | token | Sign-in/provisioning state |
 | `POST` | `/api/bootstrap/signin` | token | Starts a loopback-PKCE browser sign-in |
 | `POST` | `/api/bootstrap/reset` | token | Clears stored credentials; `{"restartRequired":true}` |
@@ -201,7 +201,7 @@ set headers).
 | `GET` | `/api/support-bundle` | token | A zip of per-child logs, the manifest, the boot probe results, and recent run history — secrets excluded by inventory, not by hope |
 | `POST` | `/api/children/{name}/restart` | token | Restart one supervised Java child (`validator`/`data-server`/`br-provider`); `403` for the gateway child — restart the whole Kit for that |
 | `POST` | `/api/bridging/demo` | token | Turn bridging demo mode on/off (`{"enabled":bool}`); restarts the gateway child with a narrowed egress-native view; `409` while a run or watch is in flight |
-| `POST` | `/api/conformance-level` | token | Live conformance enforcement change (`{"level":"strict"\|"none"\|""}`, `""` clears back to the published default); restarts the gateway child with `CONFORMANCE_ENFORCEMENT` swapped in its env and persists the choice to `{state-dir}/conformance.json`; `400` for any other value, `409` while a run or watch is in flight — see "Conformance enforcement level" below |
+| `POST` | `/api/conformance-level` | token | Live conformance enforcement change (`{"level":...}`, one of `"conformanceLevels"` or `""`, which clears back to the published default); restarts the gateway child with `CONFORMANCE_ENFORCEMENT` swapped in its env and persists the choice to `{state-dir}/conformance.json`; `400` for any other value, `409` while a run or watch is in flight — see "Conformance enforcement level" below |
 | `POST` | `/api/bridging/exhibit` | token | Run one embedded fixture (`{"kind":"carry"\|"refusal"}`) through the gateway child's real cross-version transform chain — a self-contained proof of the carry mechanism or a semantic-change refusal, independent of any scenario run or the demo-mode toggle |
 | `GET` | `/ui/*` | **none (ungated)** | The built Kit UI, served as static assets |
 
@@ -351,13 +351,41 @@ the compatibility simulation is on, never on the wire and never part of the audi
 
 ## Conformance enforcement level
 
-`CONFORMANCE_ENFORCEMENT` is a per-gateway setting: `"strict"` refuses an invalid
-message, `"none"` still checks and records every crossing but relays it as sent
-(except a payload this gateway itself translated between IG lines, and an answer it
-cannot read at all, which refuse at every level). The published default is `"none"` —
-**not** "validation off": every check still runs and every invalid verdict is still
-recorded as a finding (visible in the inspector's timeline, beside `validate.result`),
-metadata only, never a validator diagnostic string.
+`CONFORMANCE_ENFORCEMENT` is a per-gateway setting. The Kit offers exactly the levels
+its packaged gateway accepts (`GET /api/status`'s `"conformanceLevels"`):
+
+- **`observe`**, the published default: every check runs, each defect is recorded as
+  a finding (visible in the inspector's timeline, beside `validate.result`; metadata
+  only, never a validator diagnostic string) and the message is relayed as sent;
+- **`structural`**: a message whose structure or profile is broken, or with a defect
+  the gateway cannot classify, is refused; invariant failures, codes outside their
+  code lists and the content rules are recorded and the message relayed, and so is a
+  check that cannot run;
+- **`strict`**: any message a supported check finds invalid is refused, and so is one
+  a check cannot run on;
+- **`none`**: no payload conformance checks run and nothing is recorded.
+
+At every level, the network rules (authentication, authority, consent, the patient
+binding, routing, replay, message integrity) and a payload this gateway itself
+translated between IG lines are refused. An answer the gateway cannot read is relayed
+at `none` and `observe` (recorded at `observe`) and refused at `structural` and
+`strict`.
+
+**Upgrading from an earlier Kit.** Before v0.21.0 the Kit's gateway had no `observe`
+level, and its `"none"` still ran every check and recorded what it found, while
+refusing a few cases at every level (an answer it could not read, content defects
+such as another patient in one message, a validator that could not run). `observe` is
+the closest level now, and it relays those cases with a finding; `strict` refuses
+them. A `"none"` saved by an earlier Kit in `{state-dir}/conformance.json` is
+therefore moved to `"observe"` on the first start of v0.21.0, and the Status page
+says so once. Choose `"none"` again to turn the checks off. A `"none"` given by
+`--conformance-enforcement` or `kit.config.json` is taken as given, and now turns the
+checks off.
+
+**Going back to an earlier Kit.** Kit v0.20.0's gateway does not know `observe` or
+`structural` and will not start with either saved. Before downgrading, click
+"Observe (default)" on the Status page even when it is already selected (that clears
+the saved level), or choose `none` or `strict`.
 
 Two ways to set it, and they compose:
 

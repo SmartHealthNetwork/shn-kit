@@ -2,9 +2,12 @@ package auditread
 
 import (
 	"context"
+	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -143,5 +146,35 @@ func TestFetch_Unreachable(t *testing.T) {
 	_, err := Fetch(context.Background(), http.DefaultClient, "http://127.0.0.1:1/unreachable")
 	if err == nil {
 		t.Fatal("Fetch: want error for unreachable URL, got nil")
+	}
+}
+
+// Fetch reuses its connection: each fetch reads the answer to its end, so a
+// run's pre- and post-fetch of a large chain (sent chunked) share one
+// connection instead of each leaving a TIME_WAIT socket behind.
+func TestFetch_ReusesItsConnection(t *testing.T) {
+	var conns atomic.Int64
+	big := make([]Record, 2000) // large enough to be sent chunked, not with a Content-Length
+	for i := range big {
+		big[i] = Record{Seq: i + 1, Outcome: "allowed"}
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(big)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, st http.ConnState) {
+		if st == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+	for i := 0; i < 5; i++ {
+		recs, err := Fetch(context.Background(), srv.Client(), srv.URL)
+		if err != nil || len(recs) != len(big) {
+			t.Fatalf("fetch %d: %d records, err %v", i, len(recs), err)
+		}
+	}
+	if n := conns.Load(); n != 1 {
+		t.Fatalf("5 fetches opened %d connections, want 1", n)
 	}
 }

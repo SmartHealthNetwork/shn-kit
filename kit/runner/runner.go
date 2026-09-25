@@ -123,6 +123,15 @@ type Config struct {
 	BFFURL string
 	// Dispatch is shared by all owned gateway/BFF driver clients for the daemon lifetime.
 	Dispatch *DispatchObserver
+	// MemberOnConnectedEHR reports whether the connected EHR — the partner's
+	// own FHIR server under an applied EHR swap — carries a conformant row's
+	// seeded member. shnkitd sets it only when a swap is applied (nil
+	// otherwise: the bundled demo data always carries every seeded member).
+	// A conformant row the connected EHR does not carry the member for fails
+	// with ConformantMemberNotOnConnectedEHRSentence before anything is sent;
+	// when the check itself errors the row runs as usual and its Detail says
+	// the check could not run (shown, never assumed).
+	MemberOnConnectedEHR func(ctx context.Context, member string) (bool, error)
 }
 
 // Result is one completed run's outcome, as returned by Run and accumulated
@@ -244,6 +253,10 @@ type Runner struct {
 	// that reads it are the same held section. It is cleared when a run or a
 	// watch takes the lock, so nothing can inherit the previous run's.
 	decision PayerDecision
+	// memberCheckNote is set by a conformant row whose connected-EHR member
+	// check could not run (requireConformantMember), and appended to that
+	// run's Detail. Reset at the start of every run.
+	memberCheckNote string
 
 	// ctx is the run context of the row currently holding mu, under the same
 	// held-section rule as decision: the row that waits on it and the runLocked
@@ -491,6 +504,7 @@ func (r *Runner) finishWatch(tctx context.Context, w *watch) (res Result) {
 // runLocked holds admission through preparation, terminal publication and history.
 func (r *Runner) runLocked(ctx context.Context, runID, lane, uc, branch string, row rowFunc) (res Result) {
 	r.decision = PayerDecision{} // never inherit the previous run's determination
+	r.memberCheckNote = ""
 	r.ctx = ctx
 	w := r.beginObservation(ctx, relay.Stamp{RunID: runID, Lane: lane, UC: uc}, branch)
 	var detail string
@@ -536,6 +550,13 @@ func (r *Runner) runLocked(ctx context.Context, runID, lane, uc, branch string, 
 	}
 	auditReady = true
 	detail, clinicalErr = row(r, branch)
+	if note := r.memberCheckNote; note != "" {
+		if clinicalErr != nil {
+			clinicalErr = fmt.Errorf("%w (%s)", clinicalErr, note)
+		} else {
+			detail = strings.TrimSpace(detail + " (" + note + ")")
+		}
+	}
 	return
 }
 

@@ -52,8 +52,15 @@ export interface StatusResponse {
   // key means "this Kit build has no live conformance-level control,"
   // never "the published default is off" (that's the value "", which IS
   // the published-default state and is a genuine, present value here).
-  // "" | "strict" | "none".
+  // "" or one of conformanceLevels.
   conformanceLevel?: string;
+  // conformanceLevels are the levels this Kit's pinned gateway accepts
+  // (kit/conformance.Levels), present with conformanceLevel.
+  conformanceLevels?: string[];
+  // conformanceNotice tells the operator about a change the Kit made to
+  // their saved level (an earlier Kit's "none" moved to observe); absent
+  // when there is none.
+  conformanceNotice?: string;
 }
 
 // AboutManifest mirrors GET /api/about's body byte-for-byte — the

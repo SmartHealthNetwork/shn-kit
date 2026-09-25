@@ -36,8 +36,8 @@ const (
 	GatewayLegacySync0431
 	// GatewayBarrier0440 is the published gateway v0.44.0 and every later
 	// published release whose opt-in loopback observer listener serves the same
-	// completion barrier (v0.46.0, the release this Kit packages, serves it
-	// unchanged). It takes no legacy concession: an absent barrier here is a
+	// completion barrier (v0.46.0 and v0.54.0, the release this Kit packages,
+	// serve it unchanged). It takes no legacy concession: an absent barrier here is a
 	// fault, not an expected absence, and entered-operation completion covers a
 	// Watch without the counter's limits. Naming it positively is what lets
 	// packaging tell the release this Kit ships from any other executable handed

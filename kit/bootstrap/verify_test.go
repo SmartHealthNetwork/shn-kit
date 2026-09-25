@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"net"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,38 @@ import (
 )
 
 // --- fixtures ------------------------------------------------------------
+
+// errRefused is what refusingClient's transport returns for a refused request.
+var errRefused = errors.New("connect: connection refused")
+
+// refusingClient fails every request at the transport, the way a refused
+// connection does, except requests to live's host, which it forwards to that
+// test server. It records each refused request as "METHOD URL" in *refused. A
+// closed test server's address is no substitute: its port can be handed to
+// the next listener any test starts, turning the refusal into a live answer
+// from the wrong server.
+func refusingClient(live *httptest.Server, refused *[]string) *http.Client {
+	var liveHost string
+	var liveRT http.RoundTripper
+	if live != nil {
+		liveHost = strings.TrimPrefix(live.URL, "http://")
+		liveRT = live.Client().Transport
+	}
+	var mu sync.Mutex
+	return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if liveRT != nil && r.URL.Host == liveHost {
+			return liveRT.RoundTrip(r)
+		}
+		mu.Lock()
+		*refused = append(*refused, r.Method+" "+r.URL.String())
+		mu.Unlock()
+		return nil, errRefused
+	})}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // fakeDiscoverySrv serves a shnsdk.Discovery descriptor pointing Endpoints.
 // Registrar at registrarURL (mirrors test/kitlive/substrate_test.go:144-156,
@@ -309,11 +342,9 @@ func TestVerify_ReferencePayerWrongRole(t *testing.T) {
 // --- Row 4: discovery unreachable ------------------------------------------
 
 func TestVerify_DiscoveryUnreachable(t *testing.T) {
-	closedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	closedURL := closedSrv.URL
-	closedSrv.Close() // now unreachable
-
-	probes := Verify(context.Background(), http.DefaultClient, closedURL, "kit-h1", BridgeProbes{}, nil)
+	const discoveryURL = "http://discovery.invalid/.well-known/shn"
+	var refused []string
+	probes := Verify(context.Background(), refusingClient(nil, &refused), discoveryURL, "kit-h1", BridgeProbes{}, nil)
 
 	if len(probes) != 3 {
 		t.Fatalf("len(probes) = %d, want 3: %+v", len(probes), probes)
@@ -321,6 +352,15 @@ func TestVerify_DiscoveryUnreachable(t *testing.T) {
 	discP, _ := probeByName(probes, "discovery")
 	if discP.OK {
 		t.Error("discovery probe OK = true, want false")
+	}
+	// The transport-failure branch: one GET of discovery, refused, and the
+	// probe names that failure (not a status, a decode error, or a descriptor
+	// without a registrar).
+	if len(refused) != 1 || refused[0] != "GET "+discoveryURL {
+		t.Errorf("transport reached by %v, want one GET %s", refused, discoveryURL)
+	}
+	if !strings.HasPrefix(discP.Detail, "discovery: ") || !strings.HasSuffix(discP.Detail, errRefused.Error()) {
+		t.Errorf("discovery probe Detail = %q, want the transport failure", discP.Detail)
 	}
 	for _, name := range []string{"registration", "reference-payer"} {
 		p, ok := probeByName(probes, name)
@@ -343,21 +383,17 @@ func TestVerify_DiscoveryUnreachable(t *testing.T) {
 // already-implemented FetchHolders error branch (lines 61-71), which had no
 // dedicated test until now.
 func TestVerify_FetchHoldersFails(t *testing.T) {
-	// Allocate a port and immediately close the listener, so the registrar
-	// endpoint discovery names is provably dead (connection refused) rather
-	// than merely slow or 404ing.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("net.Listen: %v", err)
-	}
-	registrarURL := "http://" + ln.Addr().String()
-	if err := ln.Close(); err != nil {
-		t.Fatalf("ln.Close: %v", err)
-	}
-
+	// Discovery answers live; the registrar endpoint it names is refused at
+	// the transport, so it is provably dead (connection refused) rather than
+	// merely slow or 404ing.
+	const registrarURL = "http://registrar.invalid"
 	disc := fakeDiscoverySrv(t, registrarURL)
 
-	probes := Verify(context.Background(), http.DefaultClient, disc.URL, "kit-h1", BridgeProbes{}, nil)
+	var refused []string
+	probes := Verify(context.Background(), refusingClient(disc, &refused), disc.URL, "kit-h1", BridgeProbes{}, nil)
+	if len(refused) != 1 || refused[0] != "GET "+registrarURL+"/holders" {
+		t.Errorf("transport refused %v, want one GET %s/holders", refused, registrarURL)
+	}
 
 	if len(probes) != 3 {
 		t.Fatalf("len(probes) = %d, want 3: %+v", len(probes), probes)
@@ -374,8 +410,8 @@ func TestVerify_FetchHoldersFails(t *testing.T) {
 		if p.OK {
 			t.Errorf("probe %q OK = true, want false (dependent on the failed holder feed fetch)", name)
 		}
-		if !strings.Contains(p.Detail, "skipped: fetch holder feed failed") {
-			t.Errorf("probe %q Detail = %q, want containing %q", name, p.Detail, "skipped: fetch holder feed failed")
+		if !strings.HasPrefix(p.Detail, "skipped: fetch holder feed failed: ") || !strings.HasSuffix(p.Detail, errRefused.Error()) {
+			t.Errorf("probe %q Detail = %q, want the holder feed's transport failure", name, p.Detail)
 		}
 	}
 }
@@ -609,15 +645,19 @@ func TestVerify_BridgeProbes(t *testing.T) {
 // silently dropped) whenever configured, absent whenever not, regardless of
 // which branch Verify takes.
 func TestVerify_BridgeProbes_SkippedWithDiscoveryFailure(t *testing.T) {
-	closedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	closedURL := closedSrv.URL
-	closedSrv.Close()
-
-	probes := Verify(context.Background(), http.DefaultClient, closedURL, "kit-h1",
+	const discoveryURL = "http://discovery.invalid/.well-known/shn"
+	var refused []string
+	probes := Verify(context.Background(), refusingClient(nil, &refused), discoveryURL, "kit-h1",
 		BridgeProbes{DemoHolder: demoHolder, RefuseHolder: refuseHolder}, nil)
 
 	if len(probes) != 5 {
 		t.Fatalf("len(probes) = %d, want 5: %+v", len(probes), probes)
+	}
+	if len(refused) != 1 || refused[0] != "GET "+discoveryURL {
+		t.Errorf("transport reached by %v, want one GET %s", refused, discoveryURL)
+	}
+	if discP, _ := probeByName(probes, "discovery"); discP.OK || !strings.HasSuffix(discP.Detail, errRefused.Error()) {
+		t.Errorf("discovery probe = %+v, want it failed on the transport", discP)
 	}
 	for _, name := range []string{"bridge-demo-payer", "bridge-demo-refuse"} {
 		p, ok := probeByName(probes, name)

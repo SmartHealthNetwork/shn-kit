@@ -28,6 +28,7 @@ import (
 	shnsdk "github.com/SmartHealthNetwork/shn-sdk"
 
 	"github.com/SmartHealthNetwork/shn-kit/bootstrap"
+	"github.com/SmartHealthNetwork/shn-kit/conformance"
 	"github.com/SmartHealthNetwork/shn-kit/event"
 	"github.com/SmartHealthNetwork/shn-kit/kitd"
 	"github.com/SmartHealthNetwork/shn-kit/relay"
@@ -994,5 +995,81 @@ func TestConformanceEnv(t *testing.T) {
 				t.Errorf("conformanceEnv(%q) = %#v, want %#v", tc.level, got, tc.want)
 			}
 		})
+	}
+}
+
+// fakeConformanceStore scripts resolveConformanceLevel's store.
+type fakeConformanceStore struct {
+	cfg        conformance.Config
+	loadErr    error
+	migrated   bool
+	migrateErr error
+}
+
+func (f fakeConformanceStore) MigrateLegacy() (bool, error)      { return f.migrated, f.migrateErr }
+func (f fakeConformanceStore) Load() (conformance.Config, error) { return f.cfg, f.loadErr }
+
+// The boot resolves the gateway child's level: the flag wins, else the saved
+// level; an earlier Kit's "none" arrives as observe with a notice, even when
+// the file could not be rewritten; a saved level the pinned gateway does not
+// accept falls back to the default; the notice is given only when the saved
+// level is the one in effect.
+func TestResolveConformanceLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		store      fakeConformanceStore
+		flag       string
+		wantLevel  string
+		wantNotice bool
+	}{
+		{"nothing saved, no flag", fakeConformanceStore{}, "", "", false},
+		{"saved level applies", fakeConformanceStore{cfg: conformance.Config{Level: "structural", Version: 2}}, "", "structural", false},
+		{"flag wins", fakeConformanceStore{cfg: conformance.Config{Level: "structural", Version: 2}}, "strict", "strict", false},
+		{"migrated none", fakeConformanceStore{cfg: conformance.Config{Level: "observe", Version: 2}, migrated: true}, "", "observe", true},
+		{"migrated none, flag set: no notice", fakeConformanceStore{cfg: conformance.Config{Level: "observe", Version: 2}, migrated: true}, "none", "none", false},
+		{"migration write failed: still observe", fakeConformanceStore{cfg: conformance.Config{Level: "none"}, migrateErr: errors.New("read-only state dir")}, "", "observe", true},
+		{"current none stays none", fakeConformanceStore{cfg: conformance.Config{Level: "none", Version: 2}}, "", "none", false},
+		{"unknown saved level: default", fakeConformanceStore{cfg: conformance.Config{Level: "basic", Version: 2}}, "", "", false},
+		{"unreadable file: default", fakeConformanceStore{loadErr: errors.New("corrupt")}, "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			level, notice := resolveConformanceLevel(tc.store, tc.flag, func(string, ...any) {})
+			if level != tc.wantLevel || (notice != "") != tc.wantNotice {
+				t.Fatalf("resolveConformanceLevel = %q, notice %q; want %q, notice %v", level, notice, tc.wantLevel, tc.wantNotice)
+			}
+			if tc.wantNotice && notice != conformance.LegacyNoneNotice {
+				t.Fatalf("notice = %q, want the migration notice", notice)
+			}
+		})
+	}
+}
+
+// Against the real store: a pre-v0.21.0 "none" on disk boots as observe with
+// the notice, and the next boot boots observe with none.
+func TestResolveConformanceLevel_MigratesOnDiskOnce(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "conformance.json"), []byte(`{"level":"none"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := conformance.NewStore(dir)
+	if level, notice := resolveConformanceLevel(store, "", func(string, ...any) {}); level != "observe" || notice == "" {
+		t.Fatalf("first boot = %q, notice %q; want observe with the notice", level, notice)
+	}
+	if level, notice := resolveConformanceLevel(store, "", func(string, ...any) {}); level != "observe" || notice != "" {
+		t.Fatalf("second boot = %q, notice %q; want observe, no notice", level, notice)
+	}
+}
+
+// The startup check refuses a level the pinned gateway does not accept,
+// naming the accepted ones, and lets every accepted level and "" through.
+func TestCheckConformanceFlag(t *testing.T) {
+	for _, l := range []string{"", "none", "observe", "structural", "strict"} {
+		if err := checkConformanceFlag(l); err != nil {
+			t.Errorf("checkConformanceFlag(%q) = %v, want accepted", l, err)
+		}
+	}
+	err := checkConformanceFlag("basic")
+	if err == nil || !strings.Contains(err.Error(), "--conformance-enforcement") || !strings.Contains(err.Error(), "none, observe, structural, strict") {
+		t.Fatalf("checkConformanceFlag(basic) = %v, want a refusal naming the flag and the accepted levels", err)
 	}
 }

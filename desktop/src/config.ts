@@ -37,12 +37,17 @@ export interface KitConfig {
   additionalValidatorLines?: string; // --additional-validator-lines (CSV); "" / unset => no extra lanes
   bridgeDemoHolder?: string; // --bridge-demo-holder; "" / unset => shnkitd's own default ("bridge-demo")
   bridgeDemoRefuseHolder?: string; // --bridge-demo-refuse-holder; "" / unset => shnkitd's own default ("bridge-demo-refuse")
-  // conformanceEnforcement --conformance-enforcement: "strict" (an invalid
-  // message is refused) or "none" (every check still runs and is recorded as
-  // a finding; nothing is refused for conformance, and the message is
-  // relayed as sent) — except a payload this gateway itself translated
-  // between IG lines, and an answer it cannot read at all, which refuse at
-  // every level. "" / unset => the flag is left off shnkitd's own command
+  // conformanceEnforcement --conformance-enforcement: one of the levels the
+  // packaged gateway accepts — "none" (no conformance checks run, nothing is
+  // recorded), "observe" (every check runs, each defect is recorded as a
+  // finding, the message is relayed as sent), "structural" (a message whose
+  // structure or profile is broken, or with a defect it cannot classify, is
+  // refused; other defects are recorded) or "strict" (an invalid message, or
+  // one a check cannot run on, is refused). The network rules and a payload
+  // this gateway itself translated between IG lines are refused at every
+  // level; an answer it cannot read is relayed at "none" and "observe" and
+  // refused at "structural" and "strict". shnkitd refuses any other value at startup, naming the
+  // accepted levels. "" / unset => the flag is left off shnkitd's own command
   // line entirely, so the packaged gateway child applies its OWN published
   // default (kit/cmd/shnkitd/main.go's conformanceEnv), exactly as an
   // unconfigured gateway anywhere else on the network would. This field must

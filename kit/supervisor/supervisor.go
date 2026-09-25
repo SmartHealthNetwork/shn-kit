@@ -15,10 +15,12 @@ package supervisor
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -90,6 +92,79 @@ type child struct {
 	stopping   bool
 	logF       *os.File
 	generation int // bumped only by Restart; see monitor's staleness re-check
+}
+
+// proc is one spawned OS process and the single goroutine that reaps it.
+// os/exec allows one Wait per process, and both the startup probe (to notice
+// a child that exits before it is ready) and the monitor (to notice one that
+// exits later) need to know when it has gone — so the waiter owns the Wait,
+// and everyone else reads done/err.
+type proc struct {
+	cmd  *exec.Cmd
+	done chan struct{} // closed once the process has exited and been reaped
+	err  error         // cmd.Wait's result; read only after done is closed
+}
+
+func (p *proc) wait() error {
+	<-p.done
+	return p.err
+}
+
+// StartupExitError is Start's error when the child exits before it becomes
+// ready: a first start that cannot succeed as launched — typically a port
+// another process took between allocation and bind — rather than a child
+// that is merely slow. It carries what the child itself reported, so the
+// failure names its cause instead of a readiness timeout.
+type StartupExitError struct {
+	Child   string // the child's name
+	Status  string // the process's exit status
+	LastLog string // the last non-empty line the child wrote to its log ("" if none)
+}
+
+func (e *StartupExitError) Error() string {
+	msg := fmt.Sprintf("supervisor: %s exited during startup (%s)", e.Child, e.Status)
+	if e.LastLog != "" {
+		msg += ": " + e.LastLog
+	}
+	return msg
+}
+
+// hookExitGrace is how long a failed Ready hook waits for its child's exit
+// to be reaped before the hook's own error is reported instead.
+const hookExitGrace = 250 * time.Millisecond
+
+// lastLogLineMax bounds the log line a StartupExitError carries.
+const lastLogLineMax = 300
+
+// lastLogLine returns the last non-empty line of the file at path, read from
+// its final few KiB and bounded to lastLogLineMax bytes; "" when there is
+// none or the file cannot be read.
+func lastLogLine(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	const tail = 4096
+	if st, err := f.Stat(); err == nil && st.Size() > tail {
+		if _, err := f.Seek(st.Size()-tail, io.SeekStart); err != nil {
+			return ""
+		}
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\r\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			if len(line) > lastLogLineMax {
+				line = line[:lastLogLineMax]
+			}
+			return line
+		}
+	}
+	return ""
 }
 
 // Supervisor supervises a set of named OS child processes.
@@ -188,7 +263,7 @@ func (s *Supervisor) Start(ctx context.Context, spec ChildSpec) error {
 // commit failTerminal over a healthy fresh generation — the exact defect
 // this fix closes.
 func (s *Supervisor) spawnAndWatch(ctx context.Context, c *child, gen int) error {
-	cmd, exited, err := s.spawn(c)
+	p, exited, err := s.spawn(c)
 	if err != nil {
 		if s.staleGeneration(c, gen) {
 			// A fresh Restart already claimed this child before our spawn
@@ -200,8 +275,8 @@ func (s *Supervisor) spawnAndWatch(ctx context.Context, c *child, gen int) error
 		return err
 	}
 
-	if err := s.waitReady(ctx, c, gen); err != nil {
-		s.killProcess(cmd)
+	if err := s.waitReady(ctx, c, gen, p); err != nil {
+		s.killProcess(p)
 		s.mu.Lock()
 		stale := c.generation != gen
 		stopping := c.stopping
@@ -239,11 +314,11 @@ func (s *Supervisor) spawnAndWatch(ctx context.Context, c *child, gen int) error
 	s.mu.Unlock()
 	switch {
 	case stale:
-		s.killProcess(cmd)
+		s.killProcess(p)
 		close(exited)
 		return fmt.Errorf("supervisor: %s spawn superseded by a newer generation", c.spec.Name)
 	case stopping:
-		s.killProcess(cmd)
+		s.killProcess(p)
 		s.stopTerminal(c)
 		close(exited)
 		return fmt.Errorf("supervisor: %s stopped during startup", c.spec.Name)
@@ -258,7 +333,7 @@ func (s *Supervisor) spawnAndWatch(ctx context.Context, c *child, gen int) error
 	// published, double-closing it under the newer spawnAndWatch (panic:
 	// close of closed channel; reproduced by
 	// TestSupervisor_RestartWithEnvRacesCrashRespawn under GOMAXPROCS=2).
-	go s.monitor(c, cmd, gen, exited)
+	go s.monitor(c, p, gen, exited)
 	return nil
 }
 
@@ -289,7 +364,7 @@ func (s *Supervisor) staleGeneration(c *child, gen int) bool {
 // The lock is the whole fix: the swap and the generation bump share one
 // critical section, so this read either precedes both (old env, and the
 // generation bump then supersedes the spawn) or follows both (new env).
-func (s *Supervisor) spawn(c *child) (*exec.Cmd, chan struct{}, error) {
+func (s *Supervisor) spawn(c *child) (*proc, chan struct{}, error) {
 	s.mu.Lock()
 	cmd := exec.Command(c.spec.Command, c.spec.Args...)
 	cmd.Env = c.spec.Env
@@ -301,27 +376,44 @@ func (s *Supervisor) spawn(c *child) (*exec.Cmd, chan struct{}, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, nil, fmt.Errorf("supervisor: start %s: %w", c.spec.Name, err)
 	}
+	p := &proc{cmd: cmd, done: make(chan struct{})}
+	go func() {
+		p.err = cmd.Wait()
+		close(p.done)
+	}()
 
 	exited := make(chan struct{})
 	s.mu.Lock()
 	c.cmd = cmd
 	c.exited = exited
 	s.mu.Unlock()
-	return cmd, exited, nil
+	return p, exited, nil
 }
 
-// waitReady polls spec.ReadyURLs every 100ms (1s per-request timeout via
+// waitReady polls spec.ReadyURLs every 100ms (1s per-request timeout, covering the
+// answer's drain too, via
 // s.hc) until all answer 2xx in a single pass, spec.ReadyTimeout elapses,
 // or ctx is done — then, when spec.Ready is set, runs it under what is left
 // of that same deadline (see ChildSpec.Ready). gen fences the progress
 // callback: a hook still running for a superseded generation must not write
 // its detail over the fresh generation's.
-func (s *Supervisor) waitReady(ctx context.Context, c *child, gen int) error {
+func (s *Supervisor) waitReady(ctx context.Context, c *child, gen int, p *proc) error {
 	deadline := time.Now().Add(c.spec.ReadyTimeout)
 	s.mu.Lock()
 	ready := c.spec.Ready
+	name, logPath := c.spec.Name, c.spec.LogPath
 	s.mu.Unlock()
+	// exitedEarly reports the child's own exit as the failure: a process
+	// that is gone will never answer, so there is nothing to wait out.
+	exitedEarly := func() error {
+		return &StartupExitError{Child: name, Status: exitDetail(p.err), LastLog: lastLogLine(logPath)}
+	}
 	for {
+		select {
+		case <-p.done:
+			return exitedEarly()
+		default:
+		}
 		failing, ok := notReadyURL(s.hc, c.spec.ReadyURLs)
 		if ok {
 			break
@@ -333,6 +425,8 @@ func (s *Supervisor) waitReady(ctx context.Context, c *child, gen int) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("supervisor: %s not ready: %w", c.spec.Name, ctx.Err())
+		case <-p.done:
+			return exitedEarly()
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
@@ -341,6 +435,14 @@ func (s *Supervisor) waitReady(ctx context.Context, c *child, gen int) error {
 	}
 	hookCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
+	// A child that exits while its Ready hook runs ends the hook too.
+	go func() {
+		select {
+		case <-p.done:
+			cancel()
+		case <-hookCtx.Done():
+		}
+	}()
 	// The crash bounce arrives here in StateRestarting (monitor sets it before
 	// the backoff and spawn never resets it), so both pre-ready states show
 	// the hook's progress; a terminal or ready state never does.
@@ -352,6 +454,15 @@ func (s *Supervisor) waitReady(ctx context.Context, c *child, gen int) error {
 		s.mu.Unlock()
 	}
 	if err := ready(hookCtx, progress); err != nil {
+		// A hook often fails because its child just died (a warm-up call
+		// refused by the exit), and can return before the waiter has reaped
+		// the process: give the exit a moment to show before reporting the
+		// hook's own error.
+		select {
+		case <-p.done:
+			return exitedEarly()
+		case <-time.After(hookExitGrace):
+		}
 		return fmt.Errorf("supervisor: %s not ready: %w", c.spec.Name, err)
 	}
 	return nil
@@ -374,11 +485,21 @@ func get2xx(hc *http.Client, url string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	// Read the answer to its end before closing it, so the connection goes
+	// back to the pool and the next poll reuses it. Closed unread, it is
+	// dropped, and every 100 ms poll would open a new one and leave a
+	// TIME_WAIT socket behind. Bounded: a readiness answer is small, and a
+	// larger one is simply not reused.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, probeDrainBytes))
+	resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
-// monitor owns one cmd generation: it blocks on cmd.Wait(), then either
+// probeDrainBytes bounds how much of a ready probe's answer is read so its
+// connection can be reused.
+const probeDrainBytes = 64 << 10
+
+// monitor owns one cmd generation: it blocks until the process exits (p.wait), then either
 // records a deliberate stop, or handles an unexpected exit by restarting
 // (bounded, linear backoff) or failing terminally once RestartMax is
 // exceeded. Each restart re-probes readiness against the SAME spec —
@@ -403,8 +524,8 @@ func get2xx(hc *http.Client, url string) bool {
 // exited is THIS generation's channel, passed by its launching spawnAndWatch
 // (never re-read from c.exited, which a newer generation's spawn may have
 // since overwritten — the double-close hazard spawn's doc names).
-func (s *Supervisor) monitor(c *child, cmd *exec.Cmd, gen int, exited chan struct{}) {
-	waitErr := cmd.Wait()
+func (s *Supervisor) monitor(c *child, p *proc, gen int, exited chan struct{}) {
+	waitErr := p.wait()
 
 	s.mu.Lock()
 	stopping := c.stopping
@@ -524,15 +645,15 @@ func exitDetail(err error) string {
 	return err.Error()
 }
 
-// killProcess force-kills and reaps a generation that has no monitor
-// goroutine (Process.Wait, never cmd.Wait — cmd.Wait is reserved for the
-// one monitor per generation, per os/exec's single-Wait contract).
-func (s *Supervisor) killProcess(cmd *exec.Cmd) {
-	if cmd == nil || cmd.Process == nil {
+// killProcess force-kills a generation that has no monitor goroutine and
+// waits for its waiter to reap it (the waiter owns the one cmd.Wait os/exec
+// allows per process).
+func (s *Supervisor) killProcess(p *proc) {
+	if p == nil || p.cmd.Process == nil {
 		return
 	}
-	_ = cmd.Process.Kill()
-	_, _ = cmd.Process.Wait()
+	_ = p.cmd.Process.Kill()
+	<-p.done
 }
 
 // Stop deliberately stops a child: no restart follows, wherever the Stop
@@ -543,9 +664,9 @@ func (s *Supervisor) killProcess(cmd *exec.Cmd) {
 //
 // Latency bound: normally ≤3s grace + reap. When Stop races an in-flight
 // ready probe (a probing Start, or a monitor respawn), the generation's
-// exited channel is closed by the prober's failure path, so Stop can block
-// for up to 3s + the REMAINDER of that probe's ReadyTimeout before
-// returning. Stop is idempotent on an already-terminal child.
+// exited channel is closed by the prober's failure path; the prober notices
+// the stopped process's exit at once, so this adds only the prober's own
+// bookkeeping. Stop is idempotent on an already-terminal child.
 //
 // One further edge: when Stop lands during a monitor respawn, it can grab
 // the OLD generation's already-closed exited channel and return while the
@@ -716,6 +837,26 @@ func (s *Supervisor) StopAll() {
 	for _, n := range names {
 		_ = s.Stop(n)
 	}
+}
+
+// Forget removes a child whose last state is terminal (failed or stopped)
+// from the supervisor, so a later Start may use its name again — how the
+// Kit's boot retries a start on freshly allocated ports. A child that is
+// starting, ready, exited or restarting is refused: Forget never drops a
+// process the supervisor may still own.
+func (s *Supervisor) Forget(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.children[name]
+	if !ok {
+		return fmt.Errorf("supervisor: unknown child %q", name)
+	}
+	if c.state != StateFailed && c.state != StateStopped {
+		return fmt.Errorf("supervisor: cannot forget %s while it is %s", name, c.state)
+	}
+	closeLog(c)
+	delete(s.children, name)
+	return nil
 }
 
 // Status returns a point-in-time snapshot of every supervised child.

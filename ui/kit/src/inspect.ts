@@ -310,15 +310,15 @@ const NARRATION: Record<string, NarrationEntry> = {
     done: 'The Smart Gateway validated this resource against its FHIR profile.',
     failed: 'The Smart Gateway found this resource did not validate against its FHIR profile.',
   },
-  // conformance.observed: a governed check ($validate or the CDS Hooks
-  // response rules) found a defect and recorded a finding — additive to
+  // conformance.observed: a governed check ($validate, the CDS Hooks
+  // response rules or a content rule) found a defect and recorded a finding — additive to
   // validate.result, never a replacement for it. `decision` is "relayed"
-  // (the network's published default: every check still runs and every
-  // invalid verdict is still recorded, but nothing about a peer's own
+  // (observe, the network's published default: every check still runs and
+  // every invalid verdict is still recorded, but nothing about a peer's own
   // conformance defect is refused) or "refused" (this leg's check was
-  // governed strict, or fell in one of the two classes that refuse at every
-  // level — a bridged payload's target-line check, an unreadable CDS Hooks
-  // answer). This entry is never reached through narrationFor/narrationKey
+  // governed at a refusing level — structural for a structural or
+  // unclassified defect, or strict — or was a bridged payload's target-line
+  // check, which refuses at every level). This entry is never reached through narrationFor/narrationKey
   // (which would key on frame.legType, e.g. "crd-order-select", and collide
   // with that LEG's own exchange narration above) — makeConformanceStep
   // fetches it directly, the same discipline as leg.refused/

@@ -167,24 +167,27 @@ func TestBridgingExhibit_BadBody400(t *testing.T) {
 
 func TestBridgingExhibit_ChildUnreachable502(t *testing.T) {
 	const token = "bridging-exhibit-unreachable-token"
-	// A server started then immediately closed: its address refuses
-	// connections, standing in for "gateway child not running".
-	dead := httptest.NewServer(http.NewServeMux())
-	dead.Close()
+	// A child that holds its port and drops every connection unanswered,
+	// standing in for "gateway child not running".
+	dead, reached := droppingChild(t)
+	wantErr := "gateway demo endpoint unreachable at " + dead + "/demo/transform"
 
 	cfg := bridgingExhibitTestConfig(t, token)
 	cfg.StateDir = t.TempDir()
 	d, apiBase := startDaemon(t, cfg)
-	d.SetStackInfo(StackInfo{Validator: "stand-in", ObserverURL: dead.URL + "/events"})
+	d.SetStackInfo(StackInfo{Validator: "stand-in", ObserverURL: dead + "/events"})
 
 	status, body := doJSON(t, http.MethodPost, apiBase+"/api/bridging/exhibit", token, map[string]string{"kind": "carry"})
-	if status != http.StatusBadGateway {
-		t.Fatalf("POST /api/bridging/exhibit carry, unreachable child = %d, want 502 (body=%s)", status, body)
+	if status != http.StatusBadGateway || !strings.Contains(string(body), wantErr) {
+		t.Fatalf("POST /api/bridging/exhibit carry, unreachable child = %d %s, want 502 naming %q", status, body, wantErr)
 	}
 
 	status, body = doJSON(t, http.MethodPost, apiBase+"/api/bridging/exhibit", token, map[string]string{"kind": "refusal"})
-	if status != http.StatusBadGateway {
-		t.Fatalf("POST /api/bridging/exhibit refusal, unreachable child = %d, want 502 (body=%s)", status, body)
+	if status != http.StatusBadGateway || !strings.Contains(string(body), wantErr) {
+		t.Fatalf("POST /api/bridging/exhibit refusal, unreachable child = %d %s, want 502 naming %q", status, body, wantErr)
+	}
+	if got := reached(); len(got) != 2 || got[0] != "POST /demo/transform" || got[1] != "POST /demo/transform" {
+		t.Fatalf("child reached by %v, want one POST /demo/transform per exhibit", got)
 	}
 }
 
@@ -782,9 +785,8 @@ func TestBridgingExhibit_FailureEmitsNothing(t *testing.T) {
 			name:       "childdown-502",
 			wantStatus: http.StatusBadGateway,
 			setup: func(t *testing.T, d *Daemon) {
-				dead := httptest.NewServer(http.NewServeMux())
-				dead.Close()
-				d.SetStackInfo(StackInfo{Validator: "stand-in", ObserverURL: dead.URL + "/events"})
+				dead, _ := droppingChild(t)
+				d.SetStackInfo(StackInfo{Validator: "stand-in", ObserverURL: dead + "/events"})
 			},
 			request: func(t *testing.T, apiBase, token string) (int, []byte) {
 				return doJSON(t, http.MethodPost, apiBase+"/api/bridging/exhibit", token, map[string]string{"kind": "carry"})
@@ -1078,21 +1080,24 @@ func TestBridgingCapture_ResponseTooLarge502(t *testing.T) {
 }
 
 // TestBridgingCapture_ChildDown502 proves an unreachable gateway child
-// answers 502, mirroring TestBridgingExhibit_ChildUnreachable502's
-// dead-server trick.
+// answers 502 from the transport-failure branch, with the same dropping
+// child as TestBridgingExhibit_ChildUnreachable502.
 func TestBridgingCapture_ChildDown502(t *testing.T) {
 	const token = "bridging-capture-unreachable-token"
-	dead := httptest.NewServer(http.NewServeMux())
-	dead.Close()
+	dead, reached := droppingChild(t)
+	wantErr := "gateway demo capture endpoint unreachable at " + dead + "/demo/capture/corr-1"
 
 	cfg := bridgingExhibitTestConfig(t, token)
 	cfg.StateDir = t.TempDir()
 	d, apiBase := startDaemon(t, cfg)
-	d.SetStackInfo(StackInfo{Validator: "stand-in", ObserverURL: dead.URL + "/events"})
+	d.SetStackInfo(StackInfo{Validator: "stand-in", ObserverURL: dead + "/events"})
 
 	status, body := doJSON(t, http.MethodGet, apiBase+"/api/bridging/capture/corr-1", token, nil)
-	if status != http.StatusBadGateway {
-		t.Fatalf("GET /api/bridging/capture/corr-1, unreachable child = %d, want 502 (body=%s)", status, body)
+	if status != http.StatusBadGateway || !strings.Contains(string(body), wantErr) {
+		t.Fatalf("GET /api/bridging/capture/corr-1, unreachable child = %d %s, want 502 naming %q", status, body, wantErr)
+	}
+	if got := reached(); len(got) != 1 || got[0] != "GET /demo/capture/corr-1" {
+		t.Fatalf("child reached by %v, want one GET /demo/capture/corr-1", got)
 	}
 }
 

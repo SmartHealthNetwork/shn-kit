@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -36,6 +37,10 @@ type Record struct {
 	Outcome         string `json:"outcome"`
 	SubjectPCI      string `json:"subjectPCI"`
 }
+
+// drainBytes bounds what Fetch reads past the decoded records so the
+// connection can be reused.
+const drainBytes = 64 << 10
 
 // Fetch retrieves the Audit Plane's chain records from GET
 // {auditURL}/auditor. Errors are wrapped with the URL for diagnosability.
@@ -57,6 +62,10 @@ func Fetch(ctx context.Context, hc *http.Client, auditURL string) ([]Record, err
 	if err := json.NewDecoder(resp.Body).Decode(&recs); err != nil {
 		return nil, fmt.Errorf("auditread: decoding response from %s: %w", url, err)
 	}
+	// The decoder stops at the end of the array and can leave the rest of the
+	// body (its trailing newline, a chunked terminator) unread; a body closed
+	// before its end drops the connection instead of returning it for reuse.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, drainBytes))
 	return recs, nil
 }
 

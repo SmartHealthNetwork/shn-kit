@@ -478,7 +478,8 @@ describe('StatusPanel — About mount', () => {
 // The whole section collapses when status.conformanceLevel is absent (this
 // Kit build has no live level control at all) — never rendered as though the
 // published default were simply "off" (StatusResponse.conformanceLevel's own
-// key-presence contract). Present, the three tabs are a mutually-exclusive
+// key-presence contract). Present, the tabs (one per level the daemon offers)
+// are a mutually-exclusive
 // selection (ModeSwitch's own role="tablist"/role="tab" idiom), the current
 // level is marked aria-selected, and a click posts + reflects the response.
 describe('StatusPanel — conformance enforcement level', () => {
@@ -488,15 +489,19 @@ describe('StatusPanel — conformance enforcement level', () => {
     expect(screen.queryByRole('tablist', { name: /conformance/i })).toBeNull();
   });
 
-  it('renders the three levels with the current one marked selected, and posts on a click', async () => {
+  it('renders a tab per offered level with the current one marked selected, and posts on a click', async () => {
     vi.mocked(api.postConformanceLevel).mockResolvedValue({ level: 'strict' });
-    const status: StatusResponse = { children: [], conformanceLevel: '' };
+    const status: StatusResponse = {
+      children: [],
+      conformanceLevel: '',
+      conformanceLevels: ['none', 'observe', 'structural', 'strict'],
+    };
     render(<StatusPanel boot={boot()} status={status} sseState="open" />);
 
     const tablist = screen.getByRole('tablist', { name: /conformance/i });
     const tabs = within(tablist).getAllByRole('tab');
-    expect(tabs).toHaveLength(3);
-    const defaultTab = within(tablist).getByRole('tab', { name: /published default/i });
+    expect(tabs.map((t) => t.textContent)).toEqual(['Observe (default)', 'Structural', 'Strict', 'None']);
+    const defaultTab = within(tablist).getByRole('tab', { name: /observe \(default\)/i });
     expect(defaultTab.getAttribute('aria-selected')).toBe('true');
     // aria-current is what the stylesheet's selected-tab rule actually
     // keys on (shell.css's `.seg button[aria-current='true']`, and this
@@ -533,7 +538,7 @@ describe('StatusPanel — conformance enforcement level', () => {
     expect(api.postConformanceLevel).not.toHaveBeenCalled();
   });
 
-  it('disables all three tabs while a change is pending, re-enabling once it resolves', async () => {
+  it('disables every tab while a change is pending, re-enabling once it resolves', async () => {
     let resolvePromise: ((v: { level: string }) => void) | undefined;
     vi.mocked(api.postConformanceLevel).mockReturnValue(
       new Promise((resolve) => {
@@ -561,17 +566,52 @@ describe('StatusPanel — conformance enforcement level', () => {
     await userEvent.click(screen.getByRole('tab', { name: /^strict$/i }));
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/finish or stop the current run first/i));
-    expect(screen.getByRole('tab', { name: /published default/i }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /observe \(default\)/i }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: /^strict$/i }).getAttribute('aria-selected')).toBe('false');
   });
 
   it('a non-409 error renders the raw server message inline', async () => {
-    vi.mocked(api.postConformanceLevel).mockRejectedValue(new ApiError('kit/conformance: level must be "", "strict", or "none"', 400));
+    vi.mocked(api.postConformanceLevel).mockRejectedValue(
+      new ApiError('kit/conformance: level must be none, observe, structural, strict, or left unset', 400),
+    );
     const status: StatusResponse = { children: [], conformanceLevel: '' };
     render(<StatusPanel boot={boot()} status={status} sseState="open" />);
 
     await userEvent.click(screen.getByRole('tab', { name: /^none$/i }));
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/level must be/i));
+  });
+
+  it('offers only the levels the daemon reports its pinned gateway accepts', () => {
+    const status: StatusResponse = { children: [], conformanceLevel: '', conformanceLevels: ['none', 'observe', 'strict'] };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" />);
+    const tablist = screen.getByRole('tablist', { name: /conformance/i });
+    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Observe (default)', 'Strict', 'None']);
+    expect(within(tablist).queryByRole('tab', { name: /structural/i })).toBeNull();
+  });
+
+  it('shows a saved "observe" (e.g. migrated from an earlier Kit\'s "none") as the default tab, and clicking it clears to the default', async () => {
+    vi.mocked(api.postConformanceLevel).mockResolvedValue({ level: '' });
+    const status: StatusResponse = {
+      children: [],
+      conformanceLevel: 'observe',
+      conformanceLevels: ['none', 'observe', 'structural', 'strict'],
+    };
+    render(<StatusPanel boot={boot()} status={status} sseState="open" />);
+    const defaultTab = screen.getByRole('tab', { name: /observe \(default\)/i });
+    expect(defaultTab.getAttribute('aria-selected')).toBe('true');
+    await userEvent.click(defaultTab);
+    expect(api.postConformanceLevel).toHaveBeenCalledWith('');
+    await waitFor(() => expect(defaultTab.getAttribute('aria-selected')).toBe('true'));
+  });
+
+  it('shows the notice about a migrated level, and nothing when there is none', () => {
+    const notice = 'Your saved conformance level "none" is now "observe".';
+    const { rerender } = render(
+      <StatusPanel boot={boot()} status={{ children: [], conformanceLevel: 'observe', conformanceNotice: notice }} sseState="open" />,
+    );
+    expect(screen.getByRole('status').textContent).toBe(notice);
+    rerender(<StatusPanel boot={boot()} status={{ children: [], conformanceLevel: 'observe' }} sseState="open" />);
+    expect(screen.queryByText(notice)).toBeNull();
   });
 });

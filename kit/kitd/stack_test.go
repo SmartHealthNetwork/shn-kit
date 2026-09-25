@@ -554,7 +554,7 @@ func TestBuildStack_ExtraChildrenAppended(t *testing.T) {
 // shnkitd's --conformance-enforcement flag rides: ExtraEnv is appended LAST
 // to the gateway child's env (this file's env-recipe code, after every named
 // field), so it reaches supervisor.ChildSpec.Env unchanged. A Kit gateway
-// runs at the published default, which is none, unless the operator names a
+// runs at the published default, which is observe, unless the operator names a
 // level; kit-e2e names strict, so the gate never proves conformance against a
 // gateway that only records instead of refusing.
 func TestBuildStack_ExtraEnvReachesGatewayChild(t *testing.T) {

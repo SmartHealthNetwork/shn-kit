@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -454,26 +455,43 @@ func TestRelay_DrainTimeout(t *testing.T) {
 	}
 }
 
-// TestRelay_DrainHealthFetchFailure: row 4 — healthURL points at a port with
-// nothing listening. Drain must return an error naming that URL.
+// errObserverRefused is what the refusing transport below returns.
+var errObserverRefused = errors.New("connect: connection refused")
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestRelay_DrainHealthFetchFailure: row 4 — the observer's health endpoint
+// cannot be reached: every request fails at the transport, the way a refused
+// connection does. (A closed listener's address is no substitute: its port can
+// be handed to the next listener any test starts.) Drain must return an error
+// naming the health URL, from the transport failure of its barrier POST — not
+// a status or decode refusal, and with no fallback GET.
 func TestRelay_DrainHealthFetchFailure(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("net.Listen: %v", err)
-	}
-	closedURL := "http://" + ln.Addr().String() + "/health"
-	ln.Close() // guaranteed nothing is listening on this port now
+	const healthURL = "http://observer.invalid/health"
 
 	bus := event.NewBus(fixedClock)
-	r := New("http://127.0.0.1:1/events", closedURL, bus, testLogf(t))
+	r := New("http://observer.invalid/events", healthURL, bus, testLogf(t))
 	r.SetGatewayProfile(GatewayLegacySync0431) // fixture models the verified synchronous source
+	var reached []string
+	r.hc = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		reached = append(reached, req.Method+" "+req.URL.String())
+		return nil, errObserverRefused
+	})}
 
-	err = r.Drain(context.Background())
+	err := r.Drain(context.Background())
 	if err == nil {
 		t.Fatal("Drain: want an error for an unreachable health URL")
 	}
-	if !strings.Contains(err.Error(), closedURL) {
-		t.Fatalf("Drain error = %v, want it to name the health URL %q", err, closedURL)
+	if !strings.Contains(err.Error(), healthURL) {
+		t.Fatalf("Drain error = %v, want it to name the health URL %q", err, healthURL)
+	}
+	if !errors.Is(err, errObserverRefused) {
+		t.Fatalf("Drain error = %v, want the transport failure itself", err)
+	}
+	if len(reached) != 1 || reached[0] != "POST http://observer.invalid/barrier" {
+		t.Fatalf("transport reached by %v, want one POST to the barrier", reached)
 	}
 }
 
@@ -849,5 +867,77 @@ func TestRelay_FirstFrameGapExempt(t *testing.T) {
 	}
 	if got := r.LastSeq(); got != 8 {
 		t.Fatalf("LastSeq() = %d, want 8", got)
+	}
+}
+
+// An observer that answers the stream request with an error is retried every
+// reconnectDelay on one reused connection: the relay reads the error answer
+// to its end before closing it, instead of dropping the connection and
+// leaving a TIME_WAIT socket behind on every attempt.
+func TestRelay_ErrorAnswerReusesTheConnection(t *testing.T) {
+	var conns, requests atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write(bytes.Repeat([]byte("observer not ready\n"), 512))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, st http.ConnState) {
+		if st == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	r := New(srv.URL+"/events", srv.URL+"/health", event.NewBus(time.Now), testLogf(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for requests.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if requests.Load() < 3 {
+		t.Fatalf("only %d stream attempts", requests.Load())
+	}
+	if n := conns.Load(); n != 1 {
+		t.Fatalf("%d stream attempts opened %d connections, want 1", requests.Load(), n)
+	}
+}
+
+// A non-200 answer whose body trickles is not waited out: the drain gives up
+// after errorDrainTimeout and the relay retries on schedule.
+func TestRelay_TricklingErrorAnswerDoesNotStallReconnects(t *testing.T) {
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		f, _ := w.(http.Flusher)
+		for {
+			if _, err := w.Write([]byte("x")); err != nil {
+				return
+			}
+			f.Flush()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}))
+	defer srv.Close()
+	r := New(srv.URL+"/events", srv.URL+"/health", event.NewBus(time.Now), testLogf(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	time.Sleep(2 * time.Second)
+	cancel()
+	<-done
+	// Each attempt costs at most errorDrainTimeout + reconnectDelay (0.7 s):
+	// about three in 2 s. A drain that waited the body out would manage one.
+	if n := requests.Load(); n < 2 {
+		t.Fatalf("%d stream attempts in 2 s; a trickling error body stalled the reconnects", n)
 	}
 }

@@ -19,17 +19,53 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+
+	engine "github.com/SmartHealthNetwork/shn-gateway/engine"
 )
 
 // Config is the persisted conformance.json shape. Level is "" (the
-// published default applies — absence, not a value), "strict", or "none".
-// These are the ONLY three values ValidateLevel accepts, mirroring the
-// gateway's own CONFORMANCE_ENFORCEMENT contract
-// (gateway/engine/conformance.go's ParseConformanceEnforcement) without this
-// module importing the gateway module for three literal strings.
+// published default applies — absence, not a value) or one of Levels().
+//
+// Version records which gateway semantics Level was chosen under. A file
+// with no version was written by a Kit before v0.21.0, whose packaged
+// gateway predated the observe level: its "none" ran every check, recorded
+// what it found and relayed the message, apart from a few cases it refused
+// at every level (an answer it could not read, content defects, a validator
+// that could not run). Observe is the closest level now — it also relays
+// those, with a finding — while "none" now runs no checks at all.
+// MigrateLegacy moves such a file to observe.
 type Config struct {
-	Level string `json:"level"`
+	Level   string `json:"level"`
+	Version int    `json:"version,omitempty"`
+}
+
+// configVersion is the Version every write records: levels chosen under the
+// gateway's none/observe/structural/strict semantics (gateway v0.53.0 on).
+const configVersion = 2
+
+// candidateLevels are the levels the Kit knows how to offer, from least to
+// most checking. Levels() narrows them to the ones the pinned gateway
+// accepts.
+var candidateLevels = []string{"none", "observe", "structural", "strict"}
+
+// Levels returns the conformance levels the Kit's pinned gateway accepts, in
+// candidateLevels' order. It asks the gateway's own parser
+// (engine.ParseConformanceEnforcement), so a level is offered exactly when
+// the gateway child would boot with it — the gateway refuses to start on a
+// level it does not know — and no version table is kept here. In a monorepo
+// workspace build (go.work) the gateway module is the checkout's own
+// gateway/, so there Levels reflects that tree; a standalone or packaged Kit
+// build reads the release kit/go.mod pins.
+func Levels() []string {
+	out := make([]string, 0, len(candidateLevels))
+	for _, l := range candidateLevels {
+		if _, err := engine.ParseConformanceEnforcement(l); err == nil {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 const configFileName = "conformance.json"
@@ -50,22 +86,22 @@ func (s *Store) configPath() string {
 	return filepath.Join(s.dir, configFileName)
 }
 
-// ValidateLevel accepts exactly "", "strict", "none" — the same three
-// values shnkitd's --conformance-enforcement flag and the gateway's
-// CONFORMANCE_ENFORCEMENT env var accept (empty meaning "left unset",
-// never a fourth value invented here). Unlike the CLI flag (which
-// deliberately passes an invalid value through to the gateway child's own
-// boot-time refusal — see kit/cmd/shnkitd/main.go's conformanceEnv doc),
-// this package validates up front: a live toggle that restarts a running
-// gateway child on a typo, only to have it refuse to boot, is a strictly
-// worse operator experience than refusing the typo before anything is
-// touched.
+// ValidateLevel accepts "" (left unset: the gateway's published default
+// applies) or one of Levels() — the levels the pinned gateway accepts. It
+// runs before anything is touched, so a live change never restarts a
+// working gateway child only to have it refuse to boot, and shnkitd's
+// --conformance-enforcement flag is checked the same way at startup.
 func ValidateLevel(level string) error {
-	switch level {
-	case "", "strict", "none":
+	if level == "" {
 		return nil
 	}
-	return fmt.Errorf("kit/conformance: level must be \"\", \"strict\", or \"none\", got %q", level)
+	levels := Levels()
+	for _, l := range levels {
+		if l == level {
+			return nil
+		}
+	}
+	return fmt.Errorf("kit/conformance: level must be %s, or left unset for the published default; got %q", strings.Join(levels, ", "), level)
 }
 
 // Load reads the persisted Config. A missing file is not an error — it
@@ -104,7 +140,7 @@ func (s *Store) Set(level string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	raw, err := json.MarshalIndent(Config{Level: level}, "", "  ")
+	raw, err := json.MarshalIndent(Config{Level: level, Version: configVersion}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("kit/conformance: marshal config: %w", err)
 	}
@@ -113,3 +149,35 @@ func (s *Store) Set(level string) error {
 	}
 	return nil
 }
+
+// MigrateLegacy moves a "none" saved by a Kit before v0.21.0 to "observe".
+// Under the gateway that Kit packaged, "none" ran every check and recorded
+// each finding (see Config for the cases it still refused); observe is the
+// closest level now. Left as it was, the same saved choice would now switch
+// conformance checking off. It reports
+// whether it migrated, so the caller can tell the operator once. A file
+// already written under the current semantics, a missing file and any other
+// saved level are left untouched.
+func (s *Store) MigrateLegacy() (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg, err := s.loadLocked()
+	if err != nil {
+		return false, err
+	}
+	if cfg.Version != 0 || cfg.Level != "none" {
+		return false, nil
+	}
+	raw, err := json.MarshalIndent(Config{Level: "observe", Version: configVersion}, "", "  ")
+	if err != nil {
+		return false, fmt.Errorf("kit/conformance: marshal config: %w", err)
+	}
+	if err := os.WriteFile(s.configPath(), raw, 0o600); err != nil {
+		return false, fmt.Errorf("kit/conformance: write %s: %w", s.configPath(), err)
+	}
+	return true, nil
+}
+
+// LegacyNoneNotice is what the Kit tells an operator whose saved "none" was
+// moved to observe by MigrateLegacy.
+const LegacyNoneNotice = `Your saved conformance level "none" is now "observe". In earlier Kits "none" still ran every check and recorded what it found, and observe is the closest level now. Observe also relays a few messages the earlier "none" refused, such as an answer the gateway cannot read; choose Strict to refuse them. "None" now runs no conformance checks at all — choose it again if that is what you want.`

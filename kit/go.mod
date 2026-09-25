@@ -5,8 +5,8 @@ go 1.26.0
 toolchain go1.26.6
 
 require (
-	github.com/SmartHealthNetwork/shn-gateway v0.46.0
-	github.com/SmartHealthNetwork/shn-sdk v0.51.1
+	github.com/SmartHealthNetwork/shn-gateway v0.54.0
+	github.com/SmartHealthNetwork/shn-sdk v0.57.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/zalando/go-keyring v0.2.8
 	software.sslmate.com/src/go-pkcs12 v0.7.3
