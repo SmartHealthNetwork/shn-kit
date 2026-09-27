@@ -243,23 +243,44 @@ func TestStartStack_BuildAndPrepareFailuresEndTheBoot(t *testing.T) {
 	}
 }
 
-// A gateway whose port the caller fixed (--gateway-port) is not retried: a
-// rebuild would reuse the port it could not bind. The reason is reported.
-func TestStartStack_PinnedGatewayPortIsNotRetried(t *testing.T) {
-	f := &fakeStarter{results: []error{&supervisor.StartupExitError{Child: "gateway", Status: "exit status 1", LastLog: "bind: address already in use"}}}
-	builds := 0
-	build := func() (Stack, error) {
-		builds++
-		return Stack{GatewayPortPinned: true, Children: []supervisor.ChildSpec{{Name: "gateway"}}}, nil
-	}
-	var log logLines
-	_, err := StartStack(context.Background(), f, BootStartAttempts, build, func(Stack) error { return nil }, log.notify)
-	var cse *ChildStartError
-	if !errors.As(err, &cse) || cse.Child != "gateway" || builds != 1 {
-		t.Fatalf("err = %v, builds = %d; want the gateway's failure on the only build", err, builds)
-	}
-	if len(log.lines) != 1 || !strings.Contains(log.lines[0], "not retried") || !strings.Contains(log.lines[0], "--gateway-port") {
-		t.Fatalf("notices = %q, want one naming why it is not retried", log.lines)
+// A gateway whose port the caller fixed is retried like any other: its early
+// exit can come from another of its ports, which a rebuild chooses afresh.
+func TestStartStack_PinnedGatewayPortIsRetried(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		pinned bool
+		child  string
+		says   bool
+	}{
+		{"pinned", true, gatewayChildName, true},
+		{"allocated", false, gatewayChildName, false},
+		// Only the gateway's own port is fixed: another child of a pinned
+		// stack retries on fresh ports, and its notice doesn't say otherwise.
+		{"pinned stack, another child", true, providerDataChildName, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeStarter{results: []error{&supervisor.StartupExitError{Child: c.child, Status: "exit status 1", LastLog: "bind: address already in use"}, nil}}
+			builds := 0
+			build := func() (Stack, error) {
+				builds++
+				return Stack{GatewayPortPinned: c.pinned, Children: []supervisor.ChildSpec{{Name: c.child}}}, nil
+			}
+			var log logLines
+			if _, err := StartStack(context.Background(), f, BootStartAttempts, build, func(Stack) error { return nil }, log.notify); err != nil {
+				t.Fatalf("StartStack: %v", err)
+			}
+			if builds != 2 {
+				t.Fatalf("builds = %d, want a second build after the child's early exit", builds)
+			}
+			if len(log.lines) != 1 || !strings.Contains(log.lines[0], "retrying on freshly allocated ports") {
+				t.Fatalf("notices = %q, want one retry notice", log.lines)
+			}
+			// A pinned gateway port is the one port a retry cannot change, so
+			// the notice says so; otherwise it doesn't mention it.
+			if says := strings.Contains(log.lines[0], "stays fixed by --gateway-port"); says != c.says {
+				t.Errorf("notice %q: names the fixed port = %t, want %t", log.lines[0], says, c.says)
+			}
+		})
 	}
 }
 

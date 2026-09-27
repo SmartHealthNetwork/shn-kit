@@ -14,7 +14,7 @@ func TestValidatorLoadsLocalValidationSupport(t *testing.T) {
 			}
 			cfg := springConfig(t, spec.Env)
 			prefix := "hapi.fhir.implementationguides.validationsupport."
-			if cfg[prefix+"name"] != "shn.fhir.validation-support" || cfg[prefix+"version"] != "1.2.0" || !strings.HasSuffix(cfg[prefix+"packageUrl"], "/assets%20with%20spaces/igs-validator/shn.fhir.validation-support-1.2.0.tgz") {
+			if cfg[prefix+"name"] != "shn.fhir.validation-support" || cfg[prefix+"version"] != "1.5.0" || !strings.HasSuffix(cfg[prefix+"packageUrl"], "/assets%20with%20spaces/igs-validator/shn.fhir.validation-support-1.5.0.tgz") {
 				t.Fatalf("missing local support configuration: %v", cfg)
 			}
 		})

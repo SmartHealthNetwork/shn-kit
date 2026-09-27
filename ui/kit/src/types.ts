@@ -285,7 +285,7 @@ export interface DemoRecord {
   // BridgingLossReport ALREADY EXISTS above — it is the kitd wire mirror
   // ({module, source, target, carried?, synthesized?}) and is exactly what
   // demoRecord.lossReports carries. Used as-is here. (The observer-parsed
-  // sibling is the already-exported ParsedLossReport, StepDetail.tsx — a
+  // sibling is the already-exported ParsedLossReport, stepDetailModel.ts — a
   // different shape for a different source; do not conflate.)
   lossReports?: BridgingLossReport[]; // json:"lossReports,omitempty" — carry-engine only
 }

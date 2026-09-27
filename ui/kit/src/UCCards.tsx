@@ -3,7 +3,7 @@
 // component is fully controlled via props so it can be tested standalone.
 // Branch state is local per card and resets when the lane changes (the two
 // lanes offer different pickers per row).
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { JSX } from 'react';
 import type { KitEvent, Lane, Register, RunResult } from './types';
 import type { EventsView } from './useEvents';
@@ -228,15 +228,17 @@ export function UCCards({
   // signal superseding or resolving it — it used to persist until the next
   // Run click, masking the real state. Any transition of the live
   // in-flight signal — becoming true (superseded by the real signal) or
-  // becoming false (resolved) — clears it.
-  useEffect(() => {
+  // becoming false (resolved) — clears it, while rendering, so the stale
+  // notice never reaches the screen.
+  const [noticeInFlight, setNoticeInFlight] = useState(sseInFlight);
+  if (noticeInFlight !== sseInFlight) {
+    setNoticeInFlight(sseInFlight);
     setApiNotice(undefined);
-  }, [sseInFlight]);
+  }
 
   // disabledReason (App's computed reason) wins; otherwise a live in-flight
   // signal wins over a stale apiNotice (belt-and-braces catch-driven notice
-  // — SSE is lossy, so apiNotice can still be showing this render before
-  // the effect above clears it); otherwise the catch-driven notice.
+  // — SSE is lossy); otherwise the catch-driven notice.
   const notice = disabledReason ?? (sseInFlight ? IN_FLIGHT_NOTICE : apiNotice);
 
   // The in-flight run's own run.started event, read straight off the event

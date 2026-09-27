@@ -47,6 +47,9 @@ const (
 	gatewayRestartMax   = 3
 )
 
+// allocatePorts is supervisor.AllocatePorts, swappable by tests.
+var allocatePorts = supervisor.AllocatePorts
+
 // StackConfig configures BuildStack's composition of one Kit deployment:
 // the provider-role gateway child (and, under the trio, the second one on
 // the provider-data origination profile), config-only. ExtraEnv/
@@ -159,7 +162,7 @@ type IngressClient struct {
 type Stack struct {
 	// GatewayPortPinned is true when the caller fixed the gateway's port
 	// (StackConfig.GatewayPort, --gateway-port): a rebuild keeps that port,
-	// so StartStack does not retry a gateway that could not bind it.
+	// so StartStack's retry notice says a gateway retry keeps it.
 	GatewayPortPinned bool
 
 	// Children are the BLOCKING children: shnkitd starts them in order and
@@ -244,6 +247,20 @@ type Stack struct {
 	// bundle, or UI — kitd consumes it in-process only, inside the demo
 	// closure main builds.
 	GatewayEnv []string
+
+	// ProviderDataEnv is the FULL env BuildStack assembled for the
+	// provider-data gateway child — value-identical to that ChildSpec's own
+	// Env, as an independent copy — and nil when there is no such child (no
+	// trio). Exported for ONE consumer: shnkitd's live conformance-level
+	// switch, which restarts BOTH gateway children with only
+	// CONFORMANCE_ENFORCEMENT changed in each child's OWN env, so it needs
+	// this child's exact running env to change, never the main child's env
+	// copied over (the two differ by design: deriveProviderDataEnv).
+	//
+	// SECURITY: same as GatewayEnv — secrets-adjacent, in-process only,
+	// never surfaced through any API response, event, log line, support
+	// bundle, or UI.
+	ProviderDataEnv []string
 
 	// AdditionalValidatorURLs maps each StackConfig.AdditionalValidatorLines
 	// entry (after ResolveValidatorLines dedup) to its own validator child's
@@ -360,7 +377,13 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		need += len(validatorLines) // one validator port per configured line (1 by default)
 		need += 2                   // the provider-data gateway child + its own observer
 	}
-	ports, err := supervisor.AllocatePorts(need)
+	// A gateway port the caller fixed is free until the gateway child binds
+	// it, so the allocator must not hand it to another child.
+	var exclude []int
+	if cfg.GatewayPort != 0 {
+		exclude = append(exclude, cfg.GatewayPort)
+	}
+	ports, err := allocatePorts(need, exclude...)
 	if err != nil {
 		return Stack{}, fmt.Errorf("kitd: allocate ports: %w", err)
 	}
@@ -562,6 +585,12 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		"PHG_URL=" + cfg.PHGURL,
 		"CONSENT_URL=" + cfg.ConsentURL,
 		"PAYER_DIRECTORY=" + payerDirectoryPath,
+		// The Kit's network has no Compose default validator services: the
+		// Kit names each validator lane it runs. Without this a gateway with no
+		// explicit URL for a line would make a default lane at a Compose
+		// service name and look it up on the user's own network (gateway
+		// v0.55.0).
+		"FHIR_DEFAULT_VALIDATOR_LANES=none",
 	}
 	if cfg.FakeValidator {
 		env = append(env, "SHN_FAKE_VALIDATOR=1")
@@ -690,6 +719,7 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 	// box — the v0.10.1 bridging defect).
 	var children []supervisor.ChildSpec
 	var deferredChildren []supervisor.ChildSpec
+	var providerDataEnv []string
 	children = append(children, gatewaySpec)
 	if trio {
 		validatorSpec, err := BuildValidatorChildSpec(cfg.JavaAssetsDir, cfg.JREDir, cfg.StateDir, validatorPort, runtime.GOOS, resolvedLine)
@@ -725,10 +755,11 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		// $populate stays pinned to the bundled data server (the stated
 		// ceiling, above). The payer directory is inherited from the base
 		// recipe, not rewritten here: both children share the one file.
+		providerDataEnv = deriveProviderDataEnv(env, providerDataPort, providerDataObserverAddr, fhirDataURL)
 		children = append(children, supervisor.ChildSpec{
 			Name:    providerDataChildName,
 			Command: cfg.GatewayBinary,
-			Env:     deriveProviderDataEnv(env, providerDataPort, providerDataObserverAddr, fhirDataURL),
+			Env:     providerDataEnv,
 			Dir:     cfg.StateDir,
 			LogPath: filepath.Join(cfg.StateDir, "gateway-provider-data.log"),
 			ReadyURLs: []string{
@@ -774,6 +805,10 @@ func BuildStack(cfg StackConfig) (Stack, error) {
 		// spare capacity of the shared array would rewrite the registered
 		// ChildSpec's env out from under the supervisor.
 		GatewayEnv: append([]string(nil), env...),
+	}
+	if providerDataEnv != nil {
+		// A COPY for the same reason as GatewayEnv above.
+		stack.ProviderDataEnv = append([]string(nil), providerDataEnv...)
 	}
 	if len(additionalValidatorURLs) > 0 {
 		stack.AdditionalValidatorURLs = additionalValidatorURLs

@@ -97,8 +97,10 @@ type Config struct {
 
 	// ConformanceLevel is the seam POST /api/conformance-level dispatches an
 	// operator's live enforcement-level change through: main wires a closure
-	// that restarts the gateway child with the requested
-	// CONFORMANCE_ENFORCEMENT swapped into its env (accepting "" — which
+	// that restarts BOTH gateway children (the main child and, when the Kit
+	// runs it, the provider-data child; all or neither, a failure reverting
+	// both) with the requested CONFORMANCE_ENFORCEMENT swapped into each
+	// child's own env (accepting "" — which
 	// clears back to the published default — or any level the pinned gateway
 	// accepts, conformance.Levels()), the same
 	// PURPOSE-BUILT env-only gateway restart BridgingDemo above uses, and
@@ -822,8 +824,9 @@ type conformanceLevelStatus struct {
 }
 
 // handleConformanceLevelPost serves POST /api/conformance-level: changes
-// the gateway child's live CONFORMANCE_ENFORCEMENT by restarting it with
-// the requested level — the packaged-app-reachable equivalent of
+// the live CONFORMANCE_ENFORCEMENT of both gateway children (the main child
+// and, when present, the provider-data child) by restarting each with the
+// requested level — the packaged-app-reachable equivalent of
 // --conformance-enforcement/kit.config.json's conformanceEnforcement (see
 // Config.ConformanceLevel's own doc for why this route exists at all).
 // Status/error-code contract mirrors handleBridgingDemo exactly:
@@ -834,8 +837,8 @@ type conformanceLevelStatus struct {
 //   - 400 on an undecodable body, OR a level that isn't "", "strict", or
 //     "none" — checked here too (not just inside the closure) so a typo
 //     never restarts a working gateway child only to have it refused.
-//   - 409 while a run or watch is in flight — restarting the gateway under
-//     a live run would tear out the transport it is using.
+//   - 409 while a run or watch is in flight — restarting the gateway
+//     children under a live run would tear out the transport it is using.
 //   - 500 when the change itself fails (the restart never came back
 //     ready). The recorded level is NOT advanced in that case — see
 //     Config.ConformanceLevel's toggle-reverts contract.

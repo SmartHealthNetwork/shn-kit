@@ -19,16 +19,22 @@ const (
 	portRangeHigh = 30000
 )
 
+// listen is net.Listen, swappable by tests.
+var listen = net.Listen
+
 // AllocatePorts reserves n distinct loopback TCP ports: each candidate is
 // bound to prove it is free, all n are held until every one is chosen, then
 // released for the children to bind. When the range yields too few free
-// ports, the rest fall back to a kernel-assigned :0 port.
-func AllocatePorts(n int) ([]int, error) {
-	return allocatePortsIn(n, portRangeLow, portRangeHigh)
+// ports, the rest fall back to a kernel-assigned :0 port. A port in exclude
+// is never returned: a port the caller fixed for one child (--gateway-port)
+// is free when this runs, because that child has not bound it yet, and must
+// not be handed to another.
+func AllocatePorts(n int, exclude ...int) ([]int, error) {
+	return allocatePortsIn(n, portRangeLow, portRangeHigh, exclude...)
 }
 
 // allocatePortsIn is AllocatePorts over [low, high).
-func allocatePortsIn(n, low, high int) ([]int, error) {
+func allocatePortsIn(n, low, high int, exclude ...int) ([]int, error) {
 	ports := make([]int, 0, n)
 	listeners := make([]net.Listener, 0, n)
 	defer func() {
@@ -37,13 +43,16 @@ func allocatePortsIn(n, low, high int) ([]int, error) {
 		}
 	}()
 	tried := map[int]bool{}
+	for _, p := range exclude {
+		tried[p] = true
+	}
 	for attempts := 0; len(ports) < n && attempts < 50*n; attempts++ {
 		p := low + rand.IntN(high-low)
 		if tried[p] {
 			continue
 		}
 		tried[p] = true
-		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		l, err := listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
 		if err != nil {
 			continue
 		}
@@ -51,12 +60,14 @@ func allocatePortsIn(n, low, high int) ([]int, error) {
 		ports = append(ports, p)
 	}
 	for len(ports) < n {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
+		l, err := listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return nil, err
 		}
 		listeners = append(listeners, l)
-		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
+		if p := l.Addr().(*net.TCPAddr).Port; !tried[p] {
+			ports = append(ports, p)
+		}
 	}
 	return ports, nil
 }

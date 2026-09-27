@@ -473,7 +473,10 @@ export function StatusPanel({ boot, status, sseState, admissionPending = false, 
             a supported check finds invalid, and any a check cannot run on. “None” runs no
             conformance checks and records nothing. At every level, the network rules and a payload
             this gateway itself translated between IG lines are refused. An answer the gateway
-            cannot read is relayed at Observe and None, and refused at Structural and Strict.
+            cannot read is relayed at Observe and None, and refused at Structural and Strict,
+            except that a CDS Hooks answer to a request the gateway sent itself, as it does for
+            the Plain EHR scenarios, stops the exchange at every level when it cannot be read or
+            carries no coverage information.
           </p>
           <ConformanceLevelControl level={status.conformanceLevel} levels={status.conformanceLevels} />
         </section>

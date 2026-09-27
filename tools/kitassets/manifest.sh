@@ -88,6 +88,9 @@ IGS_SIZE_NOTE="ships ${#KITASSETS_LINES[@]} contract lines' IG tgz sets: line 2.
 
 # Image/runtime pins come from pins.env (shared with build.sh — one source);
 # the IG sets mirror the two offline-bake Dockerfiles (via igpins.gen.sh).
+# brProvider is the corrected image's tag (upstream commit plus the correction
+# series' name, from tools/brprovider/source.env): the bare upstream commit would
+# name the uncorrected provider, which is not what build.sh bundles.
 HAPI_BACKPORT_JSON="$(PYTHONDONTWRITEBYTECODE=1 python3 "$REPO/tools/kitassets/backport/runtime.py" packaged "$DIST/hapi" "$REPO/tools/kitassets/build.sh")"
 cat > "$DIST/versions.json" <<EOF
 {
@@ -96,7 +99,7 @@ cat > "$DIST/versions.json" <<EOF
     "shn-gateway": "$GW_VERSION",
     "shn-sdk": "$SDK_VERSION"
   },
-  "brProvider": "$BRP_COMMIT",
+  "brProvider": "$BRPROVIDER_IMAGE_TAG",
   "hapiImage": "$HAPI_DIGEST",
   "hapiBackport": $HAPI_BACKPORT_JSON,
   "temurin": "$TEMURIN_RELEASE",

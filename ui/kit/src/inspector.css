@@ -933,6 +933,28 @@
   font-size: 12px;
 }
 
+/* ── resend link (StepDetail's ResendLinkNote) ─────────────────────── */
+/* One attempt of an amendment the payer answered 409 and that was sent once
+   more: the sentence plus a jump to the other attempt, on the same amber
+   tokens as the downgrade note. */
+.resend-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 9px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  font-size: 12px;
+}
+
+.resend-note p {
+  margin: 0;
+}
+
 /* ── cross-version transform card (StepDetail's TransformCard) ─────────
    No mockup equivalent — synthesized on this file's existing card/fact/badge
    tokens. Chain hops reuse the `.chip`-adjacent pill idiom colored by class

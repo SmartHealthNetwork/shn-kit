@@ -5,7 +5,7 @@
 // selection control (mirrors ModeSwitch's posture).
 import type { JSX } from 'react';
 import type { ChildStatus } from './types';
-import { deriveHealth } from './HealthPill';
+import { deriveHealth } from './health';
 
 export type NavDest = 'scenarios' | 'history' | 'byo' | 'systems' | 'bridging';
 

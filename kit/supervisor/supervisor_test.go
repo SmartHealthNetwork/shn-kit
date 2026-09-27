@@ -1812,6 +1812,76 @@ func TestAllocatePorts_FallsBackWhenTheRangeIsTaken(t *testing.T) {
 	}
 }
 
+// A port the caller fixed for one child is free while the others are chosen,
+// because that child has not bound it yet: the allocator must never hand it
+// out. The range here is that one free port, so without the exclusion
+// it is the only port the range can give.
+func TestAllocatePorts_NeverReturnsAnExcludedPort(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed := l.Addr().(*net.TCPAddr).Port
+	l.Close() // free, as a --gateway-port is before its child binds it
+	if ports, err := allocatePortsIn(1, fixed, fixed+1); err != nil || len(ports) != 1 || ports[0] != fixed {
+		t.Fatalf("without the exclusion the range gives %v (err %v); this row needs the fixed port free", ports, err)
+	}
+	ports, err := allocatePortsIn(3, fixed, fixed+1, fixed)
+	if err != nil {
+		t.Fatalf("allocatePortsIn: %v", err)
+	}
+	if len(ports) != 3 {
+		t.Fatalf("ports = %v, want 3", ports)
+	}
+	for _, p := range ports {
+		if p == fixed {
+			t.Fatalf("ports = %v include the excluded %d", ports, fixed)
+		}
+	}
+}
+
+// The :0 fallback skips an excluded port too: here the range is full and the
+// kernel's first answer is the excluded port. The skipped port's listener is
+// held until the allocator returns, so the kernel's next answer differs.
+func TestAllocatePorts_FallbackNeverReturnsAnExcludedPort(t *testing.T) {
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	full := held.Addr().(*net.TCPAddr).Port // a one-port range, already held
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	excluded := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	firstZero := true
+	t.Cleanup(func() { listen = net.Listen })
+	listen = func(network, addr string) (net.Listener, error) {
+		if addr == "127.0.0.1:0" && firstZero {
+			firstZero = false
+			return net.Listen(network, fmt.Sprintf("127.0.0.1:%d", excluded)) // the kernel "hands out" the excluded port
+		}
+		return net.Listen(network, addr)
+	}
+	ports, err := allocatePortsIn(2, full, full+1, excluded)
+	if err != nil {
+		t.Fatalf("allocatePortsIn: %v", err)
+	}
+	if firstZero {
+		t.Fatal("the fallback was never asked for a port; the row sees nothing")
+	}
+	for _, p := range ports {
+		if p == excluded {
+			t.Fatalf("ports = %v include the excluded %d from the fallback", ports, excluded)
+		}
+	}
+	if len(ports) != 2 {
+		t.Fatalf("ports = %v, want 2", ports)
+	}
+}
+
 // The ready probe reuses its connection while it waits: each poll reads the
 // answer to the end, so keep-alive holds and a starting child costs one
 // connection, not one per 100 ms poll. A connection dropped per poll leaves a

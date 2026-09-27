@@ -7,7 +7,7 @@
 // see kit/kitd/bridging.go's emitDemoRun, called from the success path
 // only, so there is no "fail" variant to build).
 import type { JSX } from 'react';
-import { TickIcon } from './StatusChip';
+import { TickIcon } from './icons';
 import { DEMO_RESULT_CARRY, DEMO_RESULT_REFUSAL, LOCAL_DEMO_CHIP } from './bridgingmeta';
 
 export function LocalDemoChip(): JSX.Element {

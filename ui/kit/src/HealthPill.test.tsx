@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { deriveHealth } from './HealthPill';
+import { deriveHealth } from './health';
 import type { ChildStatus } from './types';
 // ChildStatus requires detail:string + pid:number (types.ts) — the fixture must supply them or tsc fails.
 const ch = (name: string, state: string, restarts = 0): ChildStatus => ({ name, state, detail: '', pid: 0, restarts });

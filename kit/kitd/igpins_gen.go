@@ -24,7 +24,7 @@ func kitdIGPinsValidator(line string) []ig {
 			{"cdex", "igs-validator", "hl7.fhir.us.davinci-cdex", "2.1.0"},
 			{"hrex", "igs-validator", "hl7.fhir.us.davinci-hrex", "1.1.0"},
 			{"shnig", "igs-validator", "shn.fhir.carry", "1.0.0"},
-			{"validationsupport", "igs-validator", "shn.fhir.validation-support", "1.2.0"},
+			{"validationsupport", "igs-validator", "shn.fhir.validation-support", "1.5.0"},
 		}
 	case "2.1":
 		return []ig{
@@ -37,7 +37,7 @@ func kitdIGPinsValidator(line string) []ig {
 			{"cdex", "igs-validator", "hl7.fhir.us.davinci-cdex", "2.1.0"},
 			{"hrex", "igs-validator", "hl7.fhir.us.davinci-hrex", "1.1.0"},
 			{"shnig", "igs-validator", "shn.fhir.carry", "1.0.0"},
-			{"validationsupport", "igs-validator", "shn.fhir.validation-support", "1.2.0"},
+			{"validationsupport", "igs-validator", "shn.fhir.validation-support", "1.5.0"},
 		}
 	case "2.2":
 		return []ig{
@@ -51,7 +51,7 @@ func kitdIGPinsValidator(line string) []ig {
 			{"hrex", "igs-validator", "hl7.fhir.us.davinci-hrex", "1.2.0"},
 			{"extensions", "igs-validator", "hl7.fhir.uv.extensions.r4", "5.3.0-ballot-tc1"},
 			{"shnig", "igs-validator", "shn.fhir.carry", "1.0.0"},
-			{"validationsupport", "igs-validator", "shn.fhir.validation-support", "1.2.0"},
+			{"validationsupport", "igs-validator", "shn.fhir.validation-support", "1.5.0"},
 		}
 	default:
 		return nil

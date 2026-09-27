@@ -11,7 +11,8 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import type { DemoRecord, Lane } from './types';
 import type { RouteFrame, RunStory, Step } from './inspect';
 import { FlowEdges, type FlowEdgesHandle } from './FlowEdges';
-import { relayedStatusLine } from './StepDetail';
+import { demoRouteTag, edgeForStep, edgeStatesFor } from './flowMapModel';
+import { relayedStatusLine } from './stepDetailModel';
 import {
   DEMO_REMOTE_CAPTION,
   DEMO_STEP_CLASS_CAPTION,
@@ -62,21 +63,6 @@ export interface FlowMapProps {
 // onSelectStep mechanics a wire step already uses.
 export const DEMO_STEP_ID = 'demo-step';
 
-// demoRouteTag: the demonstration steps rail's route tag, derived from the
-// record's own contract + chain, never hardcoded per demonstration kind, so
-// it stays honest if the frozen fixtures ever change contract/lines. Today's
-// fixtures render exactly "pa.dtr 2.1 -> 2.2 . local" (refusal) and
-// "pa.dtr 2.2 -> 2.1 -> 2.2 . local" (carry) (arrows/dot are the real Unicode
-// characters; ASCII'd here only in this comment) - both asserted literally
-// in FlowMap.test.tsx against the current fixtures. An empty chain
-// (defensive; today's records always carry one) degrades to
-// "{contract} . local" rather than fabricating a path.
-export function demoRouteTag(record: Pick<DemoRecord, 'contract' | 'chain'>): string {
-  if (record.chain.length === 0) return `${record.contract} · local`;
-  const path = [record.chain[0].from, ...record.chain.map((h) => h.to)].join(' → ');
-  return `${record.contract} ${path} · local`;
-}
-
 // Pinned exactly — the honest caption on the remote-zone container.
 export const REMOTE_ZONE_CAPTION =
   'derived from what the Smart Gateway sent and the verified response it received — the Kit does not observe inside the hosted side';
@@ -94,59 +80,6 @@ export const EHR_PROVIDER_LABEL = 'Plain EHR (seeded data source)';
 export const CONFORMANT_PROVIDER_LABEL = 'Provider system';
 
 type NodeId = 'provider' | 'gateway' | 'validator' | 'hub' | 'payer-gateway' | 'payer-engine';
-
-export interface EdgeLight {
-  out: boolean;
-  back: boolean;
-}
-export type SrcEdge = EdgeLight | 'static'; // 'static' = ehr lane, no sor steps (old-gateway fallback)
-export interface EdgeStates {
-  src: SrcEdge;
-  val: EdgeLight;
-  leg: EdgeLight;
-}
-export type EdgeKey = 'src' | 'val' | 'leg';
-
-// edgeStatesFor derives the directional edge lighting from OBSERVED steps
-// only (shown-never-faked): out and back light independently — an open leg
-// shows an outbound arrow and nothing back; a failed leg never lights the
-// back arrow (no verified response); an ingress lights back only once
-// ingress.responded closed it. In the ehr lane the provider edge lights off
-// sor steps; with none (an old, un-instrumented gateway) it degrades to the
-// 'static' dashed seeded-source treatment.
-export function edgeStatesFor(steps: Step[], lane: Lane): EdgeStates {
-  const hasSor = steps.some((s) => s.kind === 'sor');
-  const hasIngress = steps.some((s) => s.kind === 'ingress');
-  const hasIngressResponse = steps.some((s) => s.kind === 'ingress' && s.response !== undefined);
-  const hasValidate = steps.some((s) => s.kind === 'validate');
-  const hasLeg = steps.some((s) => s.kind === 'leg');
-  const hasOkLeg = steps.some((s) => s.kind === 'leg' && s.status === 'ok');
-  const src: SrcEdge =
-    lane === 'ehr'
-      ? hasSor
-        ? { out: true, back: true }
-        : 'static'
-      : { out: hasIngress, back: hasIngressResponse };
-  return { src, val: { out: hasValidate, back: hasValidate }, leg: { out: hasLeg, back: hasOkLeg } };
-}
-
-// edgeForStep: which drawn edge a step's exchange traversed. A conformant-
-// lane sor step maps to NO edge — there the provider node is the calling
-// Da Vinci client, not the data source; the read is gateway-internal.
-export function edgeForStep(step: Step, lane: Lane): EdgeKey | undefined {
-  // The Plain EHR lane reads the provider's data source; the conformant
-  // lane's provider node is the calling client.
-  if (step.kind === 'sor') return lane !== 'conformant' ? 'src' : undefined;
-  if (step.kind === 'ingress') return 'src';
-  if (step.kind === 'validate') return 'val';
-  // conformance.observed is a local policy judgment, never a network hop —
-  // no edge, in either lane. Falling through to the 'leg' default below
-  // would pulse a false remote-node animation for a check that never left
-  // the gateway; selecting one instead gets the same edge-less
-  // gateway-flash treatment the conformant-lane sor case already has.
-  if (step.kind === 'conformance') return undefined;
-  return 'leg';
-}
 
 // phasesForStep: the pulse phase sequence a selected step replays along its
 // edge (see the phase table below). Only called once a step has resolved to
@@ -168,7 +101,7 @@ function edgeFor(step: Step, lane: Lane): { from: string; to: string } {
   if (step.kind === 'sor') return lane !== 'conformant' ? { from: 'gateway', to: 'provider' } : { from: 'gateway', to: 'gateway' };
   if (step.kind === 'ingress') return { from: 'provider', to: 'gateway' };
   if (step.kind === 'validate') return { from: 'gateway', to: 'validator' };
-  // Same reasoning as edgeForStep above — a local judgment, not a hop to
+  // Same reasoning as edgeForStep (flowMapModel.ts) — a local judgment, not a hop to
   // 'remote'; the generic leg fallback would mislabel this data attribute.
   if (step.kind === 'conformance') return { from: 'gateway', to: 'gateway' };
   return { from: 'gateway', to: 'remote' };
@@ -384,11 +317,34 @@ export function FlowMap({
 
   // gatewayFlash: the edge-less replay treatment for a conformant-lane sor
   // step (edgeForStep returns undefined — the read is gateway-internal, no
-  // drawn edge to pulse). A brief 600ms class on the gateway node instead.
+  // drawn edge to pulse). A brief class on the gateway node instead: set by
+  // the replay loop below, and derived for a selection (selectionFlash).
   const [gatewayFlash, setGatewayFlash] = useState(false);
 
+  // selectionFlash: on for 600ms once an edge-less step is selected. It is
+  // derived rather than set in an effect: the timer effect below only records
+  // that the flash for this selection has expired, and it starts whenever the
+  // flash turns on (a selection, or a lane or story change that makes the
+  // selected step edge-less). A new selection (including a deselect) clears
+  // that record while rendering, so selecting the same step again flashes
+  // again.
+  const [flashExpiredFor, setFlashExpiredFor] = useState<string | undefined>(undefined);
+  const [flashSelection, setFlashSelection] = useState(selectedStepId);
+  if (flashSelection !== selectedStepId) {
+    setFlashSelection(selectedStepId);
+    setFlashExpiredFor(undefined);
+  }
+  const selectionFlash =
+    selectedStep !== undefined && selectedEdge === undefined && flashExpiredFor !== selectedStepId;
+  useEffect(() => {
+    if (!selectionFlash) return undefined;
+    const expiring = selectedStepId;
+    const timer = window.setTimeout(() => setFlashExpiredFor(expiring), 600);
+    return () => window.clearTimeout(timer);
+  }, [selectionFlash, selectedStepId]);
+
   // Selection sync: replays the selected step's pulse phase sequence along
-  // its edge, or flashes the gateway node for the edge-less case. Depends
+  // its edge (the edge-less case is the selectionFlash above). Depends
   // only on selectedStepId (not steps/lane) — a step's own edge and phases
   // are fixed for the run being viewed, and keying the effect this way gives
   // us the stale-sequence guard for free: React runs this effect's cleanup
@@ -401,16 +357,7 @@ export function FlowMap({
     const step = steps.find((s) => s.id === selectedStepId);
     if (!step) return undefined;
     const edge = edgeForStep(step, lane);
-    if (edge === undefined) {
-      setGatewayFlash(true);
-      const timer = window.setTimeout(() => {
-        if (!cancelled) setGatewayFlash(false);
-      }, 600);
-      return () => {
-        cancelled = true;
-        window.clearTimeout(timer);
-      };
-    }
+    if (edge === undefined) return undefined;
     const phases = phasesForStep(step);
     void (async () => {
       for (const dir of phases) {
@@ -421,8 +368,8 @@ export function FlowMap({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally
-    // keyed on selectedStepId only, see comment above.
+    // Keyed on selectedStepId only, see the comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStepId]);
 
   // Replay: RunInspector's Replay-run button increments `replayToken`; each
@@ -500,9 +447,9 @@ export function FlowMap({
       cancelled = true;
       signalEnd();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally
-    // keyed on replayToken only; steps/lane/onReplayEnd are read fresh via
+    // Keyed on replayToken only; steps/lane/onReplayEnd are read fresh via
     // closure each time a new token starts the effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replayToken]);
 
   return (
@@ -514,7 +461,7 @@ export function FlowMap({
         id="gateway"
         label="Smart Gateway"
         lit={demoMode || effectiveSteps.length > 0}
-        flash={gatewayFlash}
+        flash={gatewayFlash || selectionFlash}
       />
       {/* No validator node in the demo variant — a local demonstration
           never runs the validator (nothing was validated); FlowEdges is
@@ -588,7 +535,11 @@ export function FlowMap({
                     <span className="cp">{step.counterpart ?? 'the hosted counterparty'}</span>
                   )}
                   {step.kind === 'sor' && <span className="cp">{step.sorOp ?? 'read'}</span>}
-                  {step.kind === 'conformance' && <span className="cp">{step.decision ?? 'recorded'}</span>}
+                  {step.kind === 'conformance' && (
+                    <span className="cp">{step.verdict === 'valid' ? 'valid' : step.decision ?? 'recorded'}</span>
+                  )}
+                  {step.resendOf && <span className="provenance-tag step-resend-tag">second attempt</span>}
+                  {step.resentAs && <span className="provenance-tag step-resend-tag">409, sent again</span>}
                   {step.route && routeChipText(step.route) !== undefined && (
                     <span className="provenance-tag step-route-tag">{routeChipText(step.route)}</span>
                   )}

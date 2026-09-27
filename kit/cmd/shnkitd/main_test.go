@@ -1073,3 +1073,312 @@ func TestCheckConformanceFlag(t *testing.T) {
 		t.Fatalf("checkConformanceFlag(basic) = %v, want a refusal naming the flag and the accepted levels", err)
 	}
 }
+
+// newTestTwoChildSwitch builds a gatewayEnvSwitch for a Kit that runs BOTH
+// gateway children: base is the main child's running env, pdBase the
+// provider-data child's own (nil ⇒ the cell is present but empty, the shape
+// main publishes on a Kit without that child), each with its own optional
+// relay.
+func newTestTwoChildSwitch(rec *demoRestartRecorder, base, pdBase []string, rly, pdRly *relay.Relay) *gatewayEnvSwitch {
+	sw := newTestGatewayEnvSwitch(rec, base, rly)
+	var pdRlyPtr atomic.Pointer[relay.Relay]
+	if pdRly != nil {
+		pdRlyPtr.Store(pdRly)
+	}
+	var pdEnvPtr atomic.Pointer[[]string]
+	if pdBase != nil {
+		pdEnvPtr.Store(&pdBase)
+	}
+	sw.pdRlyPtr, sw.pdEnvPtr = &pdRlyPtr, &pdEnvPtr
+	return sw
+}
+
+func joinEnv(env []string) string { return strings.Join(env, "\x00") }
+
+// childEvents returns the TypeChild event details the bus carries for child.
+func childEvents(bus *event.Bus, child string) []string {
+	var out []string
+	for _, e := range bus.Since(0) {
+		if e.Type == event.TypeChild && e.Child == child {
+			out = append(out, e.Detail)
+		}
+	}
+	return out
+}
+
+// TestNewConformanceLevel_RestartsBothGatewayChildren: a level change
+// restarts the main child and then the provider-data child, each with its
+// OWN running env where only CONFORMANCE_ENFORCEMENT changed (never the main
+// child's env copied over), each with its own relay's source reset on
+// preSpawn, and emits one child event per restarted child. A second change
+// builds on each child's newly published env.
+func TestNewConformanceLevel_RestartsBothGatewayChildren(t *testing.T) {
+	base := append(make([]string, 0, 8), "ROLE=provider", "PORT=9999", "CONFORMANCE_ENFORCEMENT=strict", "PROVIDER_DAVINCI_INGRESS=true")
+	pdBase := append(make([]string, 0, 8), "ROLE=provider", "CONFORMANCE_ENFORCEMENT=strict", "PORT=8888", "ORIGINATION_PROFILE=provider-data")
+	rec := &demoRestartRecorder{}
+	persist := &fakePersister{}
+	rly := relay.New("http://127.0.0.1:1/events", "http://127.0.0.1:1/health", event.NewBus(time.Now), log.Printf)
+	pdRly := relay.New("http://127.0.0.1:2/events", "http://127.0.0.1:2/health", event.NewBus(time.Now), log.Printf)
+	bus := event.NewBus(func() time.Time { return time.Unix(0, 0).UTC() })
+	toggle := newConformanceLevel(newTestTwoChildSwitch(rec, base, pdBase, rly, pdRly), persist, bus)
+
+	if err := toggle(context.Background(), "none"); err != nil {
+		t.Fatalf("toggle(none): %v", err)
+	}
+	if got := strings.Join(rec.names, ","); got != gatewayChild+","+providerDataChild {
+		t.Fatalf("restarted %q, want the main child then the provider-data child", got)
+	}
+	wantMain := []string{"ROLE=provider", "PORT=9999", "PROVIDER_DAVINCI_INGRESS=true", "CONFORMANCE_ENFORCEMENT=none"}
+	wantPD := []string{"ROLE=provider", "PORT=8888", "ORIGINATION_PROFILE=provider-data", "CONFORMANCE_ENFORCEMENT=none"}
+	if joinEnv(rec.envs[0]) != joinEnv(wantMain) {
+		t.Fatalf("main child env = %v, want %v", rec.envs[0], wantMain)
+	}
+	if joinEnv(rec.envs[1]) != joinEnv(wantPD) {
+		t.Fatalf("provider-data child env = %v, want its OWN env with only the level changed %v", rec.envs[1], wantPD)
+	}
+	if &rec.envs[1][0] == &pdBase[0] || len(pdBase) != 4 || pdBase[1] != "CONFORMANCE_ENFORCEMENT=strict" {
+		t.Fatalf("the provider-data baseline was shared or mutated: %v", pdBase)
+	}
+
+	// Each child's preSpawn resets ITS OWN relay's source window.
+	if rec.preSpawn[1] == nil {
+		t.Fatal("provider-data preSpawn was nil with its relay published")
+	}
+	pdRly.SetStamp(relay.Stamp{RunID: "prior"})
+	pdRly.Begin(relay.Stamp{}, func(error) {})
+	rec.preSpawn[1]()
+	var boundaryErr error
+	pdRly.End(false, func(err error) { boundaryErr = err })
+	if boundaryErr == nil {
+		t.Fatal("the provider-data preSpawn did not invalidate that child's own relay source window")
+	}
+
+	if got := persist.snapshot(); len(got) != 1 || got[0] != "none" {
+		t.Fatalf("persist calls = %v, want exactly one call with \"none\"", got)
+	}
+	if got := childEvents(bus, gatewayChild); len(got) != 1 || got[0] != "conformance-enforcement: none" {
+		t.Fatalf("main child events = %v, want [conformance-enforcement: none]", got)
+	}
+	if got := childEvents(bus, providerDataChild); len(got) != 1 || got[0] != "conformance-enforcement: none" {
+		t.Fatalf("provider-data child events = %v, want [conformance-enforcement: none]", got)
+	}
+
+	// The next change builds on each child's published env.
+	if err := toggle(context.Background(), ""); err != nil {
+		t.Fatalf("toggle(\"\"): %v", err)
+	}
+	if joinEnv(rec.envs[3]) != joinEnv(wantPD[:3]) {
+		t.Fatalf("second provider-data env = %v, want %v", rec.envs[3], wantPD[:3])
+	}
+}
+
+// TestNewConformanceLevel_ProviderDataFailureRevertsBoth: the main child
+// came back on the new level, then the provider-data child did not — both
+// are reverted to their prior env (provider-data first, then main), the
+// error names the failure, nothing persists, no event fires, and neither
+// env cell advances. A failing revert is error-joined, and the other
+// child's revert still runs.
+func TestNewConformanceLevel_ProviderDataFailureRevertsBoth(t *testing.T) {
+	base := []string{"ROLE=provider", "CONFORMANCE_ENFORCEMENT=strict"}
+	pdBase := []string{"ROLE=provider", "CONFORMANCE_ENFORCEMENT=strict", "ORIGINATION_PROFILE=provider-data"}
+
+	t.Run("both reverted", func(t *testing.T) {
+		failErr := fmt.Errorf("supervisor: gateway-provider-data not ready within 30s")
+		rec := &demoRestartRecorder{errs: []error{nil, failErr, nil, nil}}
+		persist := &fakePersister{}
+		bus := event.NewBus(func() time.Time { return time.Unix(0, 0).UTC() })
+		toggle := newConformanceLevel(newTestTwoChildSwitch(rec, base, pdBase, nil, nil), persist, bus)
+
+		err := toggle(context.Background(), "none")
+		if err == nil || !errors.Is(err, failErr) || !strings.Contains(err.Error(), "both gateway children reverted") {
+			t.Fatalf("toggle(none) = %v, want the provider-data failure, naming both children reverted", err)
+		}
+		wantNames := []string{gatewayChild, providerDataChild, providerDataChild, gatewayChild}
+		if !reflect.DeepEqual(rec.names, wantNames) {
+			t.Fatalf("restarts = %v, want %v (new main, failed provider-data, then revert both)", rec.names, wantNames)
+		}
+		if joinEnv(rec.envs[2]) != joinEnv(pdBase) {
+			t.Fatalf("provider-data revert env = %v, want its own prior env %v", rec.envs[2], pdBase)
+		}
+		if joinEnv(rec.envs[3]) != joinEnv(base) {
+			t.Fatalf("main revert env = %v, want its own prior env %v", rec.envs[3], base)
+		}
+		if got := persist.snapshot(); len(got) != 0 {
+			t.Fatalf("persist called %v for a failed change", got)
+		}
+		for _, e := range bus.Since(0) {
+			if strings.Contains(e.Detail, "conformance-enforcement") {
+				t.Fatalf("a FAILED change emitted %q", e.Detail)
+			}
+		}
+		// Neither cell advanced: the next change starts from the prior envs.
+		if err := toggle(context.Background(), "observe"); err != nil {
+			t.Fatalf("toggle(observe): %v", err)
+		}
+		if want := []string{"ROLE=provider", "CONFORMANCE_ENFORCEMENT=observe"}; joinEnv(rec.envs[4]) != joinEnv(want) {
+			t.Fatalf("main env after a reverted change = %v, want %v", rec.envs[4], want)
+		}
+		if want := []string{"ROLE=provider", "ORIGINATION_PROFILE=provider-data", "CONFORMANCE_ENFORCEMENT=observe"}; joinEnv(rec.envs[5]) != joinEnv(want) {
+			t.Fatalf("provider-data env after a reverted change = %v, want %v", rec.envs[5], want)
+		}
+	})
+
+	t.Run("a failed revert is joined and the main revert still runs", func(t *testing.T) {
+		failErr := fmt.Errorf("supervisor: gateway-provider-data not ready within 30s")
+		revErr := fmt.Errorf("supervisor: spawn: fork/exec failed")
+		rec := &demoRestartRecorder{errs: []error{nil, failErr, revErr, nil}}
+		toggle := newConformanceLevel(newTestTwoChildSwitch(rec, base, pdBase, nil, nil), &fakePersister{}, event.NewBus(time.Now))
+
+		err := toggle(context.Background(), "none")
+		if err == nil || !errors.Is(err, failErr) || !errors.Is(err, revErr) {
+			t.Fatalf("toggle(none) = %v, want the failure and the revert failure joined", err)
+		}
+		if rec.calls() != 4 || rec.names[3] != gatewayChild || joinEnv(rec.envs[3]) != joinEnv(base) {
+			t.Fatalf("restarts = %v, want the main child's revert to run after the failed provider-data revert", rec.names)
+		}
+	})
+
+	t.Run("neither env cell advances to the failed env", func(t *testing.T) {
+		// Driven through apply directly with a marker transform: a level
+		// change alone cannot show a leaked failed env, since the next level
+		// change rewrites the one key the two envs differ by.
+		failErr := fmt.Errorf("supervisor: gateway-provider-data not ready within 30s")
+		rec := &demoRestartRecorder{errs: []error{nil, failErr, nil, nil}}
+		sw := newTestTwoChildSwitch(rec, base, pdBase, nil, nil)
+		mark := func(c []string) []string { return append(c, "FAILED_ATTEMPT=1") }
+		keep := func(c []string) []string { return c }
+		if _, err := sw.apply(context.Background(), mark, mark); !errors.Is(err, failErr) {
+			t.Fatalf("apply = %v, want the provider-data failure", err)
+		}
+		restarted, err := sw.apply(context.Background(), keep, keep)
+		if err != nil || !reflect.DeepEqual(restarted, []string{gatewayChild, providerDataChild}) {
+			t.Fatalf("apply after the revert = %v, %v", restarted, err)
+		}
+		if joinEnv(rec.envs[4]) != joinEnv(base) || joinEnv(rec.envs[5]) != joinEnv(pdBase) {
+			t.Fatalf("envs after a reverted change = %v / %v, want the prior %v / %v", rec.envs[4], rec.envs[5], base, pdBase)
+		}
+	})
+
+	t.Run("a main-child failure never touches the provider-data child", func(t *testing.T) {
+		failErr := fmt.Errorf("supervisor: gateway not ready within 30s")
+		rec := &demoRestartRecorder{errs: []error{failErr, nil}}
+		toggle := newConformanceLevel(newTestTwoChildSwitch(rec, base, pdBase, nil, nil), &fakePersister{}, event.NewBus(time.Now))
+
+		if err := toggle(context.Background(), "none"); err == nil || !errors.Is(err, failErr) {
+			t.Fatalf("toggle(none) = %v, want the main child's failure", err)
+		}
+		if want := []string{gatewayChild, gatewayChild}; !reflect.DeepEqual(rec.names, want) {
+			t.Fatalf("restarts = %v, want %v", rec.names, want)
+		}
+	})
+}
+
+// TestNewConformanceLevel_NoProviderDataChild: on a Kit without the
+// provider-data child (the cell main publishes holds nil), a level change
+// restarts the main child alone and emits only its event — today's
+// behavior exactly.
+func TestNewConformanceLevel_NoProviderDataChild(t *testing.T) {
+	rec := &demoRestartRecorder{}
+	bus := event.NewBus(func() time.Time { return time.Unix(0, 0).UTC() })
+	toggle := newConformanceLevel(newTestTwoChildSwitch(rec, []string{"ROLE=provider"}, nil, nil, nil), &fakePersister{}, bus)
+
+	if err := toggle(context.Background(), "strict"); err != nil {
+		t.Fatalf("toggle(strict): %v", err)
+	}
+	if want := []string{gatewayChild}; !reflect.DeepEqual(rec.names, want) {
+		t.Fatalf("restarts = %v, want %v", rec.names, want)
+	}
+	if got := childEvents(bus, providerDataChild); len(got) != 0 {
+		t.Fatalf("provider-data events = %v with no such child", got)
+	}
+	if got := childEvents(bus, gatewayChild); len(got) != 1 {
+		t.Fatalf("main child events = %v, want one", got)
+	}
+}
+
+// TestNewBridgingDemo_MainChildOnly: the bridging demo restarts the main
+// child alone even when the provider-data child runs, and a level change
+// after it keeps the demo knobs on the main child while the provider-data
+// child's env never gains them.
+func TestNewBridgingDemo_MainChildOnly(t *testing.T) {
+	rec := &demoRestartRecorder{}
+	bus := event.NewBus(func() time.Time { return time.Unix(0, 0).UTC() })
+	pdBase := []string{"ROLE=provider", "ORIGINATION_PROFILE=provider-data"}
+	sw := newTestTwoChildSwitch(rec, []string{"ROLE=provider"}, pdBase, nil, nil)
+	demoToggle, levelToggle := newBridgingDemo(sw, bus), newConformanceLevel(sw, &fakePersister{}, bus)
+
+	if err := demoToggle(context.Background(), true); err != nil {
+		t.Fatalf("demoToggle(true): %v", err)
+	}
+	if want := []string{gatewayChild}; !reflect.DeepEqual(rec.names, want) {
+		t.Fatalf("bridging restarts = %v, want %v", rec.names, want)
+	}
+	if got := childEvents(bus, providerDataChild); len(got) != 0 {
+		t.Fatalf("bridging emitted provider-data events %v", got)
+	}
+
+	if err := levelToggle(context.Background(), "strict"); err != nil {
+		t.Fatalf("levelToggle(strict): %v", err)
+	}
+	wantMain := []string{"ROLE=provider", "SHN_DEMO_EGRESS_NATIVE_LINES=2.0", "SHN_DEMO_EDGE_CAPTURE=true", "CONFORMANCE_ENFORCEMENT=strict"}
+	if rec.names[1] != gatewayChild || joinEnv(rec.envs[1]) != joinEnv(wantMain) {
+		t.Fatalf("main child after bridging+level = %s %v, want %v", rec.names[1], rec.envs[1], wantMain)
+	}
+	wantPD := []string{"ROLE=provider", "ORIGINATION_PROFILE=provider-data", "CONFORMANCE_ENFORCEMENT=strict"}
+	if rec.names[2] != providerDataChild || joinEnv(rec.envs[2]) != joinEnv(wantPD) {
+		t.Fatalf("provider-data child after bridging+level = %s %v, want %v (no bridging knobs)", rec.names[2], rec.envs[2], wantPD)
+	}
+
+	if err := demoToggle(context.Background(), false); err != nil {
+		t.Fatalf("demoToggle(false): %v", err)
+	}
+	if rec.calls() != 4 || rec.names[3] != gatewayChild {
+		t.Fatalf("restarts = %v, want the bridging disable to restart the main child only", rec.names)
+	}
+	if want := []string{"ROLE=provider", "CONFORMANCE_ENFORCEMENT=strict"}; joinEnv(rec.envs[3]) != joinEnv(want) {
+		t.Fatalf("main child after bridging off = %v, want %v", rec.envs[3], want)
+	}
+}
+
+// TestGatewayEnvSwitchWiresProviderDataChild is the source-level half of
+// the both-children rows above: they build their own switch, so nothing
+// there fails if main's one &gatewayEnvSwitch{...} stops handing over the
+// provider-data child's env and relay cells — the level switch would then
+// silently restart the main child alone. It also pins that the boot
+// publishes kitd.Stack.ProviderDataEnv into that cell.
+func TestGatewayEnvSwitchWiresProviderDataChild(t *testing.T) {
+	_, files := shnkitdSources(t)
+	keys := map[string]bool{}
+	published := false
+	for _, f := range files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.CompositeLit:
+				if id, ok := n.Type.(*ast.Ident); ok && id.Name == "gatewayEnvSwitch" {
+					for _, el := range n.Elts {
+						if kv, ok := el.(*ast.KeyValueExpr); ok {
+							if k, ok := kv.Key.(*ast.Ident); ok {
+								keys[k.Name] = true
+							}
+						}
+					}
+				}
+			case *ast.SelectorExpr:
+				if n.Sel.Name == "ProviderDataEnv" {
+					if x, ok := n.X.(*ast.Ident); ok && x.Name == "stack" {
+						published = true
+					}
+				}
+			}
+			return true
+		})
+	}
+	for _, k := range []string{"pdEnvPtr", "pdRlyPtr"} {
+		if !keys[k] {
+			t.Errorf("main's gatewayEnvSwitch does not set %s — the level switch would restart the main gateway child alone", k)
+		}
+	}
+	if !published {
+		t.Error("main never reads stack.ProviderDataEnv — the provider-data child's env cell would stay empty")
+	}
+}

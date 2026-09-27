@@ -6,15 +6,23 @@
 // counterpart, authority frames, approximate sizes).
 import { useId, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { isCarryRefusalDetail } from './inspect';
+import { isCarryRefusalDetail, resendNote } from './inspect';
 import type { RouteFrame, Step } from './inspect';
 import type { BridgingCapture, DemoRecord, Register } from './types';
 import { DEMO_RESTORED_VERDICT, LOCAL_DEMO_FRAMING, STEP_CLASS_META, type StepClass } from './bridgingmeta';
 import { JsonView } from './JsonView';
-import { TickIcon } from './StatusChip';
+import { TickIcon } from './icons';
 import { ApiError, getBridgingCapture } from './api';
 import { computeXformDiff } from './xformclassify';
 import { XformDiff } from './XformDiff';
+import {
+  TRANSFORM_CARD_NARRATION,
+  demoStepFromRecord,
+  directionRows,
+  parseLossReports,
+  relayedStatusLine,
+  type ParsedLossEntry,
+} from './stepDetailModel';
 
 export type InspectorView = 'clinical' | 'substrate';
 
@@ -34,6 +42,9 @@ export interface StepDetailProps {
   // above uses. Threaded App -> RunInspector -> StepDetail (App's existing
   // RegisterSwitch state) — no longer test-only.
   register?: Register;
+  // Selects another step of the same run — the resend link's jump to the
+  // other attempt. undefined ⇒ the link renders as text only.
+  onSelectStep?(id: string): void;
 }
 
 // Every validation badge carries a posture label verbatim — a partner
@@ -64,15 +75,6 @@ export const OPEN_STEP_NOTE = 'No response observed — the flow stopped here.';
 // Detail. Pinned exactly; do not paraphrase.
 export const LEG_DOWNGRADE_NOTE =
   'The counterparty announced a newer envelope format but answered in the older one; the Smart Gateway processed the answer in the older format.';
-
-// relayedStatusLine: the display-only sentence for a leg whose counterparty
-// answered with a relayed non-2xx application status (ObserverEvent.Status).
-// Display-only by design: the step's own ok/failed logic
-// is deliberately unchanged (the exchange itself completed — the counterparty
-// ANSWERED), but a rejection must never read as silently green.
-export function relayedStatusLine(status: number): string {
-  return `The counterparty’s application answered HTTP ${status} — relayed unchanged as this leg’s response.`;
-}
 
 // The substrate view's fixed framing sentence — pinned exactly.
 export const SUBSTRATE_FRAMING =
@@ -143,68 +145,6 @@ export const ZERO_BYTES_NOTE = 'refused before sending — zero bytes crossed th
 export const CARRY_REFUSAL_NOTE =
   'This resumed request no longer carries content its own record says it must, so the Smart Gateway refused rather than send a request that silently lost it.';
 
-export interface DirectionRow {
-  arrow: '→' | '←';
-  who: string;
-  what: string;
-}
-
-// directionRows: the who-sent-what-to-whom summary above the narration —
-// derived ONLY from what the step observed (an open leg gets no back row;
-// a failed leg's back row says exactly that).
-//
-// A refused leg (step.refusal set — either species) returns NO
-// rows at all: both leg.refused (no shared contract line) and the
-// egressAdapt transform-refusal leg.failed fire BEFORE anything is sent —
-// the generic leg case's unconditional "→ … request" row below would
-// fabricate an outbound exchange that never happened. RefusalCard (below)
-// carries the honest "nothing was sent" story instead.
-export function directionRows(step: Step): DirectionRow[] {
-  switch (step.kind) {
-    case 'leg': {
-      if (step.refusal !== undefined) return [];
-      const cp = step.counterpart ?? 'the hosted counterparty';
-      const rows: DirectionRow[] = [
-        { arrow: '→', who: `Smart Gateway → Hub → ${cp}`, what: `${step.request?.op ?? step.legType} request` },
-      ];
-      if (step.status === 'ok') {
-        rows.push({ arrow: '←', who: `${cp} → Hub → Smart Gateway`, what: `${step.response?.op ?? 'response'} — verified response` });
-      } else if (step.status === 'failed') {
-        rows.push({ arrow: '←', who: `${cp} → Hub → Smart Gateway`, what: `no verified response — ${step.response?.detail ?? 'the leg did not complete'}` });
-      }
-      return rows;
-    }
-    case 'ingress': {
-      const rows: DirectionRow[] = [
-        { arrow: '→', who: 'Provider system → Smart Gateway', what: `${step.legType} request received` },
-      ];
-      if (step.response !== undefined) {
-        rows.push({ arrow: '←', who: 'Smart Gateway → Provider system', what: `HTTP ${step.httpStatus ?? '?'} response` });
-      }
-      return rows;
-    }
-    case 'validate':
-      return [
-        { arrow: '→', who: 'Smart Gateway → Validator', what: 'resource sent for $validate' },
-        { arrow: '←', who: 'Validator → Smart Gateway', what: `result: ${step.validation ?? 'unknown'}` },
-      ];
-    case 'sor':
-      return [
-        { arrow: '→', who: 'Smart Gateway → its data source', what: `read: ${step.sorOp ?? 'record'}` },
-        { arrow: '←', who: 'its data source → Smart Gateway', what: step.sorDetail ?? 'returned' },
-      ];
-    // conformance: a single-frame local judgment, never a network hop — not
-    // reached in practice (the render path carves this kind out before
-    // calling DirectionRows, same as validate/sor), kept for shape parity
-    // and so this switch stays exhaustive.
-    case 'conformance':
-      return [
-        { arrow: '→', who: 'Smart Gateway → its own conformance check', what: `${step.findingKind ?? 'check'} against ${step.legType}` },
-        { arrow: '←', who: 'its own conformance check → Smart Gateway', what: step.decision ?? 'recorded' },
-      ];
-  }
-}
-
 function DirectionRows({ step }: { step: Step }): JSX.Element {
   return (
     <div className="dir-rows">
@@ -230,6 +170,12 @@ function ConformanceFacts({ step }: { step: Step }): JSX.Element {
       <dd>{step.findingKind ?? '—'}</dd>
       <dt>Decision</dt>
       <dd>{step.decision ?? '—'}</dd>
+      {step.verdict !== undefined && (
+        <>
+          <dt>Verdict</dt>
+          <dd>{step.verdict}</dd>
+        </>
+      )}
       {step.rule !== undefined && (
         <>
           <dt>Rule</dt>
@@ -243,6 +189,28 @@ function ConformanceFacts({ step }: { step: Step }): JSX.Element {
         </>
       )}
     </dl>
+  );
+}
+
+// ResendLinkNote: one attempt of an amendment the payer answered 409 and that
+// was sent once more — the sentence (inspect.ts's resendNote) and, when the
+// story holds the other attempt's step, a button that selects it. The same
+// shape for both kinds of re-send (the gateway's own, and the provider's Da
+// Vinci client's through the ingress).
+function ResendLinkNote({ step, onSelectStep }: { step: Step; onSelectStep?(id: string): void }): JSX.Element | null {
+  const note = resendNote(step);
+  if (note === undefined) return null;
+  const other = step.resendOf ?? step.resentAs;
+  const label = step.resendOf ? 'Show the first attempt' : 'Show the second attempt';
+  return (
+    <div className="resend-note">
+      <p>{note}</p>
+      {other?.stepId !== undefined && onSelectStep && (
+        <button type="button" className="ctl resend-link" data-step-id={other.stepId} onClick={() => onSelectStep(other.stepId as string)}>
+          {label}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -285,99 +253,6 @@ function ValidationBadge({
 // ---------------------------------------------------------------------------
 // TransformCard — the LossReport story a bridged leg carries.
 // ---------------------------------------------------------------------------
-
-// TRANSFORM_CARD_NARRATION is register-aware copy (RegisterSwitch's
-// Overview/Technical choice, same idiom as bridgingmeta.ts's
-// CONTRACT_LINE_EXPLAINER) but NOT one of the three verbatim-pinned strings
-// above — it's a framing sentence, not a claim StepDetail.test.tsx has to
-// double-assert byte-exact. House register rules still apply: no internal
-// vocabulary — never "substrate"/"arm 3"/"knob", and never
-// "compat-manifest"/"minted" either; "compatibility steps" is the
-// partner-facing name, matching bridgingmeta.ts's CONTRACT_LINE_EXPLAINER.
-export const TRANSFORM_CARD_NARRATION: Record<Register, string> = {
-  overview:
-    'This step crossed a version boundary before it left the gateway. Below is exactly what traveled across unread, and what the network filled in deterministically rather than guessed.',
-  technical:
-    "This leg's payload passed through a chain of compatibility steps before it left the gateway. The loss report below names every element carried across unread for the other side to restore, and every element deterministically synthesized rather than fabricated.",
-};
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null;
-}
-
-export interface ParsedLossEntry {
-  path: string;
-  detail?: string;
-}
-
-export interface ParsedLossReport {
-  module: string;
-  source: string;
-  target: string;
-  carried?: ParsedLossEntry[];
-  synthesized?: ParsedLossEntry[];
-}
-
-function parseLossEntries(v: unknown): ParsedLossEntry[] | undefined {
-  if (!Array.isArray(v)) return undefined;
-  const out: ParsedLossEntry[] = [];
-  for (const item of v) {
-    if (!isRecord(item) || typeof item.path !== 'string') continue;
-    out.push({ path: item.path, detail: typeof item.detail === 'string' ? item.detail : undefined });
-  }
-  return out;
-}
-
-function parseLossReport(v: unknown): ParsedLossReport | undefined {
-  if (!isRecord(v)) return undefined;
-  const { module, source, target } = v;
-  if (typeof module !== 'string' || typeof source !== 'string' || typeof target !== 'string') return undefined;
-  return {
-    module,
-    source,
-    target,
-    carried: parseLossEntries(v.carried),
-    synthesized: parseLossEntries(v.synthesized),
-  };
-}
-
-// SHN_LOSS_REPORT_EXT_URL mirrors sdk/carry.go's LossReportExtURL
-// ("http://smarthealth.network/fhir/StructureDefinition/shn-loss-report")
-// byte-for-byte. ui/kit is a separate module pinned against published
-// shn-gateway/shn-sdk releases (kit/go.mod) — it cannot import the Go sdk to
-// read the constant live, so this is a literal copy, same precedent as
-// kit/kitd/bridgingassets/README.md's hand-regenerated golden copies: if
-// sdk/carry.go's LossReportExtURL ever changes, this string goes
-// stale silently — there is no cross-module CI tie — and the parse below
-// just finds no matching extension (degrades to `undefined`, never throws).
-const SHN_LOSS_REPORT_EXT_URL = 'http://smarthealth.network/fhir/StructureDefinition/shn-loss-report';
-
-// parseLossReports reads a transform leg's Provenance JSON (transform.payload
-// — the resource sdk/provenance.go's BuildTransformProvenance built) for its
-// shn-loss-report extension and shape-checks the valueString back into
-// ParsedLossReport[] — the same never-throw idiom as inspect.ts's
-// parseObserver/parseRoute: anything malformed (wrong shape, unparsable
-// JSON, no matching extension) degrades to `undefined`, never an exception.
-export function parseLossReports(payload: unknown): ParsedLossReport[] | undefined {
-  if (!isRecord(payload)) return undefined;
-  const extensions = payload.extension;
-  if (!Array.isArray(extensions)) return undefined;
-  const ext = extensions.find((e) => isRecord(e) && e.url === SHN_LOSS_REPORT_EXT_URL);
-  if (!isRecord(ext) || typeof ext.valueString !== 'string') return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(ext.valueString);
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(parsed)) return undefined;
-  const reports: ParsedLossReport[] = [];
-  for (const item of parsed) {
-    const report = parseLossReport(item);
-    if (report) reports.push(report);
-  }
-  return reports;
-}
 
 function ChainHops({ chain }: { chain: RouteFrame['chain'] }): JSX.Element | null {
   if (!chain || chain.length === 0) return null;
@@ -851,7 +726,7 @@ function RefusalCard({ step }: { step: Step }): JSX.Element | null {
   );
 }
 
-export function StepDetail({ step, view, posture = 'stand-in', register = 'overview' }: StepDetailProps): JSX.Element {
+export function StepDetail({ step, view, posture = 'stand-in', register = 'overview', onSelectStep }: StepDetailProps): JSX.Element {
   const [search, setSearch] = useState('');
 
   const rootClassName = `detail step-status-${step.status} step-kind-${step.kind}`;
@@ -995,6 +870,7 @@ export function StepDetail({ step, view, posture = 'stand-in', register = 'overv
         {!step.response && <p className="open-step-note">{OPEN_STEP_NOTE}</p>}
         {failureDetail && <p className="failure-detail">{failureDetail}</p>}
         {step.downgrade !== undefined && <p className="leg-downgrade-note">{LEG_DOWNGRADE_NOTE}</p>}
+        <ResendLinkNote step={step} onSelectStep={onSelectStep} />
         {step.transform && <TransformCard step={step} posture={posture} register={register} />}
       </div>
     );
@@ -1087,7 +963,7 @@ export function StepDetail({ step, view, posture = 'stand-in', register = 'overv
 
   // Refusal carve-out (all three species, clinical view): no species ever
   // has a request/response payload pair (all fire before anything was
-  // sent), and directionRows() above already returns no rows for a refused
+  // sent), and directionRows() (stepDetailModel.ts) already returns no rows for a refused
   // leg — the generic Request/Response panes below would render nothing but
   // "undefined". RefusalCard carries the honest, species-specific story
   // instead; its own <h4> is the load-bearing headline here, with the
@@ -1140,6 +1016,7 @@ export function StepDetail({ step, view, posture = 'stand-in', register = 'overv
       )}
       {failureDetail && <p className="failure-detail">{failureDetail}</p>}
       {step.downgrade !== undefined && <p className="leg-downgrade-note">{LEG_DOWNGRADE_NOTE}</p>}
+      <ResendLinkNote step={step} onSelectStep={onSelectStep} />
       {step.transform && <TransformCard step={step} posture={posture} register={register} />}
     </div>
   );
@@ -1156,33 +1033,6 @@ export function StepDetail({ step, view, posture = 'stand-in', register = 'overv
 // carry species) — the same honest machinery a wire-bridged leg renders
 // through, fed a view-model adapter instead of an observed frame.
 // ---------------------------------------------------------------------------
-
-// demoStepFromRecord adapts a DemoRecord (inspect.ts's buildDemoStory) into
-// the Step shape StepDetail's existing RefusalCard already knows how to
-// render — route.chain/refusal.chain and response.detail copied straight
-// off the record, status set per the record's own kind. This is
-// PRESENTATION ADAPTATION ONLY, never event synthesis: it invents no wire
-// frame, mints no correlation id, and crosses no Hub — it exists solely so
-// RefusalCard (built to read a Step) can render the SAME species discrimination
-// and pinned copy for a demonstration refusal that it renders for a genuine
-// leg.failed. Consumed only by DemoStepDetail below, never fed into the
-// wire-run branches above (which assume a genuinely observed frame).
-export function demoStepFromRecord(record: DemoRecord): Step {
-  const isRefusal = record.kind === 'refusal-engine';
-  const step: Step = {
-    id: 'demo',
-    kind: 'leg',
-    legType: record.contract,
-    status: isRefusal ? 'failed' : 'ok',
-    route: { chain: record.chain },
-    narration: '',
-  };
-  if (isRefusal) {
-    step.refusal = { chain: record.chain };
-    step.response = { seq: 0, time: '', kind: 'demo.refusal', detail: record.refusal };
-  }
-  return step;
-}
 
 // CONTRACT_MODULE_NAMES/moduleDisplayName: the demonstration dir-row's
 // module name ("DTR") is derived from the record's own `contract` field

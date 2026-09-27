@@ -9,7 +9,9 @@ method, per-component redistribution basis, and the per-release refresh rule
 ## Go modules
 
 Statically linked into the `shnkitd` daemon binary and the bundled
-`shn-gateway` binary. Version source: `kit/go.mod`. None of these embed a
+`shn-gateway` binary. Version source: `kit/go.mod` for `shnkitd`; the bundled gateway
+is built with the gateway module's own `go.mod`, which sets the versions of every module
+it links (the rows marked as the gateway's only are linked by it alone). None of these embed a
 license file inside the compiled binary itself — see the upstream link for
 each component's full text.
 
@@ -25,6 +27,12 @@ each component's full text.
 | `github.com/godbus/dbus/v5` (Linux builds only — not present in the macOS/Windows installers shipped today) | BSD-2-Clause | https://github.com/godbus/dbus/blob/master/LICENSE-BSD |
 | `golang.org/x/crypto` | BSD-3-Clause | https://cs.opensource.google/go/x/crypto/+/master:LICENSE |
 | `golang.org/x/sys` | BSD-3-Clause | https://cs.opensource.google/go/x/sys/+/master:LICENSE |
+| `github.com/jackc/pgx/v5` (bundled `shn-gateway` binary only) | MIT | https://github.com/jackc/pgx/blob/master/LICENSE |
+| `github.com/jackc/puddle/v2` (bundled `shn-gateway` binary only) | MIT | https://github.com/jackc/puddle/blob/master/LICENSE |
+| `github.com/jackc/pgpassfile` (bundled `shn-gateway` binary only) | MIT | https://github.com/jackc/pgpassfile/blob/master/LICENSE |
+| `github.com/jackc/pgservicefile` (bundled `shn-gateway` binary only) | MIT | https://github.com/jackc/pgservicefile/blob/master/LICENSE |
+| `golang.org/x/sync` (bundled `shn-gateway` binary only) | BSD-3-Clause | https://cs.opensource.google/go/x/sync/+/master:LICENSE |
+| `golang.org/x/text` (bundled `shn-gateway` binary only) | BSD-3-Clause | https://cs.opensource.google/go/x/text/+/master:LICENSE |
 
 ## React UI runtime
 
@@ -62,17 +70,18 @@ presence in a built artifact rather than this repository).
 
 ## Java assets (`Resources/java/` in a packaged install)
 
-Version source: `tools/kitassets/pins.env`. The bundled FHIR validator and
+Version source: `tools/kitassets/pins.env` (the br-provider image identity is
+`tools/brprovider/source.env`, which `pins.env` sources). The bundled FHIR validator and
 the seeded provider data server both run the **same** WAR file
 (`hapi/main.war`) under different configuration — it is one WAR, listed
 once.
 
 | Component | Shipped as | License | Full text |
 |---|---|---|---|
-| HAPI FHIR JPA-starter (validator + data server) | `Resources/java/hapi/main.war` | Apache-2.0 | The WAR's own `META-INF/LICENSE`/`META-INF/NOTICE` (and each bundled jar's own notices under `WEB-INF/lib/`) |
-| Spring Boot (bundled inside the HAPI WAR) | `Resources/java/hapi/main.war`'s `WEB-INF/lib/*.jar` | Apache-2.0 | Each jar's own `META-INF/LICENSE` |
-| H2 database (bundled inside the HAPI WAR) | `Resources/java/hapi/main.war`'s `WEB-INF/lib/*.jar` | Dual EPL-1.0 / MPL-2.0 | The H2 jar's own `META-INF/LICENSE` |
-| br-provider (the bundled Da Vinci reference provider, commit `43a4806`) | `Resources/java/brprovider/main.war` | MIT | The WAR's own `META-INF/LICENSE` |
+| HAPI FHIR JPA-starter (validator + data server) | `Resources/java/hapi/main.war` | Apache-2.0 | https://github.com/hapifhir/hapi-fhir-jpaserver-starter/blob/image/v8.10.0-1/LICENSE (the WAR carries no license file of its own). Many of the jars it bundles under `WEB-INF/lib/` carry their own license files; not all do, and the rows here do not yet cover every one. |
+| Spring Boot (bundled inside the HAPI WAR) | `Resources/java/hapi/main.war`'s `WEB-INF/lib/*.jar` | Apache-2.0 | Each jar's own `META-INF/LICENSE.txt` and `META-INF/NOTICE.txt` |
+| H2 database (bundled inside the HAPI WAR) | `Resources/java/hapi/main.war`'s `WEB-INF/lib/*.jar` | Dual EPL-1.0 / MPL-2.0 | https://github.com/h2database/h2database/blob/version-2.3.232/LICENSE.txt (the H2 jar carries no license file of its own) |
+| br-provider (the bundled Da Vinci reference provider: upstream commit `43a4806` plus the correction series in `tools/brprovider/patches`, image tag `43a4806-dtrname2`) | `Resources/java/brprovider/main.war` | MIT | https://github.com/HL7-DaVinci/br-provider/blob/43a4806a5662863298310374533352d840729cc3/LICENSE (the WAR carries no license file of its own) |
 
 ## Java runtime (`Resources/java/jre-{platform}/` in a packaged install)
 

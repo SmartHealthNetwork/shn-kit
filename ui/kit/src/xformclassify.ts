@@ -1,14 +1,14 @@
 // xformclassify.ts — the loss-report-keyed transformation diff: pure
 // classification over two already-parsed JSON trees (the payload a bridged
 // leg sent vs. what it built before the transform), keyed to the same loss
-// reports TransformCard already renders (StepDetail.tsx's
+// reports TransformCard already renders (stepDetailModel.ts's
 // parseLossReports). No fetching, no React — computeXformDiff is a pure
 // function so the classification rules can be pinned by table-driven unit
 // tests independent of rendering.
 import type { BridgingLossReport } from './types';
 
 // SHN_CARRIED_CONTENT_EXT_URL mirrors sdk/carry.go's CarriedContentExtURL
-// byte-for-byte. Same posture as StepDetail.tsx's SHN_LOSS_REPORT_EXT_URL —
+// byte-for-byte. Same posture as stepDetailModel.ts's SHN_LOSS_REPORT_EXT_URL —
 // ui/kit is a separate module pinned against published shn-gateway/shn-sdk
 // releases (kit/go.mod) and cannot import the Go sdk to read the constant
 // live, so this is a literal copy: if sdk/carry.go's CarriedContentExtURL

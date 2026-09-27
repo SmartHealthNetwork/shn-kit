@@ -1,0 +1,277 @@
+diff --git a/frontend/src/hooks/use-questionnaire.test.ts b/frontend/src/hooks/use-questionnaire.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ac575f09b236b8058536e125575b1cd42e6a10b2
+--- /dev/null
++++ b/frontend/src/hooks/use-questionnaire.test.ts
+@@ -0,0 +1,53 @@
++import type { Bundle, Parameters } from "fhir/r4";
++import { describe, expect, it } from "vitest";
++import { deriveServerUrls } from "./use-questionnaire";
++
++function packageBundle(): Bundle {
++  return {
++    resourceType: "Bundle",
++    type: "collection",
++    entry: [
++      {
++        fullUrl: "http://payer.example/fhir/Library/Rules",
++        resource: { resourceType: "Library", status: "active", type: {} },
++      },
++      {
++        fullUrl: "http://terminology.example/fhir/ValueSet/codes",
++        resource: { resourceType: "ValueSet", status: "active" },
++      },
++    ],
++  };
++}
++
++function paramsNamed(name: string): Parameters {
++  return {
++    resourceType: "Parameters",
++    parameter: [{ name, resource: packageBundle() }],
++  };
++}
++
++describe("deriveServerUrls", () => {
++  const derived = {
++    contentServerUrl: "http://payer.example/fhir",
++    terminologyServerUrl: "http://terminology.example/fhir",
++  };
++  const none = { contentServerUrl: null, terminologyServerUrl: null };
++
++  it("reads the DTR 2.2.0 packagebundle parameter", () => {
++    expect(deriveServerUrls(paramsNamed("packagebundle"))).toEqual(derived);
++  });
++
++  it("reads the DTR 2.0.1 PackageBundle parameter", () => {
++    expect(deriveServerUrls(paramsNamed("PackageBundle"))).toEqual(derived);
++  });
++
++  it("derives nothing from a Bundle under any other name", () => {
++    for (const other of ["packageBundle", "PACKAGEBUNDLE", "return", "outcome"]) {
++      expect(deriveServerUrls(paramsNamed(other))).toEqual(none);
++    }
++  });
++
++  it("still reads a direct Bundle", () => {
++    expect(deriveServerUrls(packageBundle())).toEqual(derived);
++  });
++});
+diff --git a/frontend/src/hooks/use-questionnaire.ts b/frontend/src/hooks/use-questionnaire.ts
+index de512e0da3e17543e8734b96fd5e5d1f48f4fe72..57428fabfcd55d3c55d722ba7e69a8690094f57b 100644
+--- a/frontend/src/hooks/use-questionnaire.ts
++++ b/frontend/src/hooks/use-questionnaire.ts
+@@ -12,7 +12,10 @@ import type {
+   QuestionnaireResponse,
+ } from "fhir/r4";
+ import { fhirProxyUrl } from "@/lib/api";
+-import { extractPackageBundle } from "@/lib/dtr-ingestion";
++import {
++  extractPackageBundle,
++  isPackageBundleParameter,
++} from "@/lib/dtr-ingestion";
+ import { loggedFetch } from "@/lib/logged-fetch";
+ import { useFhirServer } from "./use-fhir-server";
+ 
+@@ -524,7 +527,7 @@ function findResourceInBundle<T>(
+  * fullUrl values in a single pass. Walks Parameters packagebundle
+  * entries and direct Bundles.
+  */
+-function deriveServerUrls(data: unknown): {
++export function deriveServerUrls(data: unknown): {
+   contentServerUrl: string | null;
+   terminologyServerUrl: string | null;
+ } {
+@@ -550,7 +553,7 @@ function deriveServerUrls(data: unknown): {
+ 
+   if (obj.resourceType === "Parameters" && Array.isArray(obj.parameter)) {
+     for (const param of obj.parameter as ParametersParameter[]) {
+-      if (param.name === "packagebundle" && param.resource) {
++      if (isPackageBundleParameter(param.name) && param.resource) {
+         scanBundle(param.resource as Bundle);
+         if (urls.content && urls.terminology) break;
+       }
+diff --git a/frontend/src/lib/dtr-ingestion.test.ts b/frontend/src/lib/dtr-ingestion.test.ts
+index 6e00026d4e9aedf7034979930fcf6cf2a0fbb7ae..194c196bf1bf76979a095bcb8f3aaf485f4ed904 100644
+--- a/frontend/src/lib/dtr-ingestion.test.ts
++++ b/frontend/src/lib/dtr-ingestion.test.ts
+@@ -1,6 +1,9 @@
+ import type { Bundle, Parameters, Questionnaire } from "fhir/r4";
+ import { describe, expect, it } from "vitest";
+-import { extractPackageBundle } from "./dtr-ingestion";
++import {
++  extractPackageBundle,
++  isPackageBundleParameter,
++} from "./dtr-ingestion";
+ 
+ describe("extractPackageBundle", () => {
+   function bundleWithQ(canonical: string, version?: string): Bundle {
+@@ -93,3 +96,58 @@ describe("extractPackageBundle", () => {
+     ).toBe(a);
+   });
+ });
++
++describe("package Bundle parameter names", () => {
++  function bundleWithQ(canonical: string): Bundle {
++    const q: Questionnaire = {
++      resourceType: "Questionnaire",
++      url: canonical,
++      status: "active",
++    };
++    return { resourceType: "Bundle", type: "collection", entry: [{ resource: q }] };
++  }
++
++  function paramsNamed(...named: [string, Bundle][]): Parameters {
++    return {
++      resourceType: "Parameters",
++      parameter: named.map(([name, resource]) => ({ name, resource })),
++    };
++  }
++
++  it("reads both published names and no other", () => {
++    expect(isPackageBundleParameter("packagebundle")).toBe(true);
++    expect(isPackageBundleParameter("PackageBundle")).toBe(true);
++    for (const other of ["packageBundle", "PACKAGEBUNDLE", "return", "outcome", "", undefined]) {
++      expect(isPackageBundleParameter(other)).toBe(false);
++    }
++  });
++
++  it("unwraps a DTR 2.0.1 PackageBundle parameter", () => {
++    const inner = bundleWithQ("http://example.org/Q/A");
++    expect(extractPackageBundle(paramsNamed(["PackageBundle", inner]))).toBe(inner);
++  });
++
++  it("filters by canonical across both names", () => {
++    const a = bundleWithQ("http://example.org/Q/A");
++    const b = bundleWithQ("http://example.org/Q/B");
++    expect(
++      extractPackageBundle(
++        paramsNamed(["packagebundle", a], ["PackageBundle", b]),
++        "http://example.org/Q/B",
++      ),
++    ).toBe(b);
++    expect(
++      extractPackageBundle(
++        paramsNamed(["PackageBundle", a], ["packagebundle", b]),
++        "http://example.org/Q/Missing",
++      ),
++    ).toBe(a);
++  });
++
++  it("still returns null for a Bundle under any other name", () => {
++    const inner = bundleWithQ("http://example.org/Q/A");
++    for (const other of ["packageBundle", "PACKAGEBUNDLE", "return", "bundle"]) {
++      expect(extractPackageBundle(paramsNamed([other, inner]))).toBeNull();
++    }
++  });
++});
+diff --git a/frontend/src/lib/dtr-ingestion.ts b/frontend/src/lib/dtr-ingestion.ts
+index 1eb06c7ff8ec559e4c813e21d7a71482834253cc..f5fe2eec2d06dd3512284c36959d1bc16c8df5ad 100644
+--- a/frontend/src/lib/dtr-ingestion.ts
++++ b/frontend/src/lib/dtr-ingestion.ts
+@@ -1,5 +1,14 @@
+ import type { Bundle, ParametersParameter, Questionnaire } from "fhir/r4";
+ 
++/**
++ * Whether a `$questionnaire-package` output parameter carries a package Bundle.
++ * DTR 2.2.0 names it `packagebundle`; the DTR 2.0.1 and 2.1.0 output profiles
++ * name it `PackageBundle`. Both published names are read; no other name is.
++ */
++export function isPackageBundleParameter(name: string | undefined): boolean {
++  return name === "packagebundle" || name === "PackageBundle";
++}
++
+ /**
+  * Extracts the inner package Bundle from a `$questionnaire-package` response.
+  * The DTR spec wraps each Bundle in a `Parameters.parameter[name=packagebundle]`
+@@ -28,7 +37,7 @@ export function extractPackageBundle(
+   const bundles: Bundle[] = [];
+   for (const param of obj.parameter as ParametersParameter[]) {
+     if (
+-      param.name === "packagebundle" &&
++      isPackageBundleParameter(param.name) &&
+       param.resource?.resourceType === "Bundle"
+     ) {
+       bundles.push(param.resource as Bundle);
+diff --git a/server/src/main/java/org/hl7/davinci/api/DtrPopulateController.java b/server/src/main/java/org/hl7/davinci/api/DtrPopulateController.java
+index e8786443e44eb03ce291a9386c4f9482641e5550..b9c06750b9374e92ffa91893330605bf053f4305 100644
+--- a/server/src/main/java/org/hl7/davinci/api/DtrPopulateController.java
++++ b/server/src/main/java/org/hl7/davinci/api/DtrPopulateController.java
+@@ -103,6 +103,11 @@ public class DtrPopulateController {
+         }
+ 
+         Bundle packageBundle = extractResource(input, "packagebundle", Bundle.class);
++        if (packageBundle == null) {
++            // DTR 2.0.1 and 2.1.0 name the $questionnaire-package output parameter
++            // "PackageBundle"; a client forwarding that name verbatim is read the same way.
++            packageBundle = extractResource(input, "PackageBundle", Bundle.class);
++        }
+         if (packageBundle == null) {
+             return errorOutcome(IssueType.INVALID,
+                 "Missing required 'packagebundle' parameter (Bundle resource from $questionnaire-package)");
+diff --git a/server/src/test/java/org/hl7/davinci/api/DtrPopulateControllerTest.java b/server/src/test/java/org/hl7/davinci/api/DtrPopulateControllerTest.java
+index 32d661fb799d2157d137a4aba06e065181862931..011758734a8b1cc40a82a52158f9ae95198266cd 100644
+--- a/server/src/test/java/org/hl7/davinci/api/DtrPopulateControllerTest.java
++++ b/server/src/test/java/org/hl7/davinci/api/DtrPopulateControllerTest.java
+@@ -1,13 +1,20 @@
+ package org.hl7.davinci.api;
+ 
++import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+ import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ import org.hl7.davinci.config.ServerProperties;
+ import org.hl7.davinci.security.SecurityProperties;
+ import org.hl7.davinci.security.SpaAuthController;
++import org.hl7.fhir.r4.model.Bundle;
++import org.hl7.fhir.r4.model.OperationOutcome;
++import org.hl7.fhir.r4.model.Parameters;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
+ import org.opencds.cqf.fhir.cql.EvaluationSettings;
+ import org.opencds.cqf.fhir.utility.repository.InMemoryFhirRepository;
+ import org.opencds.cqf.fhir.utility.repository.RestRepository;
+@@ -80,4 +87,40 @@ class DtrPopulateControllerTest {
+         assertInstanceOf(RestRepository.class, repo,
+             "Session-bound remote base → RestRepository");
+     }
++
++    /** Posts Parameters carrying only a package Bundle under {@code name}; returns the diagnostics. */
++    private String populateDiagnosticsWithBundleNamed(String name) {
++        Parameters input = new Parameters();
++        if (name != null) {
++            input.addParameter().setName(name)
++                .setResource(new Bundle().setType(Bundle.BundleType.COLLECTION));
++        }
++        var response = controller.populate(
++            fhirContext.newJsonParser().encodeResourceToString(input), new MockHttpServletRequest());
++        OperationOutcome outcome = (OperationOutcome) fhirContext.newJsonParser().parseResource(response.getBody());
++        return outcome.getIssueFirstRep().getDiagnostics();
++    }
++
++    @ParameterizedTest
++    @ValueSource(strings = {"packagebundle", "PackageBundle"})
++    void populate_readsPackageBundleUnderEitherPublishedName(String name) {
++        // The package Bundle is accepted, so validation moves on to the next required input.
++        String diagnostics = populateDiagnosticsWithBundleNamed(name);
++        assertTrue(diagnostics.startsWith("Missing required 'questionnaire'"), diagnostics);
++    }
++
++    @ParameterizedTest
++    @ValueSource(strings = {"packageBundle", "PACKAGEBUNDLE", "return", "bundle"})
++    void populate_otherNamesStillMissingPackageBundle(String name) {
++        assertEquals(
++            "Missing required 'packagebundle' parameter (Bundle resource from $questionnaire-package)",
++            populateDiagnosticsWithBundleNamed(name));
++    }
++
++    @Test
++    void populate_absentPackageBundleUnchanged() {
++        assertEquals(
++            "Missing required 'packagebundle' parameter (Bundle resource from $questionnaire-package)",
++            populateDiagnosticsWithBundleNamed(null));
++    }
+ }

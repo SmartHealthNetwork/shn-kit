@@ -7,7 +7,7 @@
 // rows, a PAS ClaimResponse initialization pass, two strict qualification
 // passes and targeted negative controls — and asserts every verdict. The Kit
 // spawns the same HAPI WAR as an ordinary supervised process, so it cannot run
-// that worker; rows.go, probe.go, verdict.go, verdict_test.go and testdata/
+// that worker; rows.go, probe.go, verdict.go, their tests and testdata/
 // are byte-identical twins of the image's sources (a root-module test in the
 // platform repository fences them), and Warm drives them for one child
 // process.

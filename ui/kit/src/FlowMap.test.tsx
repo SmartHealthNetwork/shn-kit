@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   FlowMap,
@@ -7,14 +7,12 @@ import {
   EHR_PROVIDER_LABEL,
   CONFORMANT_PROVIDER_LABEL,
   DEMO_STEP_ID,
-  demoRouteTag,
-  edgeStatesFor,
-  edgeForStep,
 } from './FlowMap';
+import { demoRouteTag, edgeStatesFor, edgeForStep } from './flowMapModel';
 import { buildRunStory } from './inspect';
 import type { Step, RunStory } from './inspect';
 import type { DemoRecord, KitEvent } from './types';
-import { relayedStatusLine } from './StepDetail';
+import { relayedStatusLine } from './stepDetailModel';
 import { DEMO_REMOTE_CAPTION, DEMO_STEP_CLASS_CAPTION, DEMO_STEP_LABEL, FROZEN_SOURCE_NODE } from './bridgingmeta';
 import ehrUc03 from './fixtures/run-ehr-uc03.json';
 
@@ -884,6 +882,44 @@ describe('FlowMap — step selection replays its edge', () => {
     render(<FlowMap story={story} lane="conformant" selectedStepId="9" onSelectStep={() => {}} />);
     expect(document.querySelector('path.sel')).toBeNull();
     expect(getNode('gateway').className).toContain('flash');
+  });
+
+  it('the selection flash lasts 600ms, and selecting the same step again flashes again', () => {
+    vi.useFakeTimers();
+    try {
+      const story: RunStory = { runId: 'r', steps: [sorStep()], audit: [] };
+      const { rerender } = render(
+        <FlowMap story={story} lane="conformant" selectedStepId="9" onSelectStep={() => {}} />,
+      );
+      expect(getNode('gateway').className).toContain('flash');
+      act(() => vi.advanceTimersByTime(599));
+      expect(getNode('gateway').className).toContain('flash');
+      act(() => vi.advanceTimersByTime(1));
+      expect(getNode('gateway').className).not.toContain('flash');
+
+      rerender(<FlowMap story={story} lane="conformant" onSelectStep={() => {}} />);
+      rerender(<FlowMap story={story} lane="conformant" selectedStepId="9" onSelectStep={() => {}} />);
+      expect(getNode('gateway').className).toContain('flash');
+      act(() => vi.advanceTimersByTime(600));
+      expect(getNode('gateway').className).not.toContain('flash');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a selected step that becomes edge-less on a lane change flashes, and the flash expires', () => {
+    vi.useFakeTimers();
+    try {
+      const story: RunStory = { runId: 'r', steps: [sorStep()], audit: [] };
+      const { rerender } = render(<FlowMap story={story} lane="ehr" selectedStepId="9" onSelectStep={() => {}} />);
+      expect(getNode('gateway').className).not.toContain('flash');
+      rerender(<FlowMap story={story} lane="conformant" selectedStepId="9" onSelectStep={() => {}} />);
+      expect(getNode('gateway').className).toContain('flash');
+      act(() => vi.advanceTimersByTime(600));
+      expect(getNode('gateway').className).not.toContain('flash');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

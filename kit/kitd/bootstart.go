@@ -41,9 +41,11 @@ func (e *ChildStartError) Unwrap() error { return e.Err }
 // releases what the build itself started, builds the stack again —
 // allocating fresh ports for every child whose port the caller did not fix —
 // and starts over, up to attempts builds in all, reporting each retry through
-// notify. A gateway whose port the caller fixed (Stack.GatewayPortPinned) is
-// not retried: a rebuild would reuse the port it could not bind. A child that
-// is merely slow is not retried either: a readiness timeout, like every other
+// notify. A gateway whose port the caller fixed (--gateway-port) is retried
+// too: its early exit can come from another of its ports (the observer's,
+// chosen fresh on each build), and a rebuild keeps only the fixed one, so an
+// outside process holding that port fails every attempt the same way. A child
+// that is merely slow is not retried: a readiness timeout, like every other
 // failure, is returned as it is, and so is the last attempt's early exit.
 //
 // build is called once per attempt; prepare runs after each build and before
@@ -87,13 +89,14 @@ func StartStack(ctx context.Context, sup StackStarter, attempts int, build func(
 		switch {
 		case ctx.Err() != nil, !errors.As(failed.Err, &early):
 			return Stack{}, failed
-		case failed.Child == gatewayChildName && stack.GatewayPortPinned:
-			notify(fmt.Sprintf("shnkitd: child %s exited during startup and is not retried: its port is fixed by --gateway-port, so a rebuild would reuse the port it could not bind", failed.Child))
-			return Stack{}, failed
 		case attempt >= attempts:
 			return Stack{}, failed
 		}
-		notify(fmt.Sprintf("shnkitd: child %s exited during startup (attempt %d of %d): %v; retrying on freshly allocated ports", failed.Child, attempt, attempts, failed.Err))
+		fixed := ""
+		if failed.Child == gatewayChildName && stack.GatewayPortPinned {
+			fixed = " (the gateway's own port stays fixed by --gateway-port)"
+		}
+		notify(fmt.Sprintf("shnkitd: child %s exited during startup (attempt %d of %d): %v; retrying on freshly allocated ports%s", failed.Child, attempt, attempts, failed.Err, fixed))
 		for i := len(started) - 1; i >= 0; i-- {
 			_ = sup.Stop(started[i])
 			if err := sup.Forget(started[i]); err != nil {

@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RunInspector } from './RunInspector';
 import { buildRunStory } from './inspect';
-import { TRANSFORM_CARD_NARRATION, XFORM_EXPANDER_LABEL } from './StepDetail';
+import { XFORM_EXPANDER_LABEL } from './StepDetail';
+import { TRANSFORM_CARD_NARRATION } from './stepDetailModel';
 import { DEMO_STEP_ID, REMOTE_ZONE_CAPTION } from './FlowMap';
 import {
   DEMO_REMOTE_CAPTION,

@@ -32,7 +32,7 @@ synthetic — no PHI, ever.
 | `desktop/` | The Electron shell that spawns/monitors `shnkitd` and opens a window onto it. See `desktop/README.md`. |
 | `ui/kit/` | The React UI `shnkitd` serves at `/ui/`. |
 | `tools/kitassets/` | The Java asset pipeline (validator + reference-provider WARs, JRE linking) — Docker + Temurin 21 required. |
-| `tools/brprovider/` | The bundled Da Vinci reference provider's own build. |
+| `tools/brprovider/` | The bundled Da Vinci reference provider's own build: the pinned upstream commit plus a reviewed correction series (`patches/`). |
 
 ## Build from source
 

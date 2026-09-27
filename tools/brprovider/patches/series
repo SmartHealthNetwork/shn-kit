@@ -1,0 +1,3 @@
+dtr-package-bundle-name.patch
+dtr-image-build-tests.patch
+maven-gclocker-retry.patch

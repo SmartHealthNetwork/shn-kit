@@ -117,7 +117,7 @@ export const LOCAL_DEMO_FRAMING = `${ENGINE_EXHIBIT_FRAMING}. Nothing crossed th
 
 // FlowMap's demonstration steps rail — the single
 // synthetic row's fixed label and class caption. The row's third piece, the
-// route tag, is DERIVED per record (FlowMap.tsx's demoRouteTag) from the
+// route tag, is DERIVED per record (flowMapModel.ts's demoRouteTag) from the
 // record's own contract + chain rather than pinned as a fixed string, so it
 // stays honest if the frozen fixtures ever change contract/lines.
 export const DEMO_STEP_LABEL = 'dtr-questionnaire-response';

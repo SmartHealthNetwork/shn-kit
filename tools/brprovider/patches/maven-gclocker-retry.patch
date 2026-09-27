@@ -1,0 +1,17 @@
+diff --git a/Dockerfile b/Dockerfile
+index 45ecc24d6384075703fe62272e4fb5f42d2bfc08..15b7c006f36c4454e2da1e98a557eb8160aa895c 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -46,6 +46,12 @@ RUN pip install --no-cache-dir mkdocs-material && mkdocs build
+ ##########################################################################
+ FROM docker.io/library/maven:3.9.11-eclipse-temurin-17 AS build-server
+ 
++# The war plugin's parallel zip threads hold the JVM's GC locker, and JDK 17 gives up on an
++# allocation blocked by it after a few retries (GCLockerRetryAllocationCount, default 2),
++# failing it as "Java heap space" with the heap far from full. Both Maven builds of the WAR,
++# in this stage and in the packaging stage built from it, retry up to 100 times instead.
++ENV MAVEN_OPTS="-XX:+UnlockDiagnosticVMOptions -XX:GCLockerRetryAllocationCount=100"
++
+ WORKDIR /tmp/hapi-fhir-jpaserver-starter
+ 
+ # Download OpenTelemetry agent

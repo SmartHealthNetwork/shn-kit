@@ -91,7 +91,8 @@ and time spent watching do not consume it. Each window publishes one start and
 one terminal event atomically with relay attribution, and history capture follows
 that terminal boundary. Late observer bytes remain visible as ambient activity.
 
-The packaged gateway is v0.54.0 and the SDK v0.57.1. Packaging uses a versioned Go
+The packaged gateway is v0.56.0 and the SDK v0.58.2 (the gateway executable links
+its own module's SDK pin, v0.58.1). Packaging uses a versioned Go
 install and checks executable provenance before bundling it, including both slices
 of the universal macOS binary; it refuses any executable that does not read as the
 release this Kit pins. A manifest label alone is insufficient.
@@ -104,7 +105,7 @@ is read as the known absence it is.
 
 | Gateway identity | Observer completion behavior |
 |---|---|
-| Any gateway serving the supported completion protocol, including the packaged v0.54.0 executable and the earlier published v0.46.0 and v0.44.0 | Waits for entered operations and their evidence callbacks, then catches up the stream |
+| Any gateway serving the supported completion protocol, including the packaged v0.56.0 executable and the earlier published v0.55.0, v0.54.0, v0.46.0 and v0.44.0 | Waits for entered operations and their evidence callbacks, then catches up the stream |
 | Published v0.43.1 executable with the exact module checksum and command path | Uses its synchronous observer counter for ordinary completed requests |
 | Unidentified `(devel)`, replaced module, mixed universal slices, or another unknown identity | Clinical work continues on the protocol when it is served; a missing barrier is reported, never excused |
 
@@ -201,7 +202,7 @@ set headers).
 | `GET` | `/api/support-bundle` | token | A zip of per-child logs, the manifest, the boot probe results, and recent run history — secrets excluded by inventory, not by hope |
 | `POST` | `/api/children/{name}/restart` | token | Restart one supervised Java child (`validator`/`data-server`/`br-provider`); `403` for the gateway child — restart the whole Kit for that |
 | `POST` | `/api/bridging/demo` | token | Turn bridging demo mode on/off (`{"enabled":bool}`); restarts the gateway child with a narrowed egress-native view; `409` while a run or watch is in flight |
-| `POST` | `/api/conformance-level` | token | Live conformance enforcement change (`{"level":...}`, one of `"conformanceLevels"` or `""`, which clears back to the published default); restarts the gateway child with `CONFORMANCE_ENFORCEMENT` swapped in its env and persists the choice to `{state-dir}/conformance.json`; `400` for any other value, `409` while a run or watch is in flight — see "Conformance enforcement level" below |
+| `POST` | `/api/conformance-level` | token | Live conformance enforcement change (`{"level":...}`, one of `"conformanceLevels"` or `""`, which clears back to the published default); restarts both gateway children (the Da Vinci lane's and, when present, the Plain EHR lane's) with `CONFORMANCE_ENFORCEMENT` swapped in each one's own env and persists the choice to `{state-dir}/conformance.json`; `400` for any other value, `409` while a run or watch is in flight — see "Conformance enforcement level" below |
 | `POST` | `/api/bridging/exhibit` | token | Run one embedded fixture (`{"kind":"carry"\|"refusal"}`) through the gateway child's real cross-version transform chain — a self-contained proof of the carry mechanism or a semantic-change refusal, independent of any scenario run or the demo-mode toggle |
 | `GET` | `/ui/*` | **none (ungated)** | The built Kit UI, served as static assets |
 
@@ -359,8 +360,8 @@ its packaged gateway accepts (`GET /api/status`'s `"conformanceLevels"`):
   only, never a validator diagnostic string) and the message is relayed as sent;
 - **`structural`**: a message whose structure or profile is broken, or with a defect
   the gateway cannot classify, is refused; invariant failures, codes outside their
-  code lists and the content rules are recorded and the message relayed, and so is a
-  check that cannot run;
+  code lists (including a code system the validator does not know) and the content
+  rules are recorded and the message relayed, and so is a check that cannot run;
 - **`strict`**: any message a supported check finds invalid is refused, and so is one
   a check cannot run on;
 - **`none`**: no payload conformance checks run and nothing is recorded.
@@ -369,7 +370,12 @@ At every level, the network rules (authentication, authority, consent, the patie
 binding, routing, replay, message integrity) and a payload this gateway itself
 translated between IG lines are refused. An answer the gateway cannot read is relayed
 at `none` and `observe` (recorded at `observe`) and refused at `structural` and
-`strict`.
+`strict`, with one exception: when the gateway sent the CDS Hooks request itself, as
+it does for the Plain EHR scenarios, an answer it cannot read, or one without coverage
+information, stops the exchange (`502`) at every level. From gateway v0.56.0 that
+answer is also checked against the CDS Hooks response rules at the Kit's level. On the
+Da Vinci scenarios the Kit plays your EHR and sends the CDS Hooks request through the
+gateway's Da Vinci ingress; the gateway relays the answer under the rule above.
 
 **Upgrading from an earlier Kit.** Before v0.21.0 the Kit's gateway had no `observe`
 level, and its `"none"` still ran every check and recorded what it found, while
@@ -397,13 +403,16 @@ Two ways to set it, and they compose:
   shell to pass a flag from.
 - **The "Conformance enforcement" control in the Kit UI's Status page**
   (`POST /api/conformance-level`, above) changes the level live, in a running Kit —
-  the one path a packaged app's operator actually has. It restarts the supervised
-  gateway child with `CONFORMANCE_ENFORCEMENT` swapped into its env (the same
-  purpose-built, env-only restart the bridging demo toggle uses — same port, driver
-  keypair, and runner wiring; only the env differs) and persists the choice to
-  `{state-dir}/conformance.json`, so it survives a full Kit relaunch too. A failed
-  change reverts the gateway child to its prior, working level; the recorded level in
-  `GET /api/status` only ever advances on a change that actually succeeded.
+  the one path a packaged app's operator actually has. It restarts both supervised
+  gateway children, `gateway` (the Da Vinci lane) and, when the Kit runs the Plain
+  EHR lane, `gateway-provider-data`, each with `CONFORMANCE_ENFORCEMENT` swapped into
+  its own env (the same purpose-built, env-only restart the bridging demo toggle uses
+  — same port, driver keypair, and runner wiring; only that one entry differs), and
+  persists the choice to `{state-dir}/conformance.json`, so it survives a full Kit
+  relaunch too. The change applies to both children or to neither: if either fails
+  to come back ready, both return to their prior, working level. The recorded level
+  in `GET /api/status` only ever advances on a change that actually succeeded. (The
+  bridging demo toggle, by contrast, restarts only the `gateway` child.)
 
 **Precedence at boot**: an explicit `--conformance-enforcement` (flag or
 `kit.config.json`) always wins over a previously-persisted live choice — the same

@@ -1,7 +1,7 @@
 // FlowEdges.tsx — the SVG directional edge overlay for FlowMap's node rail.
 // Ported from the approved interactive mockup
 // (`buildEdges`/`pulseAlong`) into React. Shown-never-faked: every drawn
-// out/back path pair lights independently off `EdgeStates` (FlowMap's
+// out/back path pair lights independently off `EdgeStates` (flowMapModel's
 // edgeStatesFor pure derivation) — an open leg shows an outbound arrow and
 // nothing back. The ehr lane's un-instrumented-gateway fallback
 // (`src: 'static'`) draws ONE dashed path plus the `.src-label` honesty
@@ -22,7 +22,7 @@ import {
   type JSX,
   type RefObject,
 } from 'react';
-import type { EdgeKey, EdgeStates } from './FlowMap';
+import type { EdgeKey, EdgeStates } from './flowMapModel';
 
 export interface FlowEdgesHandle {
   pulse(edge: EdgeKey, dir: 'out' | 'back'): Promise<void>;

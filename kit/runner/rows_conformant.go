@@ -969,7 +969,8 @@ func conformantHeldStillHeld(rn *Runner, uc, member string, evidence func(ref st
 	ref := "Patient/" + member
 	now := rn.now()
 	submitCorr := randCorr("kit-" + uc + "-submit")
-	amendCorr := randCorr("kit-" + uc + "-amend")
+	amendPrefix := "kit-" + uc + "-amend"
+	amendCorr := randCorr(amendPrefix)
 	order := scenariodriver.PersonaOrders["pend"] // E0424, Stationary Oxygen System
 
 	cards, viaBFF, err := conformantCRD(rn, uc, "pend", member)
@@ -1011,16 +1012,13 @@ func conformantHeldStillHeld(rn *Runner, uc, member string, evidence func(ref st
 	if err != nil {
 		return viaBFF, "", fmt.Errorf("runner: conformant/%s: %w", uc, err)
 	}
-	amendBundle, err := conformantAmendBundle(member, qrJSON, srJSON, drJSON, provJSON, amendCorr, submitCorr, now)
+	// The payer may refuse the amendment with a 409 (Conflict); the
+	// runner, as the requester, sends it once more (submitAmendment).
+	amendBundle, amendOut, err := rn.submitAmendment(uc, amendPrefix, amendCorr, func(corr string) ([]byte, error) {
+		return conformantAmendBundle(member, qrJSON, srJSON, drJSON, provJSON, corr, submitCorr, now)
+	})
 	if err != nil {
-		return viaBFF, "", fmt.Errorf("runner: conformant/%s: %w", uc, err)
-	}
-	amendOut, err := rn.cfg.Driver.SubmitPAS(amendBundle)
-	if err != nil {
-		return viaBFF, "", fmt.Errorf("runner: conformant/%s: submit amended re-POST: %w", uc, err)
-	}
-	if amendOut.Status != http.StatusOK {
-		return viaBFF, "", conformantIngressErr(uc+": amend", amendOut.Status, amendOut.Body)
+		return viaBFF, "", err
 	}
 	// The payer's answer to the amendment reaches the requester as the payer wrote
 	// it. A payer that decides right there says so; this reference payer re-pends and
@@ -1103,7 +1101,8 @@ func conformantUC06(rn *Runner, branch string) (string, error) {
 	ref := "Patient/" + member
 	now := rn.now()
 	submitCorr := randCorr("kit-uc06-submit")
-	amendCorr := randCorr("kit-uc06-amend")
+	const amendPrefix = "kit-uc06-amend"
+	amendCorr := randCorr(amendPrefix)
 	order := scenariodriver.PersonaOrders["pend"] // E0424
 
 	cards, viaBFF, err := conformantCRD(rn, "uc06", "pend", member)
@@ -1156,16 +1155,13 @@ func conformantUC06(rn *Runner, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("runner: conformant/uc06: build Provenance: %w", err)
 	}
-	amendBundle, err := conformantAmendBundle(member, qrJSON, srJSON, nil, provJSON, amendCorr, submitCorr, now)
+	// A 409 (Conflict) on the amendment is sent once more
+	// (submitAmendment), as in conformantHeldStillHeld.
+	amendBundle, amendOut, err := rn.submitAmendment("uc06", amendPrefix, amendCorr, func(corr string) ([]byte, error) {
+		return conformantAmendBundle(member, qrJSON, srJSON, nil, provJSON, corr, submitCorr, now)
+	})
 	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc06: %w", err)
-	}
-	amendOut, err := rn.cfg.Driver.SubmitPAS(amendBundle)
-	if err != nil {
-		return "", fmt.Errorf("runner: conformant/uc06: submit amended re-POST: %w", err)
-	}
-	if amendOut.Status != http.StatusOK {
-		return "", conformantIngressErr("uc06: amend", amendOut.Status, amendOut.Body)
+		return "", err
 	}
 	if !amendOut.Pended {
 		if err := requireAuthRef("uc06", amendOut); err != nil {

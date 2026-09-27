@@ -42,6 +42,16 @@ const (
 	TypeBootstrap        = "bootstrap"
 	TypeVerify           = "verify"
 
+	// TypeRunResent is the runner, playing the requester on the Da Vinci
+	// lane, sending a request once more after the payer answered it 409
+	// (Conflict). The gateway relays both attempts and never
+	// re-sends on the requester's behalf; the re-send is the runner's own
+	// decision, so the runner, not the gateway observer, reports it. Detail is
+	// JSON: {"correlationId": the re-send's, "refusedCorrelationId": the
+	// refused attempt's, "status": 409} — the same link the gateway's own
+	// leg.resent observer event carries for an amendment it built.
+	TypeRunResent = "run.resent"
+
 	// TypeDemoStarted, TypeDemoExhibit, and TypeDemoFinished are the
 	// local-demonstration vocabulary: a scripted, in-process walkthrough of a
 	// substrate property (e.g. a refusal path) that never touches a real

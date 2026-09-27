@@ -194,6 +194,11 @@ func dvDenied(rationale string) string {
 // to. The mutation row that proves a row cannot pass a reasonless denial.
 const dvDeniedNoRationale = `{"resourceType":"ClaimResponse","outcome":"complete","item":[{"adjudication":[{"extension":[{"url":"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewAction","extension":[{"url":"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewActionCode","valueCodeableConcept":{"coding":[{"system":"https://codesystem.x12.org/005010/306","code":"A2"}]}}]}]}]}]}`
 
+// dvVersionConflict is the reference payer's store-level refusal of an
+// amendment whose record moved in the meantime (HAPI-0989), relayed by the
+// ingress as the payer sent it.
+const dvVersionConflict = `{"resourceType":"OperationOutcome","issue":[{"severity":"error","code":"conflict","diagnostics":"HAPI-0989: Trying to update ClaimResponse/1/_history/2 but this is not the current version"}]}`
+
 // ---- the fake ingress ------------------------------------------------------
 
 // dvIngress stands in for the Kit gateway child's Da Vinci ingress in front of the
@@ -210,8 +215,14 @@ type dvIngress struct {
 	// inquire answers the n-th inquiry (1-based) about an order code; "" ⇒ the
 	// verdict hook's amended answer, then the payer default.
 	inquire func(code string, n int) string
+	// amendAnswer answers the n-th amendment (1-based) the ingress receives
+	// before the verdict hook is consulted: a non-zero status is answered with
+	// that status and a version-conflict OperationOutcome, and hangup closes the
+	// connection without an answer. nil, or (0, false), ⇒ the verdict hook.
+	amendAnswer func(n int) (status int, hangup bool)
 
 	mu            sync.Mutex
+	amends        int
 	crdBodies     []string
 	pkgBodies     []string
 	submitBodies  []string
@@ -322,6 +333,28 @@ func newDVIngress(t *testing.T) *dvIngress {
 		body := readBody(t, r)
 		ing.record(&ing.submitBodies, body)
 		code, amend := dvSubmitOrder(t, body)
+		if amend && ing.amendAnswer != nil {
+			ing.mu.Lock()
+			ing.amends++
+			n := ing.amends
+			ing.mu.Unlock()
+			status, hangup := ing.amendAnswer(n)
+			if hangup {
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Errorf("hijack: %v", err)
+					return
+				}
+				_ = conn.Close()
+				return
+			}
+			if status != 0 {
+				w.Header().Set("Content-Type", "application/fhir+json")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(dvVersionConflict))
+				return
+			}
+		}
 		out := ""
 		if ing.verdict != nil {
 			out = ing.verdict(code, amend)

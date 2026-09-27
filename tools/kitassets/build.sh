@@ -156,15 +156,32 @@ HAPI_REFRESH="$(bash "$REPO/tools/kitassets/copy-backport.sh" "$BACKPORT_CACHE" 
 HAPI_BACKPORT_DIR="$(cat "$BACKPORT_CACHE/selected-path")"
 log "HAPI backport $HAPI_REFRESH"
 
-# ── (b) br-provider WAR (build the pinned image if absent) ────────────────────
-if [ ! -f "$DIST/brprovider/main.war" ]; then
-  docker image inspect "$BRP_IMAGE" >/dev/null 2>&1 || "$REPO/tools/brprovider/run.sh" build
+# ── (b) br-provider WAR from the CORRECTED image ──────────────────────────────
+# The Kit ships the pinned upstream commit plus the reviewed correction series
+# (tools/brprovider/patches), never the uncorrected upstream image: that one
+# reads a DTR questionnaire package only under `packagebundle`, so a payer on
+# the DTR 2.0.1/2.1.0 spelling `PackageBundle` would reach the provider with no
+# package. A present tag is not trusted by name: ensure-image rebuilds unless the
+# local image's labels carry this checkout's upstream pin and the SHA-256 of
+# its exact series, and the labels are checked again here before extraction.
+"$REPO/tools/brprovider/build-corrected.sh" ensure-image
+BRP_SERIES_FILE="$(mktemp)"
+BRP_SERIES_SHA="$("$REPO/tools/brprovider/prepare-patch-series.sh" "$BRP_SERIES_FILE")"
+rm -f "$BRP_SERIES_FILE"
+BRP_IDENTITY="$(docker image inspect --format '{{.Id}} {{index .Config.Labels "org.shn.provider.upstream"}} {{index .Config.Labels "org.shn.provider.patch"}}' "$BRP_IMAGE")"
+[ "${BRP_IDENTITY#* }" = "$BRPROVIDER_UPSTREAM_PIN $BRP_SERIES_SHA" ] \
+  || die "$BRP_IMAGE is not the corrected provider (labels: ${BRP_IDENTITY#* }; want $BRPROVIDER_UPSTREAM_PIN $BRP_SERIES_SHA)"
+# A WAR extracted earlier is reused only when it came from this same image. The
+# stamp is a dot-file so the packaging step's dist/kitassets/* glob never ships it.
+if [ -f "$DIST/brprovider/main.war" ] && [ "$(cat "$DIST/.brprovider-image" 2>/dev/null)" = "$BRP_IDENTITY" ]; then
+  log "brprovider/main.war present from $BRP_IMAGE — skip"
+else
+  rm -f "$DIST/.brprovider-image"
   log "extracting br-provider WAR from $BRP_IMAGE"
   # /app/extra-classes does not exist in the pinned image (tolerated-missing
   # loader.path entry, verified at extraction spike) — nothing else to copy.
   extract_war "$BRP_IMAGE" /app/main.war "$DIST/brprovider/main.war"
-else
-  log "brprovider/main.war present — skip"
+  printf '%s\n' "$BRP_IDENTITY" > "$DIST/.brprovider-image"
 fi
 
 # Make both shipped WARs notarization-clean (see strip_mac_natives_from_war).

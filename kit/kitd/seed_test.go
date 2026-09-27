@@ -4,6 +4,7 @@
 package kitd
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -305,6 +306,10 @@ func TestReKey_ClearThenEnsureWarLink_FreshWar(t *testing.T) {
 }
 
 // ---- FreshenPersonas ---------------------------------------------------------------
+//
+// The data server's answers here are what a real one answered FreshenPersonas
+// (recordedDataServer, dataserver_test.go), each asked for exactly once per
+// freshen. The rows that fail a request are hand-written faults and say so.
 
 // TestFreshenPersonas_AlwaysRuns proves FreshenPersonas has NO skip gate
 // (unlike CopyPrewarmedH2): it re-POSTs the persona bundles and re-PUTs the
@@ -312,25 +317,22 @@ func TestReKey_ClearThenEnsureWarLink_FreshWar(t *testing.T) {
 func TestFreshenPersonas_AlwaysRuns(t *testing.T) {
 	var postCount int32
 	var putCount int32
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /fhir/provider", func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&postCount, 1)
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("POST /fhir/provider/Patient/$validate", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/fhir+json")
-		_, _ = w.Write([]byte(`{"resourceType":"OperationOutcome","issue":[]}`))
-	})
-	mux.HandleFunc("PUT /fhir/provider/Basic/seed-complete", func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&putCount, 1)
-		w.WriteHeader(http.StatusOK)
-	})
-	srv := httptest.NewServer(mux)
+	data := newRecordedDataServer(t, 2) // two freshens
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /fhir/provider":
+			atomic.AddInt32(&postCount, 1)
+		case "PUT /fhir/provider/Basic/seed-complete":
+			atomic.AddInt32(&putCount, 1)
+		}
+		data.ServeHTTP(w, r)
+	}))
 	defer srv.Close()
 
 	if err := FreshenPersonas(context.Background(), srv.URL, nil); err != nil {
 		t.Fatalf("FreshenPersonas: %v", err)
 	}
+	data.nextPass()
 	if atomic.LoadInt32(&postCount) == 0 {
 		t.Errorf("no transaction bundles were POSTed")
 	}
@@ -356,33 +358,29 @@ func TestFreshenPersonas_AlwaysRuns(t *testing.T) {
 // FreshenObservations, not just the provider-data bundles — the lumbar
 // questionnaire's "conservative-therapy-weeks" Observation carries a baked
 // static effectiveDateTime (2026-05-20 in the fixture) that would otherwise
-// age out of the operated CQL's 3-month ObservationLookBack. The stub
+// age out of the operated CQL's 3-month ObservationLookBack. The test
 // captures whichever POSTed transaction body names that Observation code and
 // asserts the baked date is gone and today's date is present.
 func TestFreshenPersonas_DemoPersonasBundle_ObservationsFreshened(t *testing.T) {
 	var mu sync.Mutex
 	var personasBody []byte
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /fhir/provider", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read POST body: %v", err)
+	data := newRecordedDataServer(t, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/fhir/provider" {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read POST body: %v", err)
+				return
+			}
+			if strings.Contains(string(body), "conservative-therapy-weeks") {
+				mu.Lock()
+				personasBody = body
+				mu.Unlock()
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
-		if strings.Contains(string(body), "conservative-therapy-weeks") {
-			mu.Lock()
-			personasBody = body
-			mu.Unlock()
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("POST /fhir/provider/Patient/$validate", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/fhir+json")
-		_, _ = w.Write([]byte(`{"resourceType":"OperationOutcome","issue":[]}`))
-	})
-	mux.HandleFunc("PUT /fhir/provider/Basic/seed-complete", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	srv := httptest.NewServer(mux)
+		data.ServeHTTP(w, r)
+	}))
 	defer srv.Close()
 
 	if err := FreshenPersonas(context.Background(), srv.URL, nil); err != nil {
@@ -408,16 +406,19 @@ func TestFreshenPersonas_DemoPersonasBundle_ObservationsFreshened(t *testing.T) 
 	}
 }
 
+// Hand-written fault: the data server refuses every transaction with a bare
+// 500 (no capture holds a refused transaction). The warm-up gets its recorded
+// answer.
 func TestFreshenPersonas_UpstreamFailure_NamedError(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /fhir/provider/Patient/$validate", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/fhir+json")
-		_, _ = w.Write([]byte(`{"resourceType":"OperationOutcome","issue":[]}`))
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	data := newRecordedDataServer(t, 1)
+	data.partialPass() // the refused first transaction ends the freshen after the warm-up
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/fhir/provider/Patient/$validate" {
+			data.ServeHTTP(w, r)
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
-	})
-	srv := httptest.NewServer(mux)
+	}))
 	defer srv.Close()
 
 	err := FreshenPersonas(context.Background(), srv.URL, nil)
@@ -431,17 +432,16 @@ func TestFreshenPersonas_UpstreamFailure_NamedError(t *testing.T) {
 
 // A validator that cannot warm is named as such, before any persona bundle is
 // posted: the seeder fails honestly instead of writing a marker over a cold server.
+// Hand-written fault: a bare 500 for the warm-up (no capture holds a 5xx from
+// the data server's $validate).
 func TestFreshenPersonas_WarmFailure_NamedAndStopsBeforeSeeding(t *testing.T) {
 	var posts int32
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /fhir/provider", func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&posts, 1)
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/fhir/provider" {
+			atomic.AddInt32(&posts, 1)
+		}
 		w.WriteHeader(http.StatusInternalServerError)
-	})
-	srv := httptest.NewServer(mux)
+	}))
 	defer srv.Close()
 
 	err := FreshenPersonas(context.Background(), srv.URL, nil)
@@ -459,19 +459,13 @@ func TestFreshenPersonas_WarmFailure_NamedAndStopsBeforeSeeding(t *testing.T) {
 func TestFreshenPersonas_WarmsTheValidatorFirst(t *testing.T) {
 	var mu sync.Mutex
 	var order []string
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	data := newRecordedDataServer(t, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		order = append(order, r.Method+" "+r.URL.Path)
 		mu.Unlock()
-		if r.URL.Path == "/fhir/provider/Patient/$validate" {
-			w.Header().Set("Content-Type", "application/fhir+json")
-			_, _ = w.Write([]byte(`{"resourceType":"OperationOutcome","issue":[]}`))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-	srv := httptest.NewServer(mux)
+		data.ServeHTTP(w, r)
+	}))
 	defer srv.Close()
 	if err := FreshenPersonas(context.Background(), srv.URL, nil); err != nil {
 		t.Fatalf("FreshenPersonas: %v", err)

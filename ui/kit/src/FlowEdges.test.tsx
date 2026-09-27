@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { createRef } from 'react';
 import { FlowEdges } from './FlowEdges';
-import type { EdgeStates } from './FlowMap';
+import type { EdgeStates } from './flowMapModel';
 
 const railRef = { current: document.createElement('div') };
 

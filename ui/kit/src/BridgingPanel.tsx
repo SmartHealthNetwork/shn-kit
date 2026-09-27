@@ -12,7 +12,7 @@
 // `status.bridging` key (feature not configured on this Kit build — never
 // conflated with demoMode:false) collapses the WHOLE panel to a single
 // feature-unavailable state; nothing else renders.
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { JSX } from 'react';
 import type {
   BridgingExhibitCarryResponse,
@@ -26,7 +26,8 @@ import type {
 import type { EventsView } from './useEvents';
 import { ApiError, postBridgingDemo, postBridgingExhibit, postRun } from './api';
 import { RegisterSwitch } from './RegisterSwitch';
-import { StatusChip, TickIcon } from './StatusChip';
+import { StatusChip } from './StatusChip';
+import { TickIcon } from './icons';
 import {
   BRIDGING_REMOTE_CAPTION,
   CONTRACT_LINE_EXPLAINER,
@@ -216,11 +217,11 @@ export function BridgingPanel({
   // demoMode falls straight back to bridging?.demoMode, the last confirmed
   // value, exactly as if the click had never happened.
   const [demoOverride, setDemoOverride] = useState<boolean | undefined>(undefined);
-  useEffect(() => {
-    if (demoOverride !== undefined && bridging?.demoMode === demoOverride) {
-      setDemoOverride(undefined);
-    }
-  }, [bridging?.demoMode, demoOverride]);
+  // Dropped while rendering, not in an effect, the moment the polled status
+  // agrees; the guard ends the loop.
+  if (demoOverride !== undefined && bridging?.demoMode === demoOverride) {
+    setDemoOverride(undefined);
+  }
   const demoMode = demoOverride ?? bridging?.demoMode ?? false;
 
   const [toggleState, setToggleState] = useState<

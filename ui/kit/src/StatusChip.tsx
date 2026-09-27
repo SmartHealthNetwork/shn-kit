@@ -8,24 +8,9 @@
 // icon at all — the approved mockup shows the tick/cross on every one of
 // them.
 import type { JSX } from 'react';
+import { CrossIcon, TickIcon } from './icons';
 
 export type StatusChipState = 'passed' | 'failed';
-
-// Icons ported from the design mockup's status chips — currentColor
-// stroke, aria-hidden (the chip's own text label carries the accessible
-// name). Defined ONCE, here, and exported so the one other pass/fail-shaped
-// surface that needs the tick alone (StepDetail's ValidationBadge, for its
-// "Valid" state) can reuse it rather than re-declaring it a third time.
-export const TickIcon = (
-  <svg className="ic tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} aria-hidden="true">
-    <path d="M5 13l4 4L19 7" />
-  </svg>
-);
-export const CrossIcon = (
-  <svg className="ic cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} aria-hidden="true">
-    <path d="M6 6l12 12M18 6L6 18" />
-  </svg>
-);
 
 export interface StatusChipProps {
   state: StatusChipState;

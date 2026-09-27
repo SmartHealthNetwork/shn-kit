@@ -311,7 +311,9 @@ const NARRATION: Record<string, NarrationEntry> = {
     failed: 'The Smart Gateway found this resource did not validate against its FHIR profile.',
   },
   // conformance.observed: a governed check ($validate, the CDS Hooks
-  // response rules or a content rule) found a defect and recorded a finding — additive to
+  // response rules or a content rule) found a defect and recorded a finding
+  // (a valid or unavailable verdict is narrated apart; see
+  // conformanceNarration) — additive to
   // validate.result, never a replacement for it. `decision` is "relayed"
   // (observe, the network's published default: every check still runs and
   // every invalid verdict is still recorded, but nothing about a peer's own
@@ -455,8 +457,42 @@ export interface Step {
   // from the finding's own `kind` field to avoid colliding with Step.kind.
   findingKind?: string;
   decision?: string; // "relayed" | "refused"
+  // The finding's verdict (gateway v0.55.0+): absent or "structural"/"deeper"
+  // for a defect, "unavailable" when the check could not run, "valid" when a
+  // candidate contract line after the first passed. Only the first kind is an
+  // issue with the message; the narration reads it (conformanceNarration).
+  verdict?: string;
   rule?: string;
   path?: string;
+  // An attempt the payer answered 409 (Conflict) and that was sent
+  // once more, linked both ways by correlation id (linkResends): resendOf on
+  // the second attempt names the refused one, resentAs on the refused one
+  // names the second.
+  resendOf?: StepLink;
+  resentAs?: StepLink;
+}
+
+// Who sent an amendment once more after the payer's 409: the Smart Gateway,
+// for an amendment it built for its participant (its own leg.resent observer
+// event), or the requester, for an amendment the provider's Da Vinci client
+// sent through the gateway's ingress (the Kit runner's run.resent event — the
+// gateway only relays those, and never re-sends them itself).
+export type ResentBy = 'gateway' | 'requester';
+
+// StepLink is the one linking shape both kinds of re-send use: the other
+// attempt's correlation id, and its step id when the story holds that step.
+export interface StepLink {
+  by: ResentBy;
+  correlationId: string;
+  stepId?: string;
+}
+
+// ResendLink is one re-send as read off the stream: the re-send's correlation
+// id and the refused attempt's.
+export interface ResendLink {
+  by: ResentBy;
+  correlationId: string;
+  refusedCorrelationId: string;
 }
 
 export interface AuditAnchor {
@@ -580,6 +616,7 @@ function makeValidateStep(frame: ObserverFrame): Step {
 interface FindingDetail {
   kind?: string;
   decision?: string;
+  verdict?: string;
   rule?: string;
   path?: string;
 }
@@ -589,7 +626,8 @@ interface FindingDetail {
 // emitFinding). Metadata only: this reads exactly kind/decision/rule/path,
 // never `issues` (a redacted count/size/hash summary, not a validator
 // diagnostic — but still not something this inspector surfaces; see the
-// finding-context comment above). Shape-checked, never throws: a malformed
+// finding-context comment above) — plus `verdict`, which says whether the
+// finding is an issue at all (see Step.verdict). Shape-checked, never throws: a malformed
 // or absent Detail yields undefined fields rather than taking the story
 // down — the same never-throw posture as parseObserver/parseRoute/parseAudit.
 function parseFindingDetail(detail: string | undefined): FindingDetail | undefined {
@@ -604,6 +642,7 @@ function parseFindingDetail(detail: string | undefined): FindingDetail | undefin
   return {
     kind: asString(parsed.kind),
     decision: asString(parsed.decision),
+    verdict: asString(parsed.verdict),
     rule: asString(parsed.rule),
     path: asString(parsed.path),
   };
@@ -620,6 +659,40 @@ function parseFindingDetail(detail: string | undefined): FindingDetail | undefin
 // decision was read when none was). Pinned exactly; do not paraphrase.
 export const conformanceUnknownDecisionNarration =
   'The Smart Gateway recorded a conformance finding for this message; its decision could not be read.';
+
+// A finding is not always an issue. From gateway v0.55.0 a finding names its
+// verdict (gateway/engine/finding.go's ConformanceFinding.Verdict): "valid"
+// is recorded when the message passed on a contract line the gateway checked
+// after the first (a payer's answer certified against each line it supports),
+// and "unavailable" when no validator could judge the message. Narrating
+// either as "found a conformance issue" would state a defect nobody found.
+// Only a relayed decision is expected with these verdicts; a valid verdict
+// with any other decision is a record this UI cannot square, and gets the
+// unknown-decision narration rather than a guess. Pinned exactly; do not
+// paraphrase.
+export const conformanceValidNarration =
+  'The Smart Gateway checked this message against the contract lines it supports, found it valid on one of them, relayed it as sent, and recorded the result.';
+export const conformanceUnavailableNarration =
+  'The Smart Gateway could not complete a conformance check of this message because no validator could judge it; it relayed the message as sent and recorded that the check did not run.';
+export const conformanceUnavailableRefusedNarration =
+  'The Smart Gateway could not complete a conformance check of this message because no validator could judge it, and refused it.';
+
+// conformanceNarration picks a conformance step's sentence from what the
+// finding actually says: its verdict first (valid and unavailable are not
+// issues), then its decision.
+function conformanceNarration(finding: FindingDetail | undefined): string {
+  const decision = finding?.decision;
+  if (decision !== 'relayed' && decision !== 'refused') return conformanceUnknownDecisionNarration;
+  const entry = NARRATION['conformance.observed'];
+  switch (finding?.verdict) {
+    case 'valid':
+      return decision === 'relayed' ? conformanceValidNarration : conformanceUnknownDecisionNarration;
+    case 'unavailable':
+      return decision === 'relayed' ? conformanceUnavailableNarration : conformanceUnavailableRefusedNarration;
+    default:
+      return decision === 'relayed' ? entry.done : entry.failed;
+  }
+}
 
 // makeConformanceStep builds a conformance.observed frame's single-frame
 // step — the same shape as makeValidateStep/makeSorStep (one observer frame,
@@ -638,14 +711,8 @@ function makeConformanceStep(frame: ObserverFrame): Step {
   // status still defaults to the non-blocking case (never assumed
   // refused), but the narration says so honestly instead of asserting
   // "relayed" as a fact it never actually observed.
-  const decisionKnown = finding?.decision === 'relayed' || finding?.decision === 'refused';
   const status: StepStatus = finding?.decision === 'refused' ? 'failed' : 'ok';
-  const entry = NARRATION['conformance.observed'];
-  const narration = !decisionKnown
-    ? conformanceUnknownDecisionNarration
-    : status === 'ok'
-      ? entry.done
-      : entry.failed;
+  const narration = conformanceNarration(finding);
   return {
     id: String(frame.seq),
     kind: 'conformance',
@@ -655,6 +722,7 @@ function makeConformanceStep(frame: ObserverFrame): Step {
     correlationId: frame.correlationId,
     findingKind: finding?.kind,
     decision: finding?.decision,
+    verdict: finding?.verdict,
     rule: finding?.rule,
     path: finding?.path,
     narration,
@@ -715,6 +783,64 @@ function closeIngressStep(step: Step, frame: ObserverFrame): void {
   step.narration = narrationFor(step);
 }
 
+// parseResendDetail reads the JSON Detail both kinds of re-send carry: the
+// gateway's leg.resent ({"refusedCorrelationId","status"}; the re-send's own
+// id is the frame's correlationId) and the Kit runner's run.resent
+// ({"correlationId","refusedCorrelationId","status"}). Never throws.
+function parseResendDetail(detail: string | undefined): Record<string, unknown> | undefined {
+  if (detail === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(detail);
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resendLink(by: ResentBy, correlationId: string | undefined, detail: string | undefined): ResendLink | undefined {
+  const d = parseResendDetail(detail);
+  const refusedCorrelationId = asString(d?.refusedCorrelationId);
+  if (correlationId === undefined || refusedCorrelationId === undefined || correlationId === refusedCorrelationId) {
+    return undefined;
+  }
+  return { by, correlationId, refusedCorrelationId };
+}
+
+// linkResends joins each re-send to its two attempts' leg steps, strictly by
+// correlation id (never by order: the runner's run.resent and the gateway's
+// relayed frames reach the bus on different paths, so either may land first).
+// An attempt the story does not hold still gets the other attempt's id, just
+// no step id to jump to.
+function linkResends(steps: Step[], resends: ResendLink[]): void {
+  const legFor = (corr: string) => steps.find((s) => s.kind === 'leg' && s.correlationId === corr);
+  for (const link of resends) {
+    const refused = legFor(link.refusedCorrelationId);
+    const resent = legFor(link.correlationId);
+    if (resent) resent.resendOf = { by: link.by, correlationId: link.refusedCorrelationId, stepId: refused?.id };
+    if (refused) refused.resentAs = { by: link.by, correlationId: link.correlationId, stepId: resent?.id };
+  }
+}
+
+// resendNote is the partner-facing sentence for a step that is one attempt of
+// a re-sent amendment, or undefined for any other step. Pinned in tests.
+export function resendNote(step: Step): string | undefined {
+  if (step.resendOf) {
+    const who =
+      step.resendOf.by === 'gateway'
+        ? 'the Smart Gateway, which built this amendment, sent it once more under a new correlation id.'
+        : 'the provider’s Da Vinci client sent this amendment once more under a new correlation id, and the Smart Gateway relayed it as sent.';
+    return `The payer answered the first attempt 409 (Conflict), so ${who} First attempt: ${step.resendOf.correlationId}.`;
+  }
+  if (step.resentAs) {
+    const who =
+      step.resentAs.by === 'gateway'
+        ? 'The Smart Gateway, which built this amendment, sent it once more under a new correlation id.'
+        : 'The Smart Gateway relayed that answer to the provider’s Da Vinci client, which sent the amendment once more under a new correlation id.';
+    return `The payer answered this amendment 409 (Conflict). ${who} Second attempt: ${step.resentAs.correlationId}.`;
+  }
+  return undefined;
+}
+
 // buildRunStory turns one run's stamped events into a RunStory: a flat,
 // chronologically-ordered list of Steps (leg/ingress steps paired,
 // validate.result always its own step) plus the run's Audit anchors
@@ -743,6 +869,7 @@ export function buildRunStory(runId: string, events: KitEvent[]): RunStory {
   // should never happen; the gateway mints a fresh one per leg) would let a
   // later frame silently steal an earlier match.
   const pendingTransforms = new Map<string, ObserverFrame>();
+  const resends: ResendLink[] = [];
   const audit: AuditAnchor[] = [];
   let auditNote: string | undefined;
   let startedAt: string | undefined;
@@ -764,6 +891,15 @@ export function buildRunStory(runId: string, events: KitEvent[]): RunStory {
     }
     if (e.type === 'audit.unavailable') {
       auditNote = e.detail;
+      continue;
+    }
+    if (e.type === 'run.resent') {
+      // The Kit runner, as the requester, sent an amendment once more after
+      // the payer's 409 (kit/event TypeRunResent). Not a step of its own: it
+      // links the two attempts' leg steps (linkResends).
+      const d = parseResendDetail(e.detail);
+      const link = resendLink('requester', asString(d?.correlationId), e.detail);
+      if (link) resends.push(link);
       continue;
     }
     if (e.type !== 'observer') continue;
@@ -873,6 +1009,14 @@ export function buildRunStory(runId: string, events: KitEvent[]): RunStory {
         steps.push(makeSorStep(frame));
         break;
       }
+      case 'leg.resent': {
+        // The gateway sent an amendment it built once more after the payer's
+        // 409 (gateway v0.56.0+). Not a step of its own: each attempt keeps
+        // its own leg.originated/leg.response pair, and this links the two.
+        const link = resendLink('gateway', frame.correlationId, frame.detail);
+        if (link) resends.push(link);
+        break;
+      }
       default:
         // Unknown observer kind — not a paired step at all (only
         // leg/ingress/validate participate in the step model); silently
@@ -881,6 +1025,7 @@ export function buildRunStory(runId: string, events: KitEvent[]): RunStory {
     }
   }
 
+  linkResends(steps, resends);
   return { runId, steps, audit, auditNote, startedAt, terminal };
 }
 

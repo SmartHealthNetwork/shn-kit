@@ -1,0 +1,24 @@
+diff --git a/Dockerfile b/Dockerfile
+index a31358214d9f098396d01d199be35dfb57720d7d..45ecc24d6384075703fe62272e4fb5f42d2bfc08 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -25,6 +25,11 @@ COPY frontend/src/ ./frontend/src/
+ # Build the frontend for production
+ WORKDIR /app/frontend
+ RUN bun run build
++# The package-name correction ships only with its tests executed: a red test is a failed
++# image build, never a shipped image. Copied after the build so the production type check
++# and bundle are exactly upstream's.
++COPY frontend/vitest.config.ts frontend/vitest.setup.ts ./
++RUN bun run test src/lib/dtr-ingestion.test.ts src/hooks/use-questionnaire.test.ts
+ 
+ ##########################################################################
+ # Stage 2: Build the documentation site (mkdocs)
+@@ -62,6 +67,7 @@ COPY --from=build-docs /app/site/ /tmp/hapi-fhir-jpaserver-starter/src/main/reso
+ 
+ # Build the server
+ RUN mvn clean install -DskipTests -Djdk.lang.Process.launchMechanism=vfork
++RUN mvn -ntp -Dtest='DtrPopulateControllerTest' -Dsurefire.failIfNoSpecifiedTests=true -Djdk.lang.Process.launchMechanism=vfork test
+ 
+ ##########################################################################
+ # Stage 4: Package for Spring Boot

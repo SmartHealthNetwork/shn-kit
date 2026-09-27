@@ -11,8 +11,8 @@ vi.mock('./api', async (importOriginal) => {
   return { ...actual, getHistoryRecord: getHistoryRecordMock };
 });
 
-// Real ApiError comes through `actual` above (not mocked), so `instanceof`
-// checks inside useRunEvents keep working against errors this test rejects with.
+// Real ApiError comes through `actual` above (not mocked), so the errors this
+// test rejects with are the ones the api module actually throws.
 import { ApiError } from './api';
 
 function evt(partial: Partial<KitEvent> & { seq: number; type: string; runId: string }): KitEvent {
@@ -150,11 +150,44 @@ describe('useRunEvents', () => {
     expect(result.current.events).toEqual(secondEvents);
 
     // Now let the stale run-a resolution land — it must NOT clobber run-b's
-    // already-applied events (the ref-guarded out-of-order check).
+    // already-applied events (it only fills run-a's own cache entry).
     resolveFirst?.();
     await new Promise((r) => setTimeout(r, 0));
 
     expect(result.current.source).toBe('history');
     expect(result.current.events).toEqual(secondEvents);
+  });
+
+  it('a 404 for a run selected before its run.started does not hide a later successful fetch', async () => {
+    // The Free-form and Watch panels select a run before its run.started
+    // arrives: the first history fetch 404s while the run goes live, and once
+    // the run leaves the ring the refetch succeeds.
+    let reject404: (() => void) | undefined;
+    let calls = 0;
+    const history = [
+      evt({ seq: 1, type: 'run.started', runId: 'r' }),
+      evt({ seq: 2, type: 'run.finished', runId: 'r' }),
+    ];
+    getHistoryRecordMock.mockImplementation(() => {
+      calls++;
+      if (calls === 1) {
+        return new Promise((_, reject) => {
+          reject404 = () => reject(new ApiError('not found', 404));
+        });
+      }
+      return Promise.resolve({ runId: 'r', lane: 'ehr', uc: 'uc03', branch: 'b', state: 'passed', detail: '', time: '', eventCount: 2, events: history });
+    });
+    const { result, rerender } = renderHook(({ ev }) => useRunEvents('r', ev), {
+      initialProps: { ev: fakeEventsView([]) },
+    });
+    expect(result.current.source).toBe('loading');
+    rerender({ ev: fakeEventsView(history) }); // run.started lands: live
+    expect(result.current.source).toBe('live');
+    reject404?.();
+    await new Promise((r) => setTimeout(r, 0));
+    rerender({ ev: fakeEventsView([]) }); // the run leaves the ring
+    await waitFor(() => expect(calls).toBe(2));
+    await waitFor(() => expect(result.current.source).toBe('history'));
+    expect(result.current.events).toEqual(history);
   });
 });

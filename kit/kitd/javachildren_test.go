@@ -6,6 +6,7 @@
 package kitd
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SmartHealthNetwork/shn-kit/internal/testrecord"
 	"github.com/SmartHealthNetwork/shn-kit/validatorwarm"
 )
 
@@ -508,30 +510,36 @@ func TestEnsureWarLink_Idempotent(t *testing.T) {
 
 // ---- validator ChildSpec: readiness = metadata + the verdict corpus ---------------
 
-// fakeValidatorLane is a HAPI stand-in at the wire (metadata 200; every
-// $validate an OperationOutcome) listening on a loopback port the ChildSpec
-// under test is built for. respond, when set, may answer (or deliberately never
-// answer) a request itself by returning false.
-type fakeValidatorLane struct {
+// recordedValidatorLane is a real validator lane at the wire: each $validate is
+// answered with what a real lane of its line answered to the same request
+// (../validatorwarm/testdata/recordings/lane-<line>-warm.json, the kit's own
+// recording beside the warm-up code, replayed strictly: a request the lane was
+// never asked fails the test, and every recorded answer must be used unless
+// the row calls partial). It listens on a loopback port the ChildSpec under
+// test is built for. respond, when set, may answer (or deliberately never
+// answer) a request itself by returning false: a fault no capture holds (a
+// hang, an answer that is not an OperationOutcome) or a deliberate mutation of
+// a recorded answer; returning true passes the request on to the recording.
+type recordedValidatorLane struct {
 	port    int
+	subset  func()
 	respond func(w http.ResponseWriter, n int, body []byte) bool
 	mu      sync.Mutex
 	posts   []string // "<path>?<profile>#<sha256(body)>" per $validate, in order
 }
 
-const (
-	laneCleanOutcome    = `{"resourceType":"OperationOutcome","issue":[{"severity":"information","code":"informational","diagnostics":"Validation successful"}]}`
-	laneNegativeOutcome = `{"resourceType":"OperationOutcome","issue":[{"severity":"error","code":"processing","details":{"coding":[{"system":"http://hl7.org/fhir/java-core-messageId","code":"Extension_EXT_Type"}]},"diagnostics":"The Extension 'http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewActionCode' definition allows for the types [CodeableConcept] but found type boolean","expression":["ClaimResponse.item[0].adjudication[0].extension[0].extension[0]"]}]}`
-)
+// laneRecordingPath is the recorded warm-up corpus of line: the kit module's
+// own recording, beside the validatorwarm code the Ready hook runs.
+func laneRecordingPath(line string) string {
+	return filepath.Join("..", "validatorwarm", "testdata", "recordings", "lane-"+line+"-warm.json")
+}
 
-func newFakeValidatorLane(t *testing.T) *fakeValidatorLane {
+func newRecordedValidatorLane(t *testing.T, line string) *recordedValidatorLane {
 	t.Helper()
-	l := &fakeValidatorLane{}
+	rec := testrecord.Load(t, laneRecordingPath(line))
+	replay := rec.Server()
+	l := &recordedValidatorLane{subset: rec.Subset}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/fhir/metadata", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"resourceType":"CapabilityStatement"}`))
-	})
 	mux.HandleFunc("/fhir/", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		l.mu.Lock()
@@ -541,59 +549,8 @@ func newFakeValidatorLane(t *testing.T) *fakeValidatorLane {
 		if l.respond != nil && !l.respond(w, n, body) {
 			return
 		}
-		w.Header().Set("Content-Type", "application/fhir+json")
-		w.WriteHeader(http.StatusOK)
-		if r.URL.Path == "/fhir/Bundle/$validate" {
-			control := ""
-			switch {
-			case strings.Contains(string(body), "L9999"):
-				control = "hcpcs"
-			case strings.Contains(string(body), `"code":"98"`):
-				control = "pos"
-			case strings.Contains(string(body), "invalid-reference-type"):
-				control = "encounter"
-			}
-			if control != "" {
-				dir := "../validatorwarm/testdata"
-				profile := r.URL.Query().Get("profile")
-				if strings.HasSuffix(profile, "|2.2.1") {
-					dir += "/2.2"
-				}
-				if strings.HasSuffix(profile, "|2.1.0") {
-					dir += "/2.1"
-				}
-				raw, err := os.ReadFile(filepath.Join(dir, "pas-response-"+control+"-errors.json"))
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				_, _ = w.Write(raw)
-				return
-			}
-		}
-		profile := r.URL.Query().Get("profile")
-		if strings.HasSuffix(profile, "|9.9.9") || profile == "https://example.org/fhir/StructureDefinition/unavailable-profile" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"resourceType": "OperationOutcome", "issue": []any{map[string]any{
-				"severity": "error", "code": "processing", "details": map[string]any{"coding": []any{map[string]any{"system": "http://hl7.org/fhir/java-core-messageId", "code": "Validation_VAL_Profile_Unknown"}}},
-				"diagnostics": "Invalid profile. Failed to retrieve explicitly requested profile with url=" + profile,
-			}}})
-			return
-		}
-		if r.URL.Path == "/fhir/Claim/$validate" && strings.Contains(string(body), `"id":"probe-encounter"`) && strings.Contains(string(body), `"resourceType":"Patient"`) {
-			// the encounter target-type control: the contained Encounter was swapped for a Patient
-			raw, err := os.ReadFile("../validatorwarm/testdata/claim-encounter-target-errors.json")
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			_, _ = w.Write(raw)
-			return
-		}
-		if strings.Contains(string(body), `"valueBoolean":true`) {
-			_, _ = w.Write([]byte(laneNegativeOutcome))
-			return
-		}
-		_, _ = w.Write([]byte(laneCleanOutcome))
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		replay.Config.Handler.ServeHTTP(w, r)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -605,7 +562,11 @@ func newFakeValidatorLane(t *testing.T) *fakeValidatorLane {
 	return l
 }
 
-func (l *fakeValidatorLane) recorded() []string {
+// partial marks a row whose respond hook answers rows itself, or whose run
+// stops early: the recorded answers for the rows it never reaches go unused.
+func (l *recordedValidatorLane) partial() { l.subset() }
+
+func (l *recordedValidatorLane) recorded() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([]string(nil), l.posts...)
@@ -614,7 +575,7 @@ func (l *fakeValidatorLane) recorded() []string {
 // readyHookFor builds the validator ChildSpec for lane's port and returns its
 // Ready hook — the exact closure the supervisor would run after /fhir/metadata
 // answered.
-func readyHookFor(t *testing.T, lane *fakeValidatorLane, line string) func(context.Context, func(string)) error {
+func readyHookFor(t *testing.T, lane *recordedValidatorLane, line string) func(context.Context, func(string)) error {
 	t.Helper()
 	spec, err := BuildValidatorChildSpec("/assets", "/opt/jre", t.TempDir(), lane.port, "darwin", line)
 	if err != nil {
@@ -636,7 +597,7 @@ func readyHookFor(t *testing.T, lane *fakeValidatorLane, line string) func(conte
 func TestBuildValidatorChildSpec_ReadyWarmsTheFullCorpus(t *testing.T) {
 	for _, line := range []string{"2.0", "2.2"} {
 		t.Run(line, func(t *testing.T) {
-			lane := newFakeValidatorLane(t)
+			lane := newRecordedValidatorLane(t, line)
 			ready := readyHookFor(t, lane, line)
 			var mu sync.Mutex
 			var progress []string
@@ -684,9 +645,10 @@ func TestBuildValidatorChildSpec_ReadyWarmsTheFullCorpus(t *testing.T) {
 
 // Rejection row: /metadata 200 with $validate hanging is not ready inside the
 // budget — the hook returns at the deadline naming the row, having posted it
-// once.
+// once. A hang is a fault no capture holds, so the hook answers it.
 func TestValidatorReady_MetadataOnlyWithValidateHangingIsNotReady(t *testing.T) {
-	lane := newFakeValidatorLane(t)
+	lane := newRecordedValidatorLane(t, "2.0")
+	lane.partial()
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	lane.respond = func(http.ResponseWriter, int, []byte) bool { <-release; return false }
@@ -710,9 +672,11 @@ func TestValidatorReady_MetadataOnlyWithValidateHangingIsNotReady(t *testing.T) 
 }
 
 // Rejection row: /metadata 200 with $validate answering a non-OperationOutcome
-// is not ready.
+// is not ready. A lane answers every $validate with an OperationOutcome, so the
+// Bundle is authored: what a server that is not a validator would answer.
 func TestValidatorReady_NonOperationOutcomeIsNotReady(t *testing.T) {
-	lane := newFakeValidatorLane(t)
+	lane := newRecordedValidatorLane(t, "2.1")
+	lane.partial()
 	lane.respond = func(w http.ResponseWriter, _ int, _ []byte) bool {
 		w.Header().Set("Content-Type", "application/fhir+json")
 		w.WriteHeader(http.StatusOK)
@@ -732,9 +696,11 @@ func TestValidatorReady_NonOperationOutcomeIsNotReady(t *testing.T) {
 }
 
 // Rejection row: a partial warm (one row cold) is not ready, and the rows that
-// already answered are not re-posted while the cold one is awaited.
+// already answered are not re-posted while the cold one is awaited. The rows
+// before the cold one get the lane's recorded answers; the cold row hangs.
 func TestValidatorReady_PartialWarmIsNotReadyAndWarmRowsNotReposted(t *testing.T) {
-	lane := newFakeValidatorLane(t)
+	lane := newRecordedValidatorLane(t, "2.2")
+	lane.partial()
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	const coldRow = 7
@@ -790,22 +756,33 @@ func TestValidatorWarmPASVersionMatchesTheIGPinSet(t *testing.T) {
 }
 
 // A metadata-ready child cannot qualify if either unavailable explicit profile
-// receives a clean outcome, even after every prior row has passed.
+// receives a clean outcome, even after every prior row has passed. The clean
+// outcome is the lane's recorded refusal of that unavailable profile with its
+// one Validation_VAL_Profile_Unknown issue removed (what a lane that ignored
+// the requested profile would answer); the unedited recording must first
+// qualify the child.
 func TestValidatorChildRejectsMissingExplicitProfileSuccess(t *testing.T) {
 	for _, line := range []string{"2.0", "2.2"} {
 		for _, row := range []int{41, 42} {
 			t.Run(fmt.Sprintf("%s/row%d", line, row), func(t *testing.T) {
-				lane := newFakeValidatorLane(t)
+				base := newRecordedValidatorLane(t, line)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := readyHookFor(t, base, line)(ctx, func(string) {}); err != nil {
+					t.Fatalf("the recorded lane must qualify before its answer is edited: %v", err)
+				}
+				clean := answerWithoutProfileUnknown(t, line, row)
+				lane := newRecordedValidatorLane(t, line)
+				lane.partial() // row 41's edit stops the run before row 42
 				lane.respond = func(w http.ResponseWriter, n int, _ []byte) bool {
 					if n == row {
-						_, _ = w.Write([]byte(laneCleanOutcome))
+						w.Header().Set("Content-Type", "application/fhir+json;charset=UTF-8")
+						_, _ = w.Write(clean)
 						return false
 					}
 					return true
 				}
 				ready := readyHookFor(t, lane, line)
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
 				if err := ready(ctx, func(string) {}); err == nil || !strings.Contains(err.Error(), "explicit-profile-missing-") {
 					t.Fatalf("unavailable profile accepted: %v", err)
 				}
@@ -815,4 +792,60 @@ func TestValidatorChildRejectsMissingExplicitProfileSuccess(t *testing.T) {
 			})
 		}
 	}
+}
+
+// answerWithoutProfileUnknown is the lane's recorded answer to corpus row
+// (41: the missing PAS version, 42: the missing canonical) with its one
+// Validation_VAL_Profile_Unknown issue removed. The mutation fails the test if
+// the recorded answer does not hold exactly one such issue.
+func answerWithoutProfileUnknown(t *testing.T, line string, row int) []byte {
+	t.Helper()
+	path := laneRecordingPath(line)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := testrecord.Parse(path, raw)
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	want := map[int]func(string) bool{
+		41: func(p string) bool { return strings.HasSuffix(p, "|9.9.9") },
+		42: func(p string) bool { return p == "https://example.org/fhir/StructureDefinition/unavailable-profile" },
+	}[row]
+	var answer []byte
+	for _, ex := range rec.Exchanges {
+		if profiles := ex.Request.Query["profile"]; len(profiles) == 1 && want(profiles[0]) {
+			if answer != nil {
+				t.Fatalf("%s records row %d twice", path, row)
+			}
+			answer = ex.Response.Body
+		}
+	}
+	if answer == nil {
+		t.Fatalf("%s records no answer for row %d", path, row)
+	}
+	var outcome map[string]any
+	if err := json.Unmarshal(answer, &outcome); err != nil {
+		t.Fatal(err)
+	}
+	issues, _ := outcome["issue"].([]any)
+	kept := make([]any, 0, len(issues))
+	for _, issue := range issues {
+		details, _ := issue.(map[string]any)["details"].(map[string]any)
+		codings, _ := details["coding"].([]any)
+		if len(codings) == 1 && codings[0].(map[string]any)["code"] == "Validation_VAL_Profile_Unknown" {
+			continue
+		}
+		kept = append(kept, issue)
+	}
+	if len(kept) != len(issues)-1 {
+		t.Fatalf("mutation target: the recorded row %d answer holds %d Validation_VAL_Profile_Unknown issues, want 1", row, len(issues)-len(kept))
+	}
+	outcome["issue"] = kept
+	out, err := json.Marshal(outcome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

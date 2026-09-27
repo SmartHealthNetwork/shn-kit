@@ -263,6 +263,10 @@ type Runner struct {
 	// frame that set it are the same held section. A row that waits (a held
 	// prior authorization asking for its decision) follows it.
 	ctx context.Context
+	// stamp is the RunID/Lane/UC of the row currently holding mu, under the
+	// same held-section rule as ctx: a row that emits its own run-scoped event
+	// (a request it sent once more, amend_resend.go) stamps it with this.
+	stamp relay.Stamp
 }
 
 // wait pauses the row holding mu for d, or until its run context ends.
@@ -506,6 +510,7 @@ func (r *Runner) runLocked(ctx context.Context, runID, lane, uc, branch string, 
 	r.decision = PayerDecision{} // never inherit the previous run's determination
 	r.memberCheckNote = ""
 	r.ctx = ctx
+	r.stamp = relay.Stamp{RunID: runID, Lane: lane, UC: uc}
 	w := r.beginObservation(ctx, relay.Stamp{RunID: runID, Lane: lane, UC: uc}, branch)
 	var detail string
 	var clinicalErr error

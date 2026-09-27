@@ -265,7 +265,11 @@ func main() {
 	// against EACH OTHER (not just each against itself), which is what lets
 	// each one's transform see the other's most recently applied env rather
 	// than racing it. See gatewayEnvSwitch's own doc for the bug this fixes.
-	gwSwitch := &gatewayEnvSwitch{restart: sup.RestartWithEnv, rlyPtr: &rlyPtr, gwEnvPtr: &gwEnvPtr, gatewayBinary: *gatewayBin}
+	// pdEnvPtr is the provider-data gateway child's own running env
+	// (kitd.Stack.ProviderDataEnv) — nil on a Kit without that child. Same
+	// SECURITY posture as gwEnvPtr.
+	var pdEnvPtr atomic.Pointer[[]string]
+	gwSwitch := &gatewayEnvSwitch{restart: sup.RestartWithEnv, rlyPtr: &rlyPtr, gwEnvPtr: &gwEnvPtr, pdRlyPtr: &pdRlyPtr, pdEnvPtr: &pdEnvPtr, gatewayBinary: *gatewayBin}
 	bridgingDemo := newBridgingDemo(gwSwitch, bus)
 
 	// tokens is the selected TokenStore: newTokenStore wraps the
@@ -588,6 +592,15 @@ func main() {
 			// through that closure (kitd.Stack.GatewayEnv's SECURITY note).
 			gwEnv := stack.GatewayEnv
 			gwEnvPtr.Store(&gwEnv)
+			// The provider-data child's own env, for the conformance-level
+			// switch — nil (no such child) resets the cell, so a rebuilt
+			// stack never leaves a previous build's env behind.
+			if stack.ProviderDataEnv != nil {
+				pdEnv := stack.ProviderDataEnv
+				pdEnvPtr.Store(&pdEnv)
+			} else {
+				pdEnvPtr.Store(nil)
+			}
 
 			// Pre-spawn H2 prewarm copy: MUST run between BuildStack and
 			// the children's start — a running HAPI child creates its own
@@ -601,9 +614,8 @@ func main() {
 			}
 			return nil
 		}
-		// A retry (or why there is none) goes to shnkitd's log and onto the
-		// bus, so the boot screen shows it rather than a child that failed
-		// and then vanished.
+		// A retry goes to shnkitd's log and onto the bus, so the boot screen
+		// shows it rather than a child that failed and then vanished.
 		notify := func(line string) {
 			log.Print(line)
 			bus.Emit(event.Event{Type: event.TypeChild, Detail: line})
@@ -938,8 +950,9 @@ type envRestarter func(ctx context.Context, name string, env []string, preSpawn 
 // the running truth, so there is nothing else to track.
 //
 // One shared mutex serializes EVERY gateway-child env-only restart
-// regardless of which knob triggered it: both toggles target the SAME
-// child, and two overlapping RestartWithEnv calls — one demo, one
+// regardless of which knob triggered it: both toggles target the SAME main
+// child (the level change also restarts the provider-data child, under the
+// same lock), and two overlapping RestartWithEnv calls — one demo, one
 // conformance, or two of the same kind — could interleave their
 // stop/respawn arcs so the env actually running disagrees with what either
 // closure (or kitd's recorded state) believes. One change at a time; the
@@ -951,58 +964,122 @@ type envRestarter func(ctx context.Context, name string, env []string, preSpawn 
 // control at all," a fact that must not flicker mid-boot), while the relay
 // and the baseline env only come into being later, inside the boot
 // goroutine.
+//
+// pdRlyPtr and pdEnvPtr are the SAME pair for the provider-data gateway
+// child (the Plain EHR lane's gateway, providerDataChild): its own relay and
+// its OWN running env (kitd.Stack.ProviderDataEnv), a separate cell from
+// gwEnvPtr because the two children's envs differ by design. Both stay nil
+// (or hold nil) on a Kit without that child, and then every change is
+// main-child-only, exactly as before the provider-data child existed. Only
+// a change that asks for both children (apply's pdTransform) touches this
+// cell: the bridging demo is the main child's knob alone, so the
+// provider-data env never carries it.
 type gatewayEnvSwitch struct {
 	mu            sync.Mutex
 	restart       envRestarter
 	rlyPtr        *atomic.Pointer[relay.Relay]
 	gwEnvPtr      *atomic.Pointer[[]string]
+	pdRlyPtr      *atomic.Pointer[relay.Relay]
+	pdEnvPtr      *atomic.Pointer[[]string]
 	gatewayBinary string
 }
 
-// apply restarts the gateway child with transform(current-running-env),
-// and on success publishes that new env as the current running env for the
-// NEXT call (from either closure) to build on.
+// sourceReset is the preSpawn hook for a gateway child whose relay rlyPtr
+// publishes: nil until that relay exists (nothing to reset yet).
+func (sw *gatewayEnvSwitch) sourceReset(rlyPtr *atomic.Pointer[relay.Relay]) func() {
+	if rlyPtr == nil {
+		return nil
+	}
+	if r := rlyPtr.Load(); r != nil {
+		return func() { resetGatewaySource(r, sw.gatewayBinary) }
+	}
+	return nil
+}
+
+// apply restarts the gateway child with transform(current-running-env) and,
+// when pdTransform is non-nil AND this Kit runs the provider-data gateway
+// child, then restarts that child with pdTransform(ITS OWN current running
+// env). On success it publishes each new env as that child's current
+// running env for the NEXT call (from either closure) to build on, and
+// returns the children it restarted, in order.
+//
+// ALL OR NEITHER — a change that asks for both children applies to both or
+// to neither: the two gateway children must never run different values of a
+// knob the operator set once for the Kit.
 //
 // TOGGLE REVERTS — a failed change must leave no half-applied env behind: a
 // failed restart has ALREADY registered the new env on the child before the
 // ready probe gave up, so a later crash-respawn would come back in a state
-// the daemon's recorded state denies. On failure this runs ONE more restart
-// arc re-registering the env that was actually running before this attempt
-// (gwEnvPtr's OWN value at the top of this call — not a per-closure "prev",
-// see the type doc above), via the supervisor's recovers-a-failed-child
-// contract; a revert that itself fails is error-joined so the caller sees
-// both. gwEnvPtr is left exactly where it was (the revert-succeeds case) or
-// reflects a child that is down (the revert-fails case, named in the
-// error) — never advanced to the failed env either way.
-func (sw *gatewayEnvSwitch) apply(ctx context.Context, transform func(current []string) []string) error {
+// the daemon's recorded state denies. On a main-child failure this runs ONE
+// more restart arc re-registering the env that was actually running before
+// this attempt (gwEnvPtr's OWN value at the top of this call — not a
+// per-closure "prev", see the type doc above), via the supervisor's
+// recovers-a-failed-child contract; the provider-data child is never
+// touched. On a provider-data failure (the main child has already come back
+// ready on the new env) BOTH are reverted: the provider-data child to its
+// own prior env, then the main child to its own prior env, each attempted
+// even if the other's revert fails. A revert that itself fails is
+// error-joined so the caller sees both. Neither env cell is ever advanced to
+// a failed env.
+func (sw *gatewayEnvSwitch) apply(ctx context.Context, transform, pdTransform func(current []string) []string) ([]string, error) {
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
 
 	current := sw.gwEnvPtr.Load()
 	if current == nil {
-		return fmt.Errorf("gateway env control unavailable: the gateway stack has not been built yet")
+		return nil, fmt.Errorf("gateway env control unavailable: the gateway stack has not been built yet")
 	}
 	// transform is handed a CLONE, never *current itself: current is shared
 	// with the Stack and every other holder of the last-published env, so a
 	// transform that appends in place could rewrite a live child's spec out
-	// from under it.
+	// from under it. The same holds for the provider-data env below.
 	env := transform(append([]string(nil), *current...))
-	var preSpawn func()
-	if r := sw.rlyPtr.Load(); r != nil {
-		preSpawn = func() { resetGatewaySource(r, sw.gatewayBinary) }
+	var pdCurrent *[]string
+	var pdEnv []string
+	if pdTransform != nil && sw.pdEnvPtr != nil {
+		// nil: no provider-data child on this Kit, so the change is the main
+		// child's alone.
+		if pdCurrent = sw.pdEnvPtr.Load(); pdCurrent != nil {
+			pdEnv = pdTransform(append([]string(nil), *pdCurrent...))
+		}
+	}
+
+	preSpawn := sw.sourceReset(sw.rlyPtr)
+	// revertMain re-registers the main child's prior env. The revert respawn
+	// serves a fresh observer seq epoch too, so the cursor reset rides its
+	// preSpawn hook exactly like the main arc's.
+	revertMain := func() error {
+		return sw.restart(ctx, gatewayChild, append([]string(nil), *current...), preSpawn)
 	}
 	if err := sw.restart(ctx, gatewayChild, env, preSpawn); err != nil {
-		revertEnv := append([]string(nil), *current...)
-		// The revert respawn serves a fresh observer seq epoch too, so the
-		// cursor reset rides its preSpawn hook exactly like the main arc's.
-		if rerr := sw.restart(ctx, gatewayChild, revertEnv, preSpawn); rerr != nil {
-			return errors.Join(err,
+		if rerr := revertMain(); rerr != nil {
+			return nil, errors.Join(err,
 				fmt.Errorf("revert restart also failed — gateway child left down with its prior env registered: %w", rerr))
 		}
-		return fmt.Errorf("gateway env change failed (gateway child reverted to its prior env): %w", err)
+		return nil, fmt.Errorf("gateway env change failed (gateway child reverted to its prior env): %w", err)
+	}
+	restarted := []string{gatewayChild}
+
+	if pdCurrent != nil {
+		pdPreSpawn := sw.sourceReset(sw.pdRlyPtr)
+		if err := sw.restart(ctx, providerDataChild, pdEnv, pdPreSpawn); err != nil {
+			errs := []error{err}
+			if rerr := sw.restart(ctx, providerDataChild, append([]string(nil), *pdCurrent...), pdPreSpawn); rerr != nil {
+				errs = append(errs, fmt.Errorf("revert restart also failed — %s child left down with its prior env registered: %w", providerDataChild, rerr))
+			}
+			if rerr := revertMain(); rerr != nil {
+				errs = append(errs, fmt.Errorf("revert restart also failed — gateway child left down with its prior env registered: %w", rerr))
+			}
+			if len(errs) > 1 {
+				return nil, errors.Join(errs...)
+			}
+			return nil, fmt.Errorf("gateway env change failed on the %s child (both gateway children reverted to their prior env): %w", providerDataChild, err)
+		}
+		sw.pdEnvPtr.Store(&pdEnv)
+		restarted = append(restarted, providerDataChild)
 	}
 	sw.gwEnvPtr.Store(&env)
-	return nil
+	return restarted, nil
 }
 
 // demoEnvKeyEgress/demoEnvKeyCapture are setDemoEnv's own two entries' exact
@@ -1050,7 +1127,9 @@ func setDemoEnv(base []string, enabled bool) []string {
 // refuses the gateway outright.
 func newBridgingDemo(sw *gatewayEnvSwitch, bus *event.Bus) func(context.Context, bool) error {
 	return func(ctx context.Context, enabled bool) error {
-		if err := sw.apply(ctx, func(current []string) []string { return setDemoEnv(current, enabled) }); err != nil {
+		// The main child only (pdTransform nil): the bridging demo narrows the
+		// Da Vinci lane's egress view; the provider-data child never carries it.
+		if _, err := sw.apply(ctx, func(current []string) []string { return setDemoEnv(current, enabled) }, nil); err != nil {
 			return err
 		}
 		bus.Emit(event.Event{Type: event.TypeChild, Child: gatewayChild,
@@ -1220,8 +1299,12 @@ func levelLabel(level string) string {
 }
 
 // newConformanceLevel builds kitd.Config.ConformanceLevel's closure: it
-// changes the gateway child's LIVE CONFORMANCE_ENFORCEMENT by restarting it
-// with the requested level swapped into its env, via the SAME shared
+// changes the LIVE CONFORMANCE_ENFORCEMENT of BOTH gateway children — the
+// main child (the Da Vinci lane) and, when this Kit runs it, the
+// provider-data child (the Plain EHR lane), whose own legs carry checks at
+// the Kit's level too — by restarting each with the requested level swapped
+// into its OWN env (never one child's env copied onto the other), all or
+// neither (gatewayEnvSwitch.apply), via the SAME shared
 // gatewayEnvSwitch newBridgingDemo uses — sw.apply's transform REPLACES any
 // existing CONFORMANCE_ENFORCEMENT entry (setConformanceEnvVar) rather than
 // appending a second, conflicting one, and — because both knobs now
@@ -1243,13 +1326,19 @@ func newConformanceLevel(sw *gatewayEnvSwitch, persist levelPersister, bus *even
 		if err := conformance.ValidateLevel(level); err != nil {
 			return err
 		}
-		if err := sw.apply(ctx, func(current []string) []string { return setConformanceEnvVar(current, level) }); err != nil {
+		// The same transform for both children, each over its OWN running
+		// env: only the CONFORMANCE_ENFORCEMENT entry changes in either.
+		setLevel := func(current []string) []string { return setConformanceEnvVar(current, level) }
+		restarted, err := sw.apply(ctx, setLevel, setLevel)
+		if err != nil {
 			return err
 		}
 		if err := persist.Set(level); err != nil {
 			log.Printf("shnkitd: conformance level applied live but failed to persist for next launch: %v", err)
 		}
-		bus.Emit(event.Event{Type: event.TypeChild, Child: gatewayChild, Detail: "conformance-enforcement: " + levelLabel(level)})
+		for _, child := range restarted {
+			bus.Emit(event.Event{Type: event.TypeChild, Child: child, Detail: "conformance-enforcement: " + levelLabel(level)})
+		}
 		return nil
 	}
 }

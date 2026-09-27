@@ -1,7 +1,7 @@
 {
   "name": "shn-kit-desktop",
   "private": true,
-  "version": "0.21.0",
+  "version": "0.22.0",
   "main": "dist/main.js",
   "scripts": {
     "postinstall": "node scripts/apply-signing-backport.cjs",
@@ -12,10 +12,10 @@
     "pack": "npm run build && electron-builder --dir"
   },
   "devDependencies": {
-    "@types/node": "^24.12.3",
+    "@types/node": "~22.20.4",
     "electron": "39.8.10",
     "electron-builder": "26.15.3",
     "typescript": "~6.0.2",
-    "vitest": "^4.1.8"
+    "vitest": "^5.0.2"
   }
 }

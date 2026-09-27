@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within, act, fireEvent } from '@testing-library/react';
 import App from './App';
-import { computeDisabledReason, isGatewayReady } from './App';
+import { computeDisabledReason, isGatewayReady } from './appModel';
 import type { BootstrapResponse, HistoryRecord, HistorySummary, KitEvent, RunResult, StatusResponse } from './types';
 import type { EventsView } from './useEvents';
 import { DEMO_REPLAY_FAILURE_NOTE } from './bridgingmeta';

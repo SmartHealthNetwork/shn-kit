@@ -26,12 +26,19 @@ export function useEvents(token: string | undefined): EventsView {
   const [latestStarted, setLatestStarted] = useState<KitEvent | undefined>(undefined);
   const [sseState, setSseState] = useState<SSEState>('connecting');
 
-  useEffect(() => {
+  // A new token is a new stream: start from nothing. Reset while rendering,
+  // when the token changes, so no frame shows the previous stream's events;
+  // the effect below then only subscribes.
+  const [streamToken, setStreamToken] = useState(token);
+  if (streamToken !== token) {
+    setStreamToken(token);
     setAll([]);
     setActiveRunId(undefined);
     setLatestStarted(undefined);
     setSseState('connecting');
+  }
 
+  useEffect(() => {
     if (token === undefined) return;
 
     const es = new EventSource(eventsUrl(token));

@@ -15,13 +15,11 @@ import {
   ZERO_BYTES_NOTE,
   CARRY_REFUSAL_NOTE,
   LEG_DOWNGRADE_NOTE,
-  TRANSFORM_CARD_NARRATION,
   XFORM_EXPANDER_LABEL,
   CAPTURE_POSTURE_NOTE,
   CAPTURE_UNAVAILABLE_NOTE,
   CAPTURE_ERROR_NOTE,
   DemoStepDetail,
-  demoStepFromRecord,
   DEMO_REFUSAL_NARRATION,
   DEMO_CARRY_NARRATION,
   DEMO_RESTORED_VERDICT,
@@ -29,9 +27,13 @@ import {
   DEMO_CARRY_WHAT,
   DEMO_INPUT_PANE_HEADER,
   DEMO_OUTPUT_PANE_HEADER,
-  relayedStatusLine,
-  directionRows,
 } from './StepDetail';
+import {
+  TRANSFORM_CARD_NARRATION,
+  demoStepFromRecord,
+  directionRows,
+  relayedStatusLine,
+} from './stepDetailModel';
 import { buildRunStory } from './inspect';
 import type { Step } from './inspect';
 import type { BridgingCapture, DemoRecord, KitEvent } from './types';

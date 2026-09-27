@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import type { HistorySummary, KitEvent, Register, RunResult } from './types';
 import type { RunSource } from './useRunEvents';
-import { buildDemoStory, buildRunStory, conformanceTimelineNote, isDemoRun, normaliseLane } from './inspect';
+import { buildDemoStory, buildRunStory, conformanceTimelineNote, isDemoRun, normaliseLane, type Step } from './inspect';
 import { FlowMap } from './FlowMap';
 import { DemoStepDetail, StepDetail, type InspectorView, type ValidatorPosture } from './StepDetail';
 import { StatusChip } from './StatusChip';
@@ -64,6 +64,10 @@ export interface RunInspectorProps {
   onReplayDemo?(kind: 'carry' | 'refusal'): void | Promise<void>;
 }
 
+// NO_STEPS: a stable empty story, so a run with no story yet doesn't hand the
+// step-selection effect a new array on every render.
+const NO_STEPS: Step[] = [];
+
 export function RunInspector({
   runId,
   events,
@@ -76,7 +80,7 @@ export function RunInspector({
   onReplayDemo,
 }: RunInspectorProps): JSX.Element {
   const story = runId !== undefined ? buildRunStory(runId, events) : undefined;
-  const steps = story?.steps ?? [];
+  const steps = story?.steps ?? NO_STEPS;
 
   const [view, setView] = useState<InspectorView>('clinical');
   const [selectedStepId, setSelectedStepId] = useState<string | undefined>(undefined);
@@ -360,7 +364,14 @@ export function RunInspector({
             // step's payload under the newly selected step's card. Keying
             // on the step id forces a fresh mount per step, so a fresh
             // step always starts its expander collapsed and unfetched.
-            <StepDetail key={selectedStep.id} step={selectedStep} view={view} posture={posture} register={register} />
+            <StepDetail
+              key={selectedStep.id}
+              step={selectedStep}
+              view={view}
+              posture={posture}
+              register={register}
+              onSelectStep={handleSelectStep}
+            />
           ) : (
             <p className="no-steps-note">No steps recorded for this run yet.</p>
           )}

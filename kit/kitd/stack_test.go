@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -85,6 +87,7 @@ func TestBuildStack_EnvRecipe(t *testing.T) {
 		"PHG_URL=http://127.0.0.1:9003",
 		"CONSENT_URL=http://127.0.0.1:9004",
 		"PAYER_DIRECTORY=" + filepath.Join(stateDir, "payer-directory.json"),
+		"FHIR_DEFAULT_VALIDATOR_LANES=none",
 		"SHN_FAKE_VALIDATOR=1",
 		fmt.Sprintf("OBSERVER_ADDR=127.0.0.1:%d", obsPort),
 		"PROVIDER_DAVINCI_INGRESS=1",
@@ -289,6 +292,76 @@ func TestBuildStack_PortRespect(t *testing.T) {
 	}
 }
 
+// A pinned gateway port is free until the gateway binds it, so BuildStack
+// tells the allocator to exclude it; an allocator that would otherwise offer it
+// first must not see it reach the observer or any other child.
+func TestBuildStack_PinnedGatewayPortIsNeverAllocatedToAnotherChild(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := l.Addr().(*net.TCPAddr).Port
+	l.Close() // free, as a --gateway-port is before its child binds it
+	saved := allocatePorts
+	t.Cleanup(func() { allocatePorts = saved })
+	var excluded, allocated []int
+	allocatePorts = func(n int, exclude ...int) ([]int, error) {
+		excluded = append(excluded, exclude...)
+		ports, err := saved(n, exclude...)
+		if err == nil && !slices.Contains(exclude, pinned) {
+			ports[0] = pinned // adversarial: offer the pinned port first unless it was excluded
+		}
+		allocated = append(allocated, ports...)
+		return ports, err
+	}
+	stack, err := BuildStack(StackConfig{
+		GatewayBinary: "/bin/true",
+		StateDir:      t.TempDir(),
+		SecretsDir:    "/secrets/provider",
+		DiscoveryURL:  "http://127.0.0.1:9001/discovery",
+		GatewayPort:   pinned,
+	})
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	t.Cleanup(func() { _ = stack.Close() })
+	if !slices.Contains(excluded, pinned) {
+		t.Errorf("BuildStack excluded %v from allocation; want the pinned gateway port %d", excluded, pinned)
+	}
+	if !stack.GatewayPortPinned {
+		t.Error("Stack.GatewayPortPinned = false for a fixed gateway port")
+	}
+	// The allocator, across every call, handed the pinned port to no one.
+	// The observer and local FHIR addresses are checked too, since a port
+	// that reached them some other way would sit in the gateway's own env.
+	if slices.Contains(allocated, pinned) {
+		t.Errorf("the allocator handed out the pinned gateway port %d: %v", pinned, allocated)
+	}
+	onPort := regexp.MustCompile(fmt.Sprintf(`:%d(\D|$)`, pinned))
+	if onPort.MatchString(stack.ObserverURL) {
+		t.Errorf("the observer was given the pinned gateway port: %s", stack.ObserverURL)
+	}
+	gatewayCarriesIt := false
+	for _, spec := range stack.Children {
+		if spec.Name != gatewayChildName {
+			continue
+		}
+		for _, v := range spec.Env {
+			switch {
+			case v == fmt.Sprintf("PORT=%d", pinned):
+				gatewayCarriesIt = true
+			case strings.HasPrefix(v, "OBSERVER_ADDR="), strings.HasPrefix(v, "FHIR_DATA_URL="):
+				if onPort.MatchString(v) {
+					t.Errorf("the gateway's %s is on its own pinned port", v)
+				}
+			}
+		}
+	}
+	if !gatewayCarriesIt {
+		t.Fatal("the gateway child does not carry its pinned port; the row sees nothing")
+	}
+}
+
 // ---- Row 4: ObserverHealthURL derivation ---------------------------------------
 
 // TestBuildStack_ObserverHealthURL pins the exact string derivation the
@@ -351,6 +424,44 @@ func TestBuildStack_GatewayEnvMirrorsSpec(t *testing.T) {
 	}
 	if len(spec.Env) == 0 {
 		t.Fatal("gateway spec env is empty; the backing-array check above proved nothing")
+	}
+}
+
+// TestBuildStack_ProviderDataEnvMirrorsSpec pins Stack.ProviderDataEnv as
+// the exact running env the live conformance-level switch changes on the
+// provider-data child: value-identical to that ChildSpec's Env (its OWN env,
+// not the main child's), an independent slice, and nil with no trio (no
+// such child, so the switch restarts the main child alone).
+func TestBuildStack_ProviderDataEnvMirrorsSpec(t *testing.T) {
+	stack, err := BuildStack(trioCfg(t, nil))
+	if err != nil {
+		t.Fatalf("BuildStack: %v", err)
+	}
+	spec := stack.Children[len(stack.Children)-1]
+	if spec.Name != providerDataChildName {
+		t.Fatalf("last child = %q, want %q", spec.Name, providerDataChildName)
+	}
+	if len(spec.Env) == 0 || strings.Join(stack.ProviderDataEnv, "\x00") != strings.Join(spec.Env, "\x00") {
+		t.Fatalf("ProviderDataEnv = %v, want the provider-data spec's own env %v", stack.ProviderDataEnv, spec.Env)
+	}
+	if strings.Join(stack.ProviderDataEnv, "\x00") == strings.Join(stack.GatewayEnv, "\x00") {
+		t.Fatal("ProviderDataEnv equals GatewayEnv — it must be the provider-data child's own derived env")
+	}
+	if &stack.ProviderDataEnv[0] == &spec.Env[0] {
+		t.Fatal("ProviderDataEnv shares its backing array with the provider-data ChildSpec's Env")
+	}
+
+	noTrio, err := BuildStack(StackConfig{
+		GatewayBinary: "/bin/true",
+		StateDir:      t.TempDir(),
+		SecretsDir:    "/secrets/provider",
+		DiscoveryURL:  "http://127.0.0.1:9001/discovery",
+	})
+	if err != nil {
+		t.Fatalf("BuildStack without trio: %v", err)
+	}
+	if noTrio.ProviderDataEnv != nil {
+		t.Fatalf("ProviderDataEnv = %v with no provider-data child, want nil", noTrio.ProviderDataEnv)
 	}
 }
 
@@ -1360,6 +1471,43 @@ func TestBuildStack_PayerDirectory_BothChildren(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rows, want) {
 		t.Errorf("payer-directory.json rows = %v, want %v", rows, want)
+	}
+}
+
+// TestBuildStack_NoDefaultValidatorLanes pins FHIR_DEFAULT_VALIDATOR_LANES=none on
+// every gateway child, with and without the trio: the Kit's network has no Compose
+// default validator services, so a gateway that fell back to them would look the
+// names up on the user's own network. The Plain EHR child inherits the key through
+// deriveProviderDataEnv; a child without it, or with any other value, fails here.
+func TestBuildStack_NoDefaultValidatorLanes(t *testing.T) {
+	for name, cfg := range map[string]StackConfig{"no trio": baseCfg(t), "trio": trioCfg(t, nil)} {
+		stack, err := BuildStack(cfg)
+		if err != nil {
+			t.Fatalf("%s: BuildStack: %v", name, err)
+		}
+		checked := 0
+		for _, child := range stack.Children {
+			if child.Name != gatewayChildName && child.Name != providerDataChildName {
+				continue
+			}
+			checked++
+			var got []string
+			for _, e := range child.Env {
+				if strings.HasPrefix(e, "FHIR_DEFAULT_VALIDATOR_LANES=") {
+					got = append(got, e)
+				}
+			}
+			if len(got) != 1 || got[0] != "FHIR_DEFAULT_VALIDATOR_LANES=none" {
+				t.Errorf("%s: %s carries %v, want exactly [FHIR_DEFAULT_VALIDATOR_LANES=none]", name, child.Name, got)
+			}
+		}
+		want := 1
+		if name == "trio" {
+			want = 2
+		}
+		if checked != want {
+			t.Errorf("%s: checked %d gateway children, want %d", name, checked, want)
+		}
 	}
 }
 
