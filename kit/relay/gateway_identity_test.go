@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	publishedBarrierVersion = "v0.56.0"
-	publishedBarrierSum     = "h1:bwo0oE4NCNEps0ijJLP15MOsit7PQRvt4EhxCzEebQ8="
+	publishedBarrierVersion = "v0.57.0"
+	publishedBarrierSum     = "h1:6fx5P3HTGcNLvkTzVuAiFwT4yK3Q1v8ZThzE81DcZEE="
 	// The earlier barrier releases stay recognized beside the packaged one.
+	published0560BarrierVersion = "v0.56.0"
+	published0560BarrierSum     = "h1:bwo0oE4NCNEps0ijJLP15MOsit7PQRvt4EhxCzEebQ8="
 	published0550BarrierVersion = "v0.55.0"
 	published0550BarrierSum     = "h1:uUrnjnfnqHpFHcI/oldN2K5GfyNBLLBr6pNfd2fMxr0="
 	published0540BarrierVersion = "v0.54.0"
@@ -38,6 +40,7 @@ func TestGatewayProfileExactMetadata(t *testing.T) {
 		want         GatewayProfile
 	}{
 		{publishedBarrierVersion, publishedBarrierSum, GatewayBarrier0440},
+		{published0560BarrierVersion, published0560BarrierSum, GatewayBarrier0440},
 		{published0550BarrierVersion, published0550BarrierSum, GatewayBarrier0440},
 		{published0540BarrierVersion, published0540BarrierSum, GatewayBarrier0440},
 		{published0460BarrierVersion, published0460BarrierSum, GatewayBarrier0440},
@@ -73,6 +76,9 @@ func TestGatewayProfileExactMetadata(t *testing.T) {
 		{published0540BarrierVersion, publishedBarrierSum},
 		{publishedBarrierVersion, published0540BarrierSum},
 		{published0540BarrierVersion, published0550BarrierSum},
+		{published0560BarrierVersion, publishedBarrierSum},
+		{publishedBarrierVersion, published0560BarrierSum},
+		{published0560BarrierVersion, published0550BarrierSum},
 	} {
 		t.Run("crossed "+mixed.version, func(t *testing.T) {
 			if got := gatewayProfile(buildInfo(mixed.version, mixed.sum)); got != GatewayUnknown {

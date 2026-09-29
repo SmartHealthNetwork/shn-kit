@@ -2,10 +2,10 @@
 
 What a real multitenant HAPI data server answered this package's seeder, captured on 2026-09-26
 (local time; timestamps inside the answers are UTC, 2026-09-27) through an exact-bytes recording
-proxy from the data-plane HAPI that `make validate` boots (HAPI FHIR 8.10.0, URL-partitioned
-multitenant), freshly booted. That server's configuration is the platform's, not the Kit's own
-data server child (which also enables clinical reasoning and loads the Kit's IG pins); the
-warm-up answer is expected to be the same, but that is not verified. The requests are the
+proxy from a local HAPI FHIR 8.10.0 data server (URL-partitioned multitenant), freshly booted.
+That server is configured differently from the Kit's own data server child (which also enables
+clinical reasoning and loads the Kit's IG pins); the warm-up answer is expected to be the same,
+but that is not verified. The requests are the
 seeder's own and carry committed synthetic fixtures. No participant or patient data.
 
 - `warm-provider.json`: `WarmValidate` on the `provider` tenant, with the server already warm:

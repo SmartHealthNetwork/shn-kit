@@ -118,7 +118,7 @@ func TestValidateLevel(t *testing.T) {
 func TestLevels_AreExactlyWhatThePinnedGatewayAccepts(t *testing.T) {
 	want := []string{"none", "observe", "structural", "strict"}
 	if got := Levels(); !slices.Equal(got, want) {
-		t.Fatalf("Levels() = %v, want %v (the pinned gateway, v0.56.0, accepts all four)", got, want)
+		t.Fatalf("Levels() = %v, want %v (the pinned gateway, v0.57.0, accepts all four)", got, want)
 	}
 	for _, l := range append([]string{""}, want...) {
 		if err := ValidateLevel(l); err != nil {

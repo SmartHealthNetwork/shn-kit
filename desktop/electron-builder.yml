@@ -37,6 +37,10 @@ extraResources:
   # desktop/-relative path, so `from` resolves identically either way.
   - from: THIRD_PARTY_NOTICES.md
     to: .
+  # The licence texts THIRD_PARTY_NOTICES.md names for the libraries inside
+  # the bundled Java applications, beside it at the same relative path.
+  - from: third-party-licenses
+    to: third-party-licenses
   # Electron's own license and Chromium's aggregated third-party notices.
   # electron-builder embeds these automatically in its Windows/Linux
   # layouts, but NOT in the macOS .app (confirmed absent across several

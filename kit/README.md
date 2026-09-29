@@ -91,8 +91,8 @@ and time spent watching do not consume it. Each window publishes one start and
 one terminal event atomically with relay attribution, and history capture follows
 that terminal boundary. Late observer bytes remain visible as ambient activity.
 
-The packaged gateway is v0.56.0 and the SDK v0.58.2 (the gateway executable links
-its own module's SDK pin, v0.58.1). Packaging uses a versioned Go
+The packaged gateway is v0.57.0 and the SDK v0.59.0; the gateway executable links
+the same SDK release through its own module's pin. Packaging uses a versioned Go
 install and checks executable provenance before bundling it, including both slices
 of the universal macOS binary; it refuses any executable that does not read as the
 release this Kit pins. A manifest label alone is insufficient.
@@ -105,7 +105,7 @@ is read as the known absence it is.
 
 | Gateway identity | Observer completion behavior |
 |---|---|
-| Any gateway serving the supported completion protocol, including the packaged v0.56.0 executable and the earlier published v0.55.0, v0.54.0, v0.46.0 and v0.44.0 | Waits for entered operations and their evidence callbacks, then catches up the stream |
+| Any gateway serving the supported completion protocol, including the packaged v0.57.0 executable and the earlier published v0.56.0, v0.55.0, v0.54.0, v0.46.0 and v0.44.0 | Waits for entered operations and their evidence callbacks, then catches up the stream |
 | Published v0.43.1 executable with the exact module checksum and command path | Uses its synchronous observer counter for ordinary completed requests |
 | Unidentified `(devel)`, replaced module, mixed universal slices, or another unknown identity | Clinical work continues on the protocol when it is served; a missing barrier is reported, never excused |
 
@@ -375,7 +375,11 @@ it does for the Plain EHR scenarios, an answer it cannot read, or one without co
 information, stops the exchange (`502`) at every level. From gateway v0.56.0 that
 answer is also checked against the CDS Hooks response rules at the Kit's level. On the
 Da Vinci scenarios the Kit plays your EHR and sends the CDS Hooks request through the
-gateway's Da Vinci ingress; the gateway relays the answer under the rule above.
+gateway's Da Vinci ingress; the gateway relays the answer under the rule above. Once the
+payer's gateway also runs v0.57.0, the answer your EHR receives there carries the media
+type the payer's system stated (the reference payer states `text/json;charset=UTF-8`)
+rather than always `application/json`. An answer stated as `application/fhir+json`, or
+with no type, still arrives as `application/json`.
 
 **Upgrading from an earlier Kit.** Before v0.21.0 the Kit's gateway had no `observe`
 level, and its `"none"` still ran every check and recorded what it found, while
